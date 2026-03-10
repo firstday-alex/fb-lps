@@ -212,21 +212,42 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
     const adsWithCreatives = await Promise.all(
       ads.map(async (ad) => {
         try {
+          // First fetch: get creative with object_story_spec
           const creativeUrl = `${META_BASE_URL}/${ad.ad_id}`
-            + `?fields=creative{id,name,thumbnail_url,image_url,object_story_spec,effective_object_story_spec,asset_feed_spec}`
+            + `?fields=creative{id,name,thumbnail_url,image_url,object_story_spec}`
             + `&${metaParams(req.accessToken)}`;
 
           const creativeResponse = await fetch(creativeUrl);
           const creativeData = await creativeResponse.json();
 
+          if (creativeData.error) {
+            console.error(`Creative API error for ad ${ad.ad_id}:`, creativeData.error.message);
+          }
+
           const creative = creativeData.creative || {};
           const storySpec = creative.object_story_spec || {};
-          const effectiveStorySpec = creative.effective_object_story_spec || {};
-          const assetFeedSpec = creative.asset_feed_spec || {};
 
-          const destinationUrl = extractDestinationUrl(storySpec)
-            || extractDestinationUrl(effectiveStorySpec)
-            || extractAssetFeedUrl(assetFeedSpec);
+          let destinationUrl = extractDestinationUrl(storySpec);
+
+          // If no URL found and we have a creative ID, try fetching effective_object_story_spec separately
+          if (!destinationUrl && creative.id) {
+            try {
+              const effectiveUrl = `${META_BASE_URL}/${creative.id}`
+                + `?fields=effective_object_story_spec,asset_feed_spec`
+                + `&${metaParams(req.accessToken)}`;
+              const effectiveResponse = await fetch(effectiveUrl);
+              const effectiveData = await effectiveResponse.json();
+
+              if (!effectiveData.error) {
+                const effectiveStorySpec = effectiveData.effective_object_story_spec || {};
+                const assetFeedSpec = effectiveData.asset_feed_spec || {};
+                destinationUrl = extractDestinationUrl(effectiveStorySpec)
+                  || extractAssetFeedUrl(assetFeedSpec);
+              }
+            } catch (e) {
+              console.error(`Failed to fetch effective spec for creative ${creative.id}:`, e);
+            }
+          }
 
           const imageUrl = creative.image_url
             || storySpec?.link_data?.picture
