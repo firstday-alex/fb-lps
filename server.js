@@ -147,7 +147,7 @@ app.get('/api/ad-accounts', requireAuth, async (req, res) => {
   try {
     const url = `${META_BASE_URL}/me/adaccounts`
       + `?fields=id,name,account_id,account_status`
-      + `&access_token=${req.accessToken}`
+      + `&${metaParams(req.accessToken)}`
       + `&limit=100`;
 
     const response = await fetch(url);
@@ -190,7 +190,7 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
       + `&level=ad`
       + `&sort=spend_descending`
       + `&limit=10`
-      + `&access_token=${req.accessToken}`;
+      + `&${metaParams(req.accessToken)}`;
 
     const insightsResponse = await fetch(insightsUrl);
     const insightsData = await insightsResponse.json();
@@ -214,7 +214,7 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
         try {
           const creativeUrl = `${META_BASE_URL}/${ad.ad_id}`
             + `?fields=creative{id,name,thumbnail_url,image_url,object_story_spec}`
-            + `&access_token=${req.accessToken}`;
+            + `&${metaParams(req.accessToken)}`;
 
           const creativeResponse = await fetch(creativeUrl);
           const creativeData = await creativeResponse.json();
@@ -267,6 +267,14 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
 });
 
 // --- Helpers ---
+
+function generateAppSecretProof(accessToken) {
+  return crypto.createHmac('sha256', META_APP_SECRET).update(accessToken).digest('hex');
+}
+
+function metaParams(accessToken) {
+  return `access_token=${accessToken}&appsecret_proof=${generateAppSecretProof(accessToken)}`;
+}
 
 function extractDestinationUrl(storySpec) {
   if (storySpec.link_data?.link) {
