@@ -1,0 +1,196 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #f0f2f5;
+  color: #1c1e21;
+  line-height: 1.5;
+}
+
+/* Header */
+header {
+  background: #1877f2;
+  color: white;
+  padding: 16px 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+header h1 { font-size: 1.25rem; }
+
+/* Buttons */
+.btn {
+  padding: 8px 20px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+.btn-login {
+  background: white;
+  color: #1877f2;
+}
+.btn-login:hover { background: #e4e6eb; }
+.btn-logout {
+  background: rgba(255,255,255,0.2);
+  color: white;
+}
+.btn-logout:hover { background: rgba(255,255,255,0.3); }
+.btn-primary {
+  background: #1877f2;
+  color: white;
+}
+.btn-primary:hover { background: #166fe5; }
+
+/* Account Section */
+#account-section {
+  padding: 20px 24px;
+  background: white;
+  border-bottom: 1px solid #ddd;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+#account-select {
+  padding: 8px 12px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  min-width: 300px;
+}
+
+/* Ads Grid */
+#ads-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 20px;
+  padding: 24px;
+}
+
+/* Ad Card */
+.ad-card {
+  background: white;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+  display: flex;
+  flex-direction: column;
+}
+.ad-card__image-container {
+  position: relative;
+  width: 100%;
+  padding-top: 56.25%;
+  background: #e4e6eb;
+  overflow: hidden;
+}
+.ad-card__image-container img {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  object-fit: cover;
+}
+.ad-card__no-image {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #65676b;
+  font-size: 0.9rem;
+}
+.ad-card__video-badge {
+  position: absolute;
+  top: 8px; left: 8px;
+  background: rgba(0,0,0,0.7);
+  color: white;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.ad-card__rank {
+  position: absolute;
+  top: 8px; right: 8px;
+  background: #1877f2;
+  color: white;
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.8rem;
+}
+.ad-card__body {
+  padding: 16px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ad-card__name {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+.ad-card__stats {
+  display: flex;
+  gap: 16px;
+  font-size: 0.85rem;
+  color: #65676b;
+}
+.ad-card__stats span {
+  font-weight: 600;
+  color: #1c1e21;
+}
+.ad-card__url {
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid #eee;
+}
+.ad-card__url a {
+  color: #1877f2;
+  text-decoration: none;
+  font-size: 0.85rem;
+  word-break: break-all;
+}
+.ad-card__url a:hover { text-decoration: underline; }
+.ad-card__url .no-url {
+  color: #65676b;
+  font-size: 0.85rem;
+}
+
+/* Utility */
+.hidden { display: none !important; }
+
+/* Loading */
+#loading {
+  text-align: center;
+  padding: 60px 24px;
+}
+.spinner {
+  width: 40px; height: 40px;
+  border: 4px solid #e4e6eb;
+  border-top-color: #1877f2;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin: 0 auto 16px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Error */
+#error-message {
+  margin: 24px;
+  padding: 16px;
+  background: #fee2e2;
+  border: 1px solid #fca5a5;
+  border-radius: 8px;
+  color: #991b1b;
+}
+
+/* Empty State */
+#empty-state {
+  text-align: center;
+  padding: 60px 24px;
+  color: #65676b;
+}

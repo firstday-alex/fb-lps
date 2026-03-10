@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Facebook Ads LP Viewer</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Facebook Ads &mdash; Top Spend Yesterday</h1>
+    <div id="auth-section"></div>
+  </header>
+
+  <main>
+    <section id="account-section" class="hidden">
+      <label for="account-select">Ad Account:</label>
+      <select id="account-select">
+        <option value="">-- Choose an account --</option>
+      </select>
+      <button id="load-ads-btn" class="btn btn-primary">Load Top Ads</button>
+    </section>
+
+    <div id="loading" class="hidden">
+      <div class="spinner"></div>
+      <p>Fetching ad data&hellip;</p>
+    </div>
+
+    <div id="error-message" class="hidden"></div>
+
+    <section id="ads-grid" class="hidden"></section>
+
+    <div id="empty-state" class="hidden">
+      <p>No ads with spend found for yesterday.</p>
+    </div>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
