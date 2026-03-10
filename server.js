@@ -213,7 +213,7 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
       ads.map(async (ad) => {
         try {
           const creativeUrl = `${META_BASE_URL}/${ad.ad_id}`
-            + `?fields=creative{id,name,thumbnail_url,image_url,object_story_spec}`
+            + `?fields=creative{id,name,thumbnail_url,image_url,object_story_spec,effective_object_story_spec,asset_feed_spec}`
             + `&${metaParams(req.accessToken)}`;
 
           const creativeResponse = await fetch(creativeUrl);
@@ -221,8 +221,12 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
 
           const creative = creativeData.creative || {};
           const storySpec = creative.object_story_spec || {};
+          const effectiveStorySpec = creative.effective_object_story_spec || {};
+          const assetFeedSpec = creative.asset_feed_spec || {};
 
-          const destinationUrl = extractDestinationUrl(storySpec);
+          const destinationUrl = extractDestinationUrl(storySpec)
+            || extractDestinationUrl(effectiveStorySpec)
+            || extractAssetFeedUrl(assetFeedSpec);
 
           const imageUrl = creative.image_url
             || storySpec?.link_data?.picture
@@ -273,21 +277,40 @@ function generateAppSecretProof(accessToken) {
 }
 
 function metaParams(accessToken) {
-  return `access_token=${accessToken}&appsecret_proof=${generateAppSecretProof(accessToken)}`;
+  return `access_token=${encodeURIComponent(accessToken)}&appsecret_proof=${generateAppSecretProof(accessToken)}`;
 }
 
 function extractDestinationUrl(storySpec) {
   if (storySpec.link_data?.link) {
     return storySpec.link_data.link;
   }
+  if (storySpec.link_data?.call_to_action?.value?.link) {
+    return storySpec.link_data.call_to_action.value.link;
+  }
   if (storySpec.video_data?.call_to_action?.value?.link) {
     return storySpec.video_data.call_to_action.value.link;
+  }
+  if (storySpec.video_data?.link) {
+    return storySpec.video_data.link;
   }
   if (storySpec.link_data?.child_attachments?.length > 0) {
     return storySpec.link_data.child_attachments[0].link;
   }
   if (storySpec.template_data?.link) {
     return storySpec.template_data.link;
+  }
+  if (storySpec.photo_data?.call_to_action?.value?.link) {
+    return storySpec.photo_data.call_to_action.value.link;
+  }
+  return null;
+}
+
+function extractAssetFeedUrl(assetFeedSpec) {
+  if (assetFeedSpec.link_urls?.length > 0) {
+    return assetFeedSpec.link_urls[0].website_url || assetFeedSpec.link_urls[0].display_url || null;
+  }
+  if (assetFeedSpec.call_to_action_types?.length > 0 && assetFeedSpec.link_urls?.length > 0) {
+    return assetFeedSpec.link_urls[0].website_url || null;
   }
   return null;
 }
