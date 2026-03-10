@@ -256,6 +256,16 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
 
           const isVideo = !!storySpec.video_data;
 
+          // Log raw data for ads missing destination URL
+          if (!destinationUrl) {
+            console.log(`\n=== Missing destination URL for ad ${ad.ad_id} ===`);
+            console.log('creative keys:', Object.keys(creative));
+            console.log('object_story_spec:', JSON.stringify(storySpec, null, 2));
+            if (creative.id) {
+              console.log('creative id:', creative.id);
+            }
+          }
+
           return {
             ad_id: ad.ad_id,
             ad_name: ad.ad_name,
@@ -288,6 +298,37 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('Failed to fetch top ads:', err);
     res.status(500).json({ error: 'Failed to fetch top ads' });
+  }
+});
+
+// --- Debug endpoint (temporary) ---
+
+app.get('/api/debug-ad', requireAuth, async (req, res) => {
+  const { ad_id } = req.query;
+  if (!ad_id) return res.status(400).json({ error: 'ad_id required' });
+
+  try {
+    // Fetch ad with creative
+    const adUrl = `${META_BASE_URL}/${ad_id}`
+      + `?fields=creative{id,name,thumbnail_url,image_url,object_story_spec}`
+      + `&${metaParams(req.accessToken)}`;
+    const adResponse = await fetch(adUrl);
+    const adData = await adResponse.json();
+
+    const creative = adData.creative || {};
+    let effectiveData = null;
+
+    if (creative.id) {
+      const effectiveUrl = `${META_BASE_URL}/${creative.id}`
+        + `?fields=effective_object_story_spec,asset_feed_spec,object_story_spec`
+        + `&${metaParams(req.accessToken)}`;
+      const effectiveResponse = await fetch(effectiveUrl);
+      effectiveData = await effectiveResponse.json();
+    }
+
+    res.json({ adData, effectiveData });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
