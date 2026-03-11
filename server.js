@@ -309,25 +309,40 @@ app.get('/api/debug-ad', requireAuth, async (req, res) => {
   if (!ad_id) return res.status(400).json({ error: 'ad_id required' });
 
   try {
-    // Fetch ad with creative
+    // Fetch ad with creative - try many fields
     const adUrl = `${META_BASE_URL}/${ad_id}`
-      + `?fields=creative{id,name,thumbnail_url,image_url,object_story_spec}`
+      + `?fields=creative{id,name,thumbnail_url,image_url,object_story_spec,link_url,object_url,object_story_id,effective_object_story_id}`
       + `&${metaParams(req.accessToken)}`;
     const adResponse = await fetch(adUrl);
     const adData = await adResponse.json();
 
     const creative = adData.creative || {};
-    let effectiveData = null;
+    let creativeDirectData = null;
+    let postData = null;
 
     if (creative.id) {
-      const effectiveUrl = `${META_BASE_URL}/${creative.id}`
-        + `?fields=link_url,object_story_spec,asset_feed_spec`
+      const directUrl = `${META_BASE_URL}/${creative.id}`
+        + `?fields=link_url,object_story_spec,asset_feed_spec,object_url,object_story_id,effective_object_story_id`
         + `&${metaParams(req.accessToken)}`;
-      const effectiveResponse = await fetch(effectiveUrl);
-      effectiveData = await effectiveResponse.json();
+      const directResponse = await fetch(directUrl);
+      creativeDirectData = await directResponse.json();
     }
 
-    res.json({ adData, effectiveData });
+    // If we have an object_story_id or effective_object_story_id, fetch the post
+    const storyId = creative.effective_object_story_id
+      || creative.object_story_id
+      || creativeDirectData?.effective_object_story_id
+      || creativeDirectData?.object_story_id;
+
+    if (storyId) {
+      const postUrl = `${META_BASE_URL}/${storyId}`
+        + `?fields=link,permalink_url,call_to_action,attachments{url,unshimmed_url}`
+        + `&${metaParams(req.accessToken)}`;
+      const postResponse = await fetch(postUrl);
+      postData = await postResponse.json();
+    }
+
+    res.json({ adData, creativeDirectData, storyId, postData });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
