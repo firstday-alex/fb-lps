@@ -501,6 +501,134 @@
       border-top: 2px solid var(--border);
     }
 
+    /* CSV Upload */
+    .ci-upload-zone {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 20px 16px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+      position: relative;
+    }
+    .ci-upload-zone:hover, .ci-upload-zone.drag-over {
+      border-color: var(--fb-blue);
+      background: #f0f5ff;
+    }
+    .ci-upload-zone input[type="file"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+      width: 100%;
+      height: 100%;
+    }
+    .ci-upload-zone__icon { font-size: 1.5rem; margin-bottom: 6px; }
+    .ci-upload-zone__label { font-size: 0.85rem; font-weight: 600; color: var(--fb-blue); }
+    .ci-upload-zone__hint { font-size: 0.75rem; color: var(--text-secondary); margin-top: 2px; }
+    .ci-upload-status {
+      font-size: 0.8rem;
+      margin-top: 8px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      display: none;
+    }
+    .ci-upload-status.success { background: var(--positive-bg); color: var(--positive); display: block; }
+    .ci-upload-status.error   { background: var(--negative-bg); color: var(--negative); display: block; }
+
+    /* Channel groups table */
+    .ci-channels-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+    }
+    .ci-channels-table th {
+      text-align: left;
+      padding: 6px 10px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-secondary);
+      border-bottom: 2px solid var(--border);
+      white-space: nowrap;
+    }
+    .ci-channels-table td {
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+    .ci-channels-table tr:last-child td { border-bottom: none; }
+    .ci-channels-table tr.ch-total td {
+      font-weight: 700;
+      background: var(--bg);
+      border-top: 2px solid var(--border);
+    }
+    .ci-channels-table input[type="number"] {
+      width: 80px;
+      padding: 4px 8px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-size: 0.82rem;
+      -moz-appearance: textfield;
+    }
+    .ci-channels-table input[type="number"]::-webkit-outer-spin-button,
+    .ci-channels-table input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; }
+    .ci-channels-table input:focus { outline: none; border-color: var(--fb-blue); }
+    .ch-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+    .ci-raw-sources {
+      margin-top: 12px;
+    }
+    .ci-raw-toggle {
+      font-size: 0.78rem;
+      color: var(--fb-blue);
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 0;
+      text-decoration: underline;
+    }
+    .ci-raw-table-wrap {
+      margin-top: 8px;
+      overflow-x: auto;
+      max-height: 260px;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+    .ci-raw-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.78rem;
+    }
+    .ci-raw-table th {
+      position: sticky;
+      top: 0;
+      background: var(--bg);
+      padding: 6px 10px;
+      text-align: left;
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-secondary);
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    .ci-raw-table td {
+      padding: 5px 10px;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    .ci-raw-table tr:last-child td { border-bottom: none; }
+    .ci-raw-table tr.unmapped-row td { color: var(--text-secondary); }
+
     /* === Utility === */
     .hidden { display: none !important; }
     .text-secondary { color: var(--text-secondary); }
@@ -717,55 +845,129 @@
 
     </div>
 
-    <!-- Multi-source section -->
+    <!-- CSV Upload + Channel Groups section -->
     <div class="ci-card ci-sources">
       <div class="ci-sources__header">
-        <h2>Multi-Source Comparison <span class="text-secondary" style="font-size:0.8rem;font-weight:400">(by utm_source)</span></h2>
-        <button class="btn btn-ghost-md" id="btn-toggle-sources">+ Add Sources</button>
+        <h2>Channel Group Analysis <span class="text-secondary" style="font-size:0.8rem;font-weight:400">(by utm_source)</span></h2>
+        <button class="btn btn-ghost-md" id="btn-toggle-sources">+ Expand</button>
       </div>
 
       <div class="ci-sources__body hidden" id="sources-body">
-        <div style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:12px">
-          Add rows for each utm_source (e.g. Facebook, Google, Direct). Each row uses its own baseline &amp; delta values and shares the same delta mode settings above.
+
+        <!-- Upload zone -->
+        <div style="margin-bottom:16px">
+          <div class="ci-section-label" style="margin-bottom:8px">Upload CSV</div>
+          <div class="ci-upload-zone" id="upload-zone">
+            <input type="file" id="csv-file-input" accept=".csv,text/csv">
+            <div class="ci-upload-zone__icon">&#128196;</div>
+            <div class="ci-upload-zone__label">Click or drag a CSV file here</div>
+            <div class="ci-upload-zone__hint">Expected columns: UTM source, Sessions, Conversion rate</div>
+          </div>
+          <div class="ci-upload-status" id="upload-status"></div>
         </div>
-        <div style="overflow-x:auto">
-          <table class="ci-sources-table" id="sources-table">
-            <thead>
-              <tr>
-                <th>Source</th>
-                <th>Baseline Sessions</th>
-                <th>Baseline CVR %</th>
-                <th>&Delta; Sessions</th>
-                <th>&Delta; CVR</th>
-                <th>Base Conv.</th>
-                <th>New Conv.</th>
-                <th>&Delta; Conv.</th>
-                <th>&Delta; %</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody id="sources-tbody">
-              <!-- rows filled by JS -->
-            </tbody>
-            <tfoot>
-              <tr class="src-total">
-                <td>Total</td>
-                <td id="src-tot-sessions">—</td>
-                <td>—</td>
-                <td id="src-tot-d-sessions">—</td>
-                <td>—</td>
-                <td id="src-tot-base">—</td>
-                <td id="src-tot-new">—</td>
-                <td id="src-tot-delta">—</td>
-                <td id="src-tot-pct">—</td>
-                <td></td>
-              </tr>
-            </tfoot>
-          </table>
+
+        <!-- Channel groups table -->
+        <div id="channels-section" class="hidden">
+          <div class="ci-section-label" style="margin-bottom:8px">Channel Groups — set deltas to model scenarios</div>
+          <div style="overflow-x:auto">
+            <table class="ci-channels-table" id="channels-table">
+              <thead>
+                <tr>
+                  <th>Channel</th>
+                  <th>Sources</th>
+                  <th>Baseline Sessions</th>
+                  <th>Blended CVR</th>
+                  <th>&Delta; Sessions</th>
+                  <th>&Delta; CVR (pp)</th>
+                  <th>Base Conv.</th>
+                  <th>New Conv.</th>
+                  <th>&Delta; Conv.</th>
+                  <th>&Delta; %</th>
+                </tr>
+              </thead>
+              <tbody id="channels-tbody">
+                <!-- filled by JS -->
+              </tbody>
+              <tfoot>
+                <tr class="ch-total">
+                  <td>Total</td>
+                  <td id="ch-tot-sources">—</td>
+                  <td id="ch-tot-sessions">—</td>
+                  <td id="ch-tot-cvr">—</td>
+                  <td id="ch-tot-d-sessions">—</td>
+                  <td>—</td>
+                  <td id="ch-tot-base">—</td>
+                  <td id="ch-tot-new">—</td>
+                  <td id="ch-tot-delta">—</td>
+                  <td id="ch-tot-pct">—</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          <!-- Raw rows toggle -->
+          <div class="ci-raw-sources">
+            <button class="ci-raw-toggle" id="btn-toggle-raw">Show raw utm_source rows</button>
+            <div class="ci-raw-table-wrap hidden" id="raw-table-wrap">
+              <table class="ci-raw-table" id="raw-table">
+                <thead>
+                  <tr>
+                    <th>UTM Source</th>
+                    <th>Channel</th>
+                    <th>Sessions</th>
+                    <th>CVR %</th>
+                    <th>Conversions</th>
+                  </tr>
+                </thead>
+                <tbody id="raw-tbody"></tbody>
+              </table>
+            </div>
+          </div>
         </div>
-        <div class="ci-sources__add-row">
-          <button class="btn-sm btn-primary" id="btn-add-source">+ Add row</button>
+
+        <!-- Manual add row (shown when no CSV) -->
+        <div id="manual-sources-section">
+          <div class="ci-section-label" style="margin-bottom:8px">Or add sources manually</div>
+          <div style="overflow-x:auto">
+            <table class="ci-sources-table" id="sources-table">
+              <thead>
+                <tr>
+                  <th>Source</th>
+                  <th>Baseline Sessions</th>
+                  <th>Baseline CVR %</th>
+                  <th>&Delta; Sessions</th>
+                  <th>&Delta; CVR</th>
+                  <th>Base Conv.</th>
+                  <th>New Conv.</th>
+                  <th>&Delta; Conv.</th>
+                  <th>&Delta; %</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="sources-tbody">
+                <!-- rows filled by JS -->
+              </tbody>
+              <tfoot>
+                <tr class="src-total">
+                  <td>Total</td>
+                  <td id="src-tot-sessions">—</td>
+                  <td>—</td>
+                  <td id="src-tot-d-sessions">—</td>
+                  <td>—</td>
+                  <td id="src-tot-base">—</td>
+                  <td id="src-tot-new">—</td>
+                  <td id="src-tot-delta">—</td>
+                  <td id="src-tot-pct">—</td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+          <div class="ci-sources__add-row">
+            <button class="btn-sm btn-primary" id="btn-add-source">+ Add row</button>
+          </div>
         </div>
+
       </div>
     </div>
 
@@ -773,6 +975,32 @@
 </main>
 
 <script>
+// ============================================================
+// CHANNEL GROUPING CONFIG
+// ============================================================
+const CHANNEL_GROUPS = {
+  meta:       { label: 'Meta',          color: '#1877f2', sources: ['facebook', 'ig', 'instagram', 'igshopping'] },
+  retention:  { label: 'Retention',     color: '#7c3aed', sources: ['klaviyo', 'postscript'] },
+  direct:     { label: 'Direct',        color: '#65676b', sources: ['none', '', null, 'direct'] },
+  search:     { label: 'Search',        color: '#ea4335', sources: ['google', 'bing'] },
+  topOfFunnel:{ label: 'Top of Funnel', color: '#f97316', sources: ['demand-gen', 'snapchat', 'squaredance', 'applovin', 'tiktok'] },
+};
+const CHANNEL_ORDER = ['meta', 'retention', 'direct', 'search', 'topOfFunnel', 'other'];
+
+function classifySource(rawSource) {
+  // Normalize: trim, lowercase
+  const s = (rawSource == null ? '' : String(rawSource)).trim().toLowerCase();
+  // Direct = empty/null/none
+  if (s === '' || s === 'none' || s === 'null') return 'direct';
+  // Check each group (sources already lowercased in config)
+  for (const [groupKey, group] of Object.entries(CHANNEL_GROUPS)) {
+    if (group.sources.includes(s)) return groupKey;
+  }
+  // facebook UTM params that start with "facebook" (e.g. "facebook#...")
+  if (s.startsWith('facebook')) return 'meta';
+  return 'other';
+}
+
 // ============================================================
 // STATE
 // ============================================================
@@ -785,7 +1013,11 @@ const state = {
   cvrDeltaMode: 'pp',            // 'pp' | 'percent'
   sources: [],      // [{id, name, sessions, cvr, dSessions, dCvr}]
   nextSourceId: 1,
-  sourcesVisible: false
+  sourcesVisible: false,
+  // CSV state
+  csvLoaded: false,
+  rawRows: [],      // [{source, channel, sessions, cvrDecimal}]
+  channelDeltas: {} // {groupKey: {dSessions, dCvr}} — user-editable deltas per channel
 };
 
 // ============================================================
@@ -1092,6 +1324,239 @@ function syncSourceRow(tr, srcId) {
 }
 
 // ============================================================
+// CSV PARSING
+// ============================================================
+function parseCSV(text) {
+  const lines = text.trim().split(/\r?\n/);
+  if (lines.length < 2) throw new Error('CSV has no data rows');
+
+  // Parse header — strip BOM and quotes
+  const header = lines[0].replace(/^\uFEFF/, '').split(',').map(h => h.replace(/^"|"$/g, '').trim().toLowerCase());
+
+  // Find column indices (flexible matching)
+  const colSource  = header.findIndex(h => h.includes('utm') || h.includes('source'));
+  const colSessions = header.findIndex(h => h.includes('session'));
+  const colCvr     = header.findIndex(h => h.includes('conversion') || h === 'cvr' || h === 'cr');
+
+  if (colSessions === -1) throw new Error('Could not find a "Sessions" column');
+  if (colCvr === -1)      throw new Error('Could not find a "Conversion rate" column');
+
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    const cols = splitCSVLine(line);
+    const rawSource = colSource >= 0 ? (cols[colSource] || '').replace(/^"|"$/g, '').trim() : '';
+    const sessions  = parseInt((cols[colSessions] || '0').replace(/[",]/g, ''), 10);
+    const cvrRaw    = parseFloat((cols[colCvr] || '0').replace(/[",]/g, ''));
+
+    // CVR: if > 1 assume already percent, else treat as decimal
+    const cvrDecimal = cvrRaw > 1 ? cvrRaw / 100 : cvrRaw;
+
+    if (isNaN(sessions) || sessions < 0) continue;
+
+    rows.push({
+      source: rawSource,
+      channel: classifySource(rawSource),
+      sessions,
+      cvrDecimal: isFinite(cvrDecimal) ? cvrDecimal : 0
+    });
+  }
+
+  if (rows.length === 0) throw new Error('No valid data rows found');
+  return rows;
+}
+
+function splitCSVLine(line) {
+  // Handles quoted fields with commas
+  const result = [];
+  let cur = '';
+  let inQuote = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') { inQuote = !inQuote; }
+    else if (ch === ',' && !inQuote) { result.push(cur); cur = ''; }
+    else { cur += ch; }
+  }
+  result.push(cur);
+  return result;
+}
+
+// ============================================================
+// CHANNEL AGGREGATION
+// ============================================================
+function aggregateChannels(rows) {
+  // Group rows by channel, aggregate sessions and weighted CVR
+  const groups = {};
+  for (const key of CHANNEL_ORDER) {
+    groups[key] = { sessions: 0, weightedCvr: 0, sourceNames: [], rowCount: 0 };
+  }
+
+  rows.forEach(row => {
+    const g = groups[row.channel] || groups['other'];
+    g.sessions += row.sessions;
+    g.weightedCvr += row.sessions * row.cvrDecimal; // sum(sessions * cvr) for weighted avg
+    if (!g.sourceNames.includes(row.source) && row.source) {
+      g.sourceNames.push(row.source);
+    }
+    g.rowCount++;
+  });
+
+  // Compute blended CVR (weighted average) for each group
+  const result = [];
+  for (const key of CHANNEL_ORDER) {
+    const g = groups[key];
+    if (g.sessions === 0 && key !== 'other') continue; // skip empty defined groups
+    if (g.sessions === 0) continue; // skip empty other
+    const blendedCvr = g.sessions > 0 ? (g.weightedCvr / g.sessions) * 100 : 0; // as percent
+    result.push({
+      key,
+      label: key === 'other' ? 'Other' : CHANNEL_GROUPS[key].label,
+      color: key === 'other' ? '#9ca3af' : CHANNEL_GROUPS[key].color,
+      sessions: g.sessions,
+      cvrPct: blendedCvr,
+      sourceNames: g.sourceNames,
+      rowCount: g.rowCount
+    });
+  }
+  return result;
+}
+
+// ============================================================
+// RENDER CHANNEL GROUPS TABLE
+// ============================================================
+function renderChannelsTable() {
+  const channels = aggregateChannels(state.rawRows);
+  const tbody = el('channels-tbody');
+  tbody.innerHTML = '';
+
+  let totSessions = 0, totBase = 0, totNew = 0, totDelta = 0, totDSessions = 0;
+
+  channels.forEach(ch => {
+    const delta = state.channelDeltas[ch.key] || { dSessions: 0, dCvr: 0 };
+    // Channel group deltas always use absolute + pp modes for simplicity
+    const r = calculate(ch.sessions, ch.cvrPct, delta.dSessions, delta.dCvr, 'absolute', 'pp');
+
+    totSessions  += r.S;
+    totBase      += r.baseConv;
+    totNew       += r.newConv;
+    totDelta     += r.totalDelta;
+    totDSessions += r.dS;
+
+    const srcList = ch.sourceNames.slice(0, 4).join(', ') + (ch.sourceNames.length > 4 ? ` +${ch.sourceNames.length - 4}` : '');
+
+    const tr = document.createElement('tr');
+    tr.dataset.chKey = ch.key;
+    tr.innerHTML = `
+      <td>
+        <span class="ch-dot" style="background:${escHtml(ch.color)}"></span>
+        <strong>${escHtml(ch.label)}</strong>
+      </td>
+      <td style="color:var(--text-secondary);font-size:0.75rem;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(ch.sourceNames.join(', '))}">${escHtml(srcList)}</td>
+      <td>${fmt(r.S)}</td>
+      <td>${(ch.cvrPct).toFixed(2)}%</td>
+      <td>
+        <input type="number" class="ch-d-sessions" data-key="${escHtml(ch.key)}" value="${delta.dSessions}" step="100" placeholder="0">
+      </td>
+      <td>
+        <input type="number" class="ch-d-cvr" data-key="${escHtml(ch.key)}" value="${delta.dCvr}" step="0.01" placeholder="0">
+      </td>
+      <td>${fmt(Math.round(r.baseConv))}</td>
+      <td>${fmt(Math.round(r.newConv))}</td>
+      <td class="${colorClass(r.totalDelta)}">${fmtSign(Math.round(r.totalDelta))}</td>
+      <td class="${colorClass(r.totalDeltaPct)}">${fmtPct(r.totalDeltaPct)}</td>
+    `;
+
+    // Wire delta inputs
+    tr.querySelectorAll('input[type="number"]').forEach(inp => {
+      inp.addEventListener('input', () => {
+        const key = inp.dataset.key;
+        if (!state.channelDeltas[key]) state.channelDeltas[key] = { dSessions: 0, dCvr: 0 };
+        if (inp.classList.contains('ch-d-sessions')) {
+          state.channelDeltas[key].dSessions = parseFloat(inp.value) || 0;
+        } else {
+          state.channelDeltas[key].dCvr = parseFloat(inp.value) || 0;
+        }
+        renderChannelsTable();
+        // Also update the top-level summary with channel totals
+        syncChannelTotalsToMain(channels);
+      });
+    });
+
+    tbody.appendChild(tr);
+  });
+
+  // Totals row
+  const totPct  = totBase !== 0 ? (totDelta / totBase) * 100 : 0;
+  const totCvr  = totSessions > 0
+    ? (state.rawRows.reduce((s, r) => s + r.sessions * r.cvrDecimal, 0) / totSessions * 100)
+    : 0;
+
+  el('ch-tot-sources').textContent = state.rawRows.length + ' rows';
+  el('ch-tot-sessions').textContent = fmt(totSessions);
+  el('ch-tot-cvr').textContent = totCvr.toFixed(2) + '%';
+  el('ch-tot-d-sessions').textContent = fmtSign(Math.round(totDSessions));
+  el('ch-tot-base').textContent = fmt(Math.round(totBase));
+  el('ch-tot-new').textContent = fmt(Math.round(totNew));
+  const totDeltaEl = el('ch-tot-delta');
+  totDeltaEl.textContent = fmtSign(Math.round(totDelta));
+  totDeltaEl.className = colorClass(totDelta);
+  const totPctEl = el('ch-tot-pct');
+  totPctEl.textContent = fmtPct(totPct);
+  totPctEl.className = colorClass(totDelta);
+}
+
+function syncChannelTotalsToMain(channels) {
+  // Update main baseline inputs with channel CSV totals so decomp stays in sync
+  let totS = 0, totWeightedCvr = 0;
+  channels.forEach(ch => {
+    totS += ch.sessions;
+    totWeightedCvr += ch.sessions * (ch.cvrPct / 100);
+  });
+  const blendedCvrPct = totS > 0 ? (totWeightedCvr / totS) * 100 : 0;
+  el('inp-sessions').value = totS;
+  el('inp-cvr').value = blendedCvrPct.toFixed(4);
+  // Aggregate channel deltas into main delta inputs
+  let totDSessions = 0, totDCvr = 0;
+  channels.forEach(ch => {
+    const delta = state.channelDeltas[ch.key] || { dSessions: 0, dCvr: 0 };
+    totDSessions += delta.dSessions;
+    // Weight CVR delta by sessions share
+    totDCvr += (ch.sessions / (totS || 1)) * delta.dCvr;
+  });
+  el('inp-d-sessions').value = Math.round(totDSessions);
+  el('inp-d-cvr').value = totDCvr.toFixed(4);
+  el('sld-sessions').value = Math.round(totDSessions);
+  el('sld-cvr').value = totDCvr.toFixed(4);
+  update();
+}
+
+// ============================================================
+// RENDER RAW TABLE
+// ============================================================
+function renderRawTable() {
+  const tbody = el('raw-tbody');
+  tbody.innerHTML = '';
+  // Sort by sessions desc
+  const sorted = [...state.rawRows].sort((a, b) => b.sessions - a.sessions);
+  sorted.forEach(row => {
+    const chKey = row.channel;
+    const chColor = chKey === 'other' ? '#9ca3af' : (CHANNEL_GROUPS[chKey] ? CHANNEL_GROUPS[chKey].color : '#9ca3af');
+    const chLabel = chKey === 'other' ? 'Other' : (CHANNEL_GROUPS[chKey] ? CHANNEL_GROUPS[chKey].label : chKey);
+    const tr = document.createElement('tr');
+    if (chKey === 'other') tr.className = 'unmapped-row';
+    tr.innerHTML = `
+      <td>${escHtml(row.source || '(empty)')}</td>
+      <td><span class="ch-dot" style="background:${escHtml(chColor)}"></span>${escHtml(chLabel)}</td>
+      <td>${fmt(row.sessions)}</td>
+      <td>${(row.cvrDecimal * 100).toFixed(3)}%</td>
+      <td>${fmt(Math.round(row.sessions * row.cvrDecimal))}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+// ============================================================
 // MAIN UPDATE LOOP
 // ============================================================
 function update() {
@@ -1205,16 +1670,16 @@ function init() {
     const body = el('sources-body');
     if (state.sourcesVisible) {
       body.classList.remove('hidden');
-      el('btn-toggle-sources').textContent = '− Hide Sources';
-      if (state.sources.length === 0) addDefaultSources();
-      else renderSourcesTable();
+      el('btn-toggle-sources').textContent = '− Collapse';
+      if (!state.csvLoaded && state.sources.length === 0) addDefaultSources();
+      else if (!state.csvLoaded) renderSourcesTable();
     } else {
       body.classList.add('hidden');
-      el('btn-toggle-sources').textContent = '+ Add Sources';
+      el('btn-toggle-sources').textContent = '+ Expand';
     }
   });
 
-  // Add source row
+  // Add source row (manual)
   el('btn-add-source').addEventListener('click', () => {
     state.sources.push({
       id: state.nextSourceId++,
@@ -1227,8 +1692,86 @@ function init() {
     renderSourcesTable();
   });
 
+  // CSV file input
+  el('csv-file-input').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) handleCSVFile(file);
+  });
+
+  // Drag and drop
+  const uploadZone = el('upload-zone');
+  uploadZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    uploadZone.classList.add('drag-over');
+  });
+  uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag-over'));
+  uploadZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    uploadZone.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (file) handleCSVFile(file);
+  });
+
+  // Raw table toggle
+  el('btn-toggle-raw').addEventListener('click', () => {
+    const wrap = el('raw-table-wrap');
+    const isHidden = wrap.classList.contains('hidden');
+    wrap.classList.toggle('hidden');
+    el('btn-toggle-raw').textContent = isHidden ? 'Hide raw utm_source rows' : 'Show raw utm_source rows';
+    if (isHidden) renderRawTable();
+  });
+
   // Initial render
   update();
+}
+
+// ============================================================
+// CSV HANDLER
+// ============================================================
+function handleCSVFile(file) {
+  const statusEl = el('upload-status');
+  statusEl.className = 'ci-upload-status';
+  statusEl.style.display = 'none';
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const rows = parseCSV(e.target.result);
+      state.rawRows = rows;
+      state.csvLoaded = true;
+      state.channelDeltas = {};
+
+      // Show channel section, hide manual section
+      el('channels-section').classList.remove('hidden');
+      el('manual-sources-section').classList.add('hidden');
+
+      // Auto-open if not open
+      if (!state.sourcesVisible) {
+        state.sourcesVisible = true;
+        el('sources-body').classList.remove('hidden');
+        el('btn-toggle-sources').textContent = '− Collapse';
+      }
+
+      renderChannelsTable();
+
+      // Sync totals to main calculator
+      const channels = aggregateChannels(rows);
+      syncChannelTotalsToMain(channels);
+
+      // Update upload zone to show filename
+      el('upload-zone').querySelector('.ci-upload-zone__label').textContent = file.name;
+      el('upload-zone').querySelector('.ci-upload-zone__hint').textContent =
+        rows.length + ' rows loaded, ' + (new Set(rows.map(r => r.channel)).size) + ' channel groups';
+
+      statusEl.textContent = `Loaded ${rows.length} utm_source rows → ${aggregateChannels(rows).length} channel groups`;
+      statusEl.className = 'ci-upload-status success';
+
+    } catch (err) {
+      statusEl.textContent = 'Error parsing CSV: ' + err.message;
+      statusEl.className = 'ci-upload-status error';
+    }
+  };
+  reader.readAsText(file);
 }
 
 // ============================================================
