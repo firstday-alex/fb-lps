@@ -29,6 +29,8 @@
       --c-search: #ea4335;
       --c-topoffunnel: #f97316;
       --c-other: #9ca3af;
+      --amber: #d97706;
+      --amber-bg: #fef3c7;
     }
 
     body {
@@ -181,9 +183,23 @@
     }
     .pos { color: var(--positive); }
     .neg { color: var(--negative); }
+    .amb { color: var(--amber); }
     .badge-pos { background: var(--positive-bg); color: var(--positive); }
     .badge-neg { background: var(--negative-bg); color: var(--negative); }
     .badge-neu { background: var(--neutral-bg); color: var(--text-secondary); }
+
+    .cvr-badge {
+      display: inline-block;
+      margin-left: 5px;
+      font-size: 0.68rem;
+      font-weight: 600;
+      padding: 1px 5px;
+      border-radius: 3px;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+    .cvr-badge--hi { background: var(--positive-bg); color: var(--positive); }
+    .cvr-badge--lo { background: var(--negative-bg); color: var(--negative); }
 
     .ch-dot {
       width: 9px; height: 9px;
@@ -744,10 +760,21 @@ function render(rawRows, filename) {
   rows.forEach(r => {
     const d = decompose(r.prevSess, r.prevCvr, r.currS, r.currC);
     const srcLabel = r.source || '(direct / none)';
+    // above-average CVR vs blended prev benchmark
+    const aboveAvg = r.prevCvr > tPrevCvr;
+    // mix-shift: how much of this source's sessions change contributed to the
+    // overall CVR moving, purely due to composition (dS × (srcCVR − blendedCVR))
+    const mixShift = d.dS * (r.prevCvr - tPrevCvr);
+
     if (d.sessEffect !== 0) {
+      // Amber when a high-CVR source loses sessions (hurts blended CVR via mix)
+      // or a low-CVR source gains sessions (also hurts blended CVR via mix)
+      const mixHarmful = (aboveAvg && d.dS < 0) || (!aboveAvg && d.dS > 0);
       contributors.push({
         source: srcLabel, channel: r.channel, currS: r.currS, currC: r.currC,
+        aboveAvg, prevCvr: r.prevCvr, blendedCvr: tPrevCvr,
         typeLabel: d.dS >= 0 ? 'Sessions Increase' : 'Sessions Decrease',
+        mixHarmful,
         value: d.sessEffect,
         detail: `${fmtS(Math.round(d.dS))} sessions (${fmtP(r.prevSess > 0 ? d.dS / r.prevSess * 100 : 0, 1)})`,
       });
@@ -755,6 +782,7 @@ function render(rawRows, filename) {
     if (d.cvrEffect !== 0) {
       contributors.push({
         source: srcLabel, channel: r.channel, currS: r.currS, currC: r.currC,
+        aboveAvg, prevCvr: r.prevCvr, blendedCvr: tPrevCvr,
         typeLabel: d.dC >= 0 ? 'CVR Increase' : 'CVR Decrease',
         value: d.cvrEffect,
         detail: `${fmtPP(d.dC * 100)} (${(r.prevCvr*100).toFixed(2)}% → ${(r.currC*100).toFixed(2)}%)`,
@@ -763,9 +791,20 @@ function render(rawRows, filename) {
     if (Math.abs(d.interaction) > 0.5) {
       contributors.push({
         source: srcLabel, channel: r.channel, currS: r.currS, currC: r.currC,
+        aboveAvg, prevCvr: r.prevCvr, blendedCvr: tPrevCvr,
         typeLabel: 'Interaction Effect',
         value: d.interaction,
         detail: `${fmtS(Math.round(d.dS))} sessions × ${fmtPP(d.dC * 100)} CVR`,
+      });
+    }
+    if (Math.abs(mixShift) > 0.5) {
+      contributors.push({
+        source: srcLabel, channel: r.channel, currS: r.currS, currC: r.currC,
+        aboveAvg, prevCvr: r.prevCvr, blendedCvr: tPrevCvr,
+        typeLabel: 'Mix-Shift Effect',
+        isMixShift: true,
+        value: mixShift,
+        detail: `CVR ${(r.prevCvr*100).toFixed(2)}% vs avg ${(tPrevCvr*100).toFixed(2)}% · ${fmtS(Math.round(d.dS))} sessions`,
       });
     }
   });
@@ -788,22 +827,31 @@ function render(rawRows, filename) {
   contribList.innerHTML = '';
   contributors.forEach(c => {
     const barPct = Math.round(Math.abs(c.value) / maxAbs * 100);
-    const barColor = c.value >= 0 ? 'var(--positive)' : 'var(--negative)';
+    // Amber for mix-harmful sessions effect or mix-shift effect
+    const barColor = c.mixHarmful || c.isMixShift
+      ? 'var(--amber)'
+      : c.value >= 0 ? 'var(--positive)' : 'var(--negative)';
+    const valCls = c.mixHarmful || c.isMixShift ? 'amb' : cls(c.value);
     const pctOfDelta = tDelta !== 0 ? (c.value / tDelta * 100) : 0;
-    const pctOfBase  = tPrevConv > 0 ? (c.value / tPrevConv * 100) : 0;
+
+    // CVR vs average badge
+    const cvrVsAvg = c.prevCvr - c.blendedCvr;
+    const cvrBadge = isFinite(cvrVsAvg) && Math.abs(cvrVsAvg) > 0.0001
+      ? `<span class="cvr-badge ${cvrVsAvg > 0 ? 'cvr-badge--hi' : 'cvr-badge--lo'}" title="Source CVR vs blended average">${cvrVsAvg > 0 ? '↑' : '↓'} ${Math.abs(cvrVsAvg*100).toFixed(2)}pp vs avg</span>`
+      : '';
+
     const wrap = document.createElement('div');
     wrap.className = 'contrib-wrap';
 
     const row = document.createElement('div');
     row.className = 'contrib-item contrib-item--clickable';
     row.setAttribute('title', 'Click to break down by landing page');
-    // Truncate long utm source names (e.g. facebook# tracking params)
     const shortSrc = c.source.length > 30 ? c.source.slice(0, 28) + '…' : c.source;
     row.innerHTML = `
       <div class="contrib-label" title="${esc(c.source)}">
         <span class="ch-dot" style="background:${esc(chColor(c.channel))}"></span>
         <div>
-          <div>${esc(shortSrc)}</div>
+          <div>${esc(shortSrc)}${cvrBadge}</div>
           <div class="contrib-type">${esc(c.typeLabel)}</div>
         </div>
       </div>
@@ -815,8 +863,8 @@ function render(rawRows, filename) {
         </div>
         <div style="font-size:0.72rem;color:var(--text-secondary);margin-top:2px">${esc(c.detail)}</div>
       </div>
-      <div class="contrib-val ${cls(c.value)}">${fmtS(Math.round(c.value))}</div>
-      <div class="contrib-pct ${cls(c.value)}">${fmtP(pctOfDelta, 1)} of Δ</div>
+      <div class="contrib-val ${valCls}">${fmtS(Math.round(c.value))}</div>
+      <div class="contrib-pct ${valCls}">${fmtP(pctOfDelta, 1)} of Δ</div>
       <div class="contrib-chevron">▶</div>
     `;
 

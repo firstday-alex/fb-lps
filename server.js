@@ -357,6 +357,44 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
   }
 });
 
+// --- Test permissions endpoint ---
+
+app.get('/api/test-permissions', requireAuth, async (req, res) => {
+  try {
+    // Test 1: Check what permissions the token actually has
+    const permsUrl = `${META_BASE_URL}/me/permissions`
+      + `?${metaParams(req.accessToken)}`;
+    const permsResponse = await fetch(permsUrl);
+    const permsData = await permsResponse.json();
+
+    // Test 2: List pages the user manages (tests pages_show_list)
+    const pagesUrl = `${META_BASE_URL}/me/accounts`
+      + `?fields=id,name,access_token`
+      + `&${metaParams(req.accessToken)}`;
+    const pagesResponse = await fetch(pagesUrl);
+    const pagesData = await pagesResponse.json();
+
+    // Test 3: If we have a page, try reading an ads_post from it
+    let adsPostTest = null;
+    if (pagesData.data?.[0]) {
+      const pageId = pagesData.data[0].id;
+      const pageToken = pagesData.data[0].access_token;
+
+      // Try using the page access token to read ads posts
+      const adsPostsUrl = `${META_BASE_URL}/${pageId}/ads_posts`
+        + `?fields=id,link,call_to_action`
+        + `&limit=3`
+        + `&access_token=${encodeURIComponent(pageToken)}&appsecret_proof=${generateAppSecretProof(pageToken)}`;
+      const adsPostsResponse = await fetch(adsPostsUrl);
+      adsPostTest = await adsPostsResponse.json();
+    }
+
+    res.json({ permissions: permsData, pages: pagesData, adsPostTest });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // --- Debug endpoint (temporary) ---
 
 app.get('/api/debug-ad', requireAuth, async (req, res) => {
