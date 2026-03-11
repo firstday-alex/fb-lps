@@ -297,11 +297,10 @@
     .card__sub { font-size: 0.8rem; color: var(--text-secondary); margin: -6px 0 14px; }
     .contrib-item {
       display: grid;
-      grid-template-columns: 180px 52px 52px 1fr 80px 90px 90px;
+      grid-template-columns: 180px 52px 52px 1fr 80px 90px 20px;
       align-items: center;
       gap: 10px;
       padding: 8px 0;
-      border-bottom: 1px solid var(--border);
       font-size: 0.82rem;
     }
     .contrib-stat {
@@ -339,6 +338,38 @@
     .contrib-val { text-align: right; font-weight: 600; }
     .contrib-pct { text-align: right; font-size: 0.75rem; color: var(--text-secondary); }
     .contrib-base { text-align: right; font-size: 0.75rem; color: var(--text-secondary); }
+
+    /* Drill-down */
+    .contrib-wrap { border-bottom: 1px solid var(--border); }
+    .contrib-wrap:last-child { border-bottom: none; }
+    .contrib-item { border-bottom: none; } /* border now on wrap */
+    .contrib-item--clickable { cursor: pointer; user-select: none; }
+    .contrib-item--clickable:hover { background: #f7f9ff; }
+    .contrib-wrap.open .contrib-item--clickable { background: #eef3ff; }
+    .contrib-chevron { font-size: 0.65rem; color: var(--text-secondary); text-align: right; }
+
+    .drill-panel { display: none; background: #f7f9ff; border-top: 1px solid #dde4f7; padding: 0 12px; }
+    .contrib-wrap.open .drill-panel { display: block; }
+    .drill-header {
+      font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.07em; color: var(--text-secondary);
+      padding: 8px 0 4px;
+    }
+    .drill-row {
+      display: grid;
+      grid-template-columns: 1fr 52px 52px 1fr 70px 90px;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 0;
+      border-top: 1px solid #e8ecf5;
+      font-size: 0.8rem;
+    }
+    .drill-lp {
+      font-weight: 500;
+      font-size: 0.78rem;
+      color: var(--text-primary);
+      word-break: break-all;
+    }
 
     .hidden { display: none !important; }
     .section-label {
@@ -496,8 +527,9 @@ function parseCSV(text) {
   const rawH = splitLine(lines[0].replace(/^\uFEFF/,''));
   const h = rawH.map(s => cleanVal(s).toLowerCase());
 
-  // Require previous period columns
+  // Column indices
   const iSrc     = h.findIndex(s => s.includes('utm') || s === 'source');
+  const iLp      = h.findIndex(s => s.includes('landing') || s.includes('page path'));
   const iSess    = h.findIndex(s => s.includes('session') && !s.includes('previous'));
   const iCvr     = h.findIndex(s => (s.includes('conversion') || s === 'cvr') && !s.includes('previous'));
   const iPrevS   = h.findIndex(s => s.includes('session') && s.includes('previous'));
@@ -508,28 +540,83 @@ function parseCSV(text) {
   if (iPrevS   < 0) throw new Error('Missing "Sessions (previous_period)" column. Please export with previous period comparison enabled.');
   if (iPrevCvr < 0) throw new Error('Missing "Conversion rate (previous_period)" column. Please export with previous period comparison enabled.');
 
+  const hasLp = iLp >= 0;
   const rows = [];
+  let lastSource = '';
+
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line) continue;
     const cols = splitLine(line);
-    const source   = iSrc >= 0 ? cleanVal(cols[iSrc]) : '';
+
+    // Forward-fill sparse utm_source
+    const rawSrc = iSrc >= 0 ? cleanVal(cols[iSrc]) : '';
+    if (rawSrc) lastSource = rawSrc;
+    const source = lastSource;
+
+    const lp       = hasLp ? cleanVal(cols[iLp]) : '';
     const sessions = toInt(cols[iSess]);
     const cvrRaw   = toNum(cols[iCvr]);
     const prevS    = toNum(cols[iPrevS]);
     const prevCvrR = toNum(cols[iPrevCvr]);
 
-    // Skip rows where we can't determine anything useful
-    const currS = sessions != null ? sessions : 0;
-    const currC = normCvr(cvrRaw) ?? 0;
+    const currS    = sessions != null ? sessions : 0;
+    const currC    = normCvr(cvrRaw) ?? 0;
     const prevSess = prevS != null ? Math.round(prevS) : 0;
     const prevCvr  = normCvr(prevCvrR) ?? 0;
 
-    rows.push({ source, channel: classifySource(source), currS, currC, prevSess, prevCvr });
+    rows.push({ source, lp, channel: classifySource(source), currS, currC, prevSess, prevCvr });
   }
 
   if (rows.length === 0) throw new Error('No valid rows found.');
   return rows;
+}
+
+// Aggregate raw rows by utm_source (summing sessions, weighted CVR)
+function aggregateBySource(rows) {
+  const map = new Map();
+  rows.forEach(r => {
+    let g = map.get(r.source);
+    if (!g) { g = { source: r.source, channel: r.channel, prevS: 0, currS: 0, prevWC: 0, currWC: 0 }; map.set(r.source, g); }
+    g.prevS  += r.prevSess;
+    g.currS  += r.currS;
+    g.prevWC += r.prevSess * r.prevCvr;
+    g.currWC += r.currS    * r.currC;
+  });
+  return Array.from(map.values()).map(g => ({
+    source:   g.source,
+    channel:  g.channel,
+    currS:    g.currS,
+    currC:    g.currS  > 0 ? g.currWC / g.currS  : 0,
+    prevSess: g.prevS,
+    prevCvr:  g.prevS  > 0 ? g.prevWC / g.prevS  : 0,
+    lp: null,
+  }));
+}
+
+// Build landing-page rows for a single utm_source (aggregate by lp path)
+function aggregateByLp(rows, source) {
+  const map = new Map();
+  rows.forEach(r => {
+    if (r.source !== source) return;
+    const key = r.lp || '(no path)';
+    let g = map.get(key);
+    if (!g) { g = { lp: key, prevS: 0, currS: 0, prevWC: 0, currWC: 0 }; map.set(key, g); }
+    g.prevS  += r.prevSess;
+    g.currS  += r.currS;
+    g.prevWC += r.prevSess * r.prevCvr;
+    g.currWC += r.currS    * r.currC;
+  });
+  return Array.from(map.values())
+    .map(g => ({
+      lp:      g.lp,
+      currS:   g.currS,
+      currC:   g.currS > 0 ? g.currWC / g.currS : 0,
+      prevSess: g.prevS,
+      prevCvr: g.prevS > 0 ? g.prevWC / g.prevS : 0,
+    }))
+    .sort((a, b) => Math.abs(decompose(b.prevSess, b.prevCvr, b.currS, b.currC).totalDelta)
+                  - Math.abs(decompose(a.prevSess, a.prevCvr, a.currS, a.currC).totalDelta));
 }
 
 // ─────────────────────────────────────────────
@@ -593,8 +680,14 @@ function esc(s) { const d=document.createElement('div'); d.textContent=s; return
 // ─────────────────────────────────────────────
 // RENDER
 // ─────────────────────────────────────────────
-function render(rows, filename) {
-  const channels = aggregate(rows);
+// Raw rows stored for drill-down lookups
+let _rawRows = [];
+
+function render(rawRows, filename) {
+  _rawRows = rawRows;
+  // Aggregate to utm_source level for contributor list
+  const rows = aggregateBySource(rawRows);
+  const channels = aggregate(rawRows);
 
   // Totals
   let tPrevS=0, tCurrS=0, tPrevConv=0, tCurrConv=0, tDelta=0;
@@ -698,8 +791,12 @@ function render(rows, filename) {
     const barColor = c.value >= 0 ? 'var(--positive)' : 'var(--negative)';
     const pctOfDelta = tDelta !== 0 ? (c.value / tDelta * 100) : 0;
     const pctOfBase  = tPrevConv > 0 ? (c.value / tPrevConv * 100) : 0;
+    const wrap = document.createElement('div');
+    wrap.className = 'contrib-wrap';
+
     const row = document.createElement('div');
-    row.className = 'contrib-item';
+    row.className = 'contrib-item contrib-item--clickable';
+    row.setAttribute('title', 'Click to break down by landing page');
     // Truncate long utm source names (e.g. facebook# tracking params)
     const shortSrc = c.source.length > 30 ? c.source.slice(0, 28) + '…' : c.source;
     row.innerHTML = `
@@ -719,10 +816,25 @@ function render(rows, filename) {
         <div style="font-size:0.72rem;color:var(--text-secondary);margin-top:2px">${esc(c.detail)}</div>
       </div>
       <div class="contrib-val ${cls(c.value)}">${fmtS(Math.round(c.value))}</div>
-      <div class="contrib-pct">${fmtP(pctOfDelta, 1)} of Δ</div>
-      <div class="contrib-base">${fmtP(pctOfBase, 2)} of prev</div>
+      <div class="contrib-pct ${cls(c.value)}">${fmtP(pctOfDelta, 1)} of Δ</div>
+      <div class="contrib-chevron">▶</div>
     `;
-    contribList.appendChild(row);
+
+    const drill = document.createElement('div');
+    drill.className = 'drill-panel';
+
+    row.addEventListener('click', () => {
+      const open = wrap.classList.toggle('open');
+      row.querySelector('.contrib-chevron').textContent = open ? '▼' : '▶';
+      if (open && !drill.dataset.loaded) {
+        drill.dataset.loaded = '1';
+        renderDrillDown(drill, c.source, tDelta, tPrevConv);
+      }
+    });
+
+    wrap.appendChild(row);
+    wrap.appendChild(drill);
+    contribList.appendChild(wrap);
   });
 
   // Breakdown table
@@ -796,6 +908,50 @@ function render(rows, filename) {
   // Show results
   document.getElementById('upload-screen').style.display = 'none';
   document.getElementById('results-screen').style.display = 'block';
+}
+
+// ─────────────────────────────────────────────
+// DRILL-DOWN: landing page breakdown for one source
+// ─────────────────────────────────────────────
+function renderDrillDown(container, source, tDelta, tPrevConv) {
+  const lpRows = aggregateByLp(_rawRows, source);
+  if (lpRows.length === 0) {
+    container.innerHTML = '<p style="padding:10px 12px;font-size:0.8rem;color:var(--text-secondary)">No landing page data available.</p>';
+    return;
+  }
+
+  // Build contributors for this source's landing pages
+  const contribs = [];
+  lpRows.forEach(r => {
+    const d = decompose(r.prevSess, r.prevCvr, r.currS, r.currC);
+    const shortLp = r.lp.length > 45 ? r.lp.slice(0, 43) + '…' : r.lp;
+    if (d.sessEffect !== 0) contribs.push({ lp: r.lp, shortLp, currS: r.currS, currC: r.currC, typeLabel: d.dS >= 0 ? 'Sessions Increase' : 'Sessions Decrease', value: d.sessEffect, detail: `${fmtS(Math.round(d.dS))} sessions (${fmtP(r.prevSess > 0 ? d.dS/r.prevSess*100 : 0, 1)})` });
+    if (d.cvrEffect !== 0) contribs.push({ lp: r.lp, shortLp, currS: r.currS, currC: r.currC, typeLabel: d.dC >= 0 ? 'CVR Increase' : 'CVR Decrease', value: d.cvrEffect, detail: `${fmtPP(d.dC*100)} (${(r.prevCvr*100).toFixed(2)}% → ${(r.currC*100).toFixed(2)}%)` });
+    if (Math.abs(d.interaction) > 0.5) contribs.push({ lp: r.lp, shortLp, currS: r.currS, currC: r.currC, typeLabel: 'Interaction Effect', value: d.interaction, detail: `${fmtS(Math.round(d.dS))} sessions × ${fmtPP(d.dC*100)} CVR` });
+  });
+  contribs.sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
+
+  const maxAbs = contribs.length > 0 ? Math.abs(contribs[0].value) : 1;
+
+  const html = contribs.map(c => {
+    const barPct = Math.round(Math.abs(c.value) / maxAbs * 100);
+    const barColor = c.value >= 0 ? 'var(--positive)' : 'var(--negative)';
+    const pctOfDelta = tDelta !== 0 ? (c.value / tDelta * 100) : 0;
+    return `
+      <div class="drill-row">
+        <div class="drill-lp" title="${esc(c.lp)}">${esc(c.shortLp)}<div class="contrib-type">${esc(c.typeLabel)}</div></div>
+        <div class="contrib-stat"><strong>${esc(fmtK(c.currS))}</strong>sess</div>
+        <div class="contrib-stat"><strong>${(c.currC*100).toFixed(2)}%</strong>CVR</div>
+        <div>
+          <div class="contrib-bar-wrap"><div class="contrib-bar" style="width:${barPct}%;background:${barColor}"></div></div>
+          <div style="font-size:0.7rem;color:var(--text-secondary);margin-top:2px">${esc(c.detail)}</div>
+        </div>
+        <div class="contrib-val ${cls(c.value)}">${fmtS(Math.round(c.value))}</div>
+        <div class="contrib-pct">${fmtP(pctOfDelta, 1)} of total Δ</div>
+      </div>`;
+  }).join('');
+
+  container.innerHTML = `<div class="drill-header">Landing page breakdown · ${contribs.length} row${contribs.length !== 1 ? 's' : ''}</div>${html}`;
 }
 
 // ─────────────────────────────────────────────
