@@ -256,15 +256,13 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
             if (pageToken) {
               try {
                 const postUrl = `${META_BASE_URL}/${creative.effective_object_story_id}`
-                  + `?fields=link,call_to_action,permalink_url`
+                  + `?fields=link,permalink_url`
                   + `&access_token=${encodeURIComponent(pageToken)}&appsecret_proof=${generateAppSecretProof(pageToken)}`;
                 const postResponse = await fetch(postUrl);
                 const postData = await postResponse.json();
 
                 if (!postData.error) {
-                  destinationUrl = postData.link
-                    || postData.call_to_action?.value?.link
-                    || null;
+                  destinationUrl = postData.link || null;
                 }
               } catch (e) {}
             }
@@ -368,7 +366,7 @@ app.get('/api/test-permissions', requireAuth, async (req, res) => {
 
         // Try reading the post with page token
         const postUrl = `${META_BASE_URL}/375215066258824_1403167991809848`
-          + `?fields=link,call_to_action,permalink_url,message`
+          + `?fields=link,permalink_url`
           + `&access_token=${encodeURIComponent(pageToken)}&appsecret_proof=${generateAppSecretProof(pageToken)}`;
         const postResponse = await fetch(postUrl);
         postTest = await postResponse.json();
