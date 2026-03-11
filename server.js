@@ -94,7 +94,7 @@ app.get('/auth/facebook', (req, res) => {
   const authUrl = `https://www.facebook.com/${META_API_VERSION}/dialog/oauth`
     + `?client_id=${META_APP_ID}`
     + `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}`
-    + `&scope=ads_read,pages_read_engagement,pages_manage_ads,pages_show_list`
+    + `&scope=ads_read,pages_read_engagement,pages_show_list`
     + `&response_type=code`;
   res.redirect(authUrl);
 });
