@@ -208,7 +208,22 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
       return res.json({ ads: [] });
     }
 
-    // Step 2: Fetch creative details for each ad in parallel
+    // Step 2: Build a page token map (for reading page posts)
+    const pageTokenMap = {};
+    try {
+      const pagesUrl = `${META_BASE_URL}/me/accounts`
+        + `?fields=id,access_token&limit=100`
+        + `&${metaParams(req.accessToken)}`;
+      const pagesResponse = await fetch(pagesUrl);
+      const pagesData = await pagesResponse.json();
+      if (pagesData.data) {
+        pagesData.data.forEach(p => { pageTokenMap[p.id] = p.access_token; });
+      }
+    } catch (e) {
+      console.error('Failed to fetch page tokens:', e);
+    }
+
+    // Step 3: Fetch creative details for each ad in parallel
     const adsWithCreatives = await Promise.all(
       ads.map(async (ad) => {
         try {
@@ -233,76 +248,26 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
             || creative.link_url
             || null;
 
-          // Fallback 1: Try reading the post directly (needs pages_read_engagement)
+          // Fallback: Read the page post using page access token
           if (!destinationUrl && creative.effective_object_story_id) {
-            try {
-              const postUrl = `${META_BASE_URL}/${creative.effective_object_story_id}`
-                + `?fields=link,attachments{unshimmed_url,url}`
-                + `&${metaParams(req.accessToken)}`;
-              const postResponse = await fetch(postUrl);
-              const postData = await postResponse.json();
+            const pageId = creative.effective_object_story_id.split('_')[0];
+            const pageToken = pageTokenMap[pageId];
 
-              if (!postData.error) {
-                destinationUrl = postData.link
-                  || postData.attachments?.data?.[0]?.unshimmed_url
-                  || postData.attachments?.data?.[0]?.url
-                  || null;
-              }
-            } catch (e) {}
-          }
+            if (pageToken) {
+              try {
+                const postUrl = `${META_BASE_URL}/${creative.effective_object_story_id}`
+                  + `?fields=link,call_to_action,permalink_url`
+                  + `&access_token=${encodeURIComponent(pageToken)}&appsecret_proof=${generateAppSecretProof(pageToken)}`;
+                const postResponse = await fetch(postUrl);
+                const postData = await postResponse.json();
 
-          // Fallback 2: Try page ads_posts endpoint (needs pages_manage_ads)
-          if (!destinationUrl && creative.effective_object_story_id) {
-            try {
-              const pageId = creative.effective_object_story_id.split('_')[0];
-              const adsPostsUrl = `${META_BASE_URL}/${pageId}/ads_posts`
-                + `?fields=id,link,call_to_action`
-                + `&filtering=[{"field":"effective_object_story_id","operator":"IN","value":["${creative.effective_object_story_id}"]}]`
-                + `&${metaParams(req.accessToken)}`;
-              const adsPostsResponse = await fetch(adsPostsUrl);
-              const adsPostsData = await adsPostsResponse.json();
-
-              if (adsPostsData.data?.[0]) {
-                destinationUrl = adsPostsData.data[0].link
-                  || adsPostsData.data[0].call_to_action?.value?.link
-                  || null;
-              }
-            } catch (e) {}
-          }
-
-          // Fallback 3: Extract from ad preview HTML
-          if (!destinationUrl) {
-            try {
-              const previewUrl = `${META_BASE_URL}/${ad.ad_id}/previews`
-                + `?ad_format=DESKTOP_FEED_STANDARD`
-                + `&${metaParams(req.accessToken)}`;
-              const previewResponse = await fetch(previewUrl);
-              const previewData = await previewResponse.json();
-
-              if (previewData.data?.[0]?.body) {
-                const iframeSrcMatch = previewData.data[0].body.match(/src="([^"]+)"/);
-                if (iframeSrcMatch) {
-                  const iframeUrl = iframeSrcMatch[1].replace(/&amp;/g, '&');
-                  const iframeResponse = await fetch(iframeUrl);
-                  const iframeHtml = await iframeResponse.text();
-
-                  // Look for l.facebook.com redirect URLs
-                  const redirectMatches = iframeHtml.match(/l\.facebook\.com\/l\.php\?u=([^&"']+)/g) || [];
-                  const redirectUrls = redirectMatches
-                    .map(m => { try { return decodeURIComponent(m.split('u=')[1]); } catch { return null; } })
-                    .filter(Boolean);
-
-                  // Look for external hrefs
-                  const hrefMatches = iframeHtml.match(/href="(https?:\/\/[^"]+)"/g) || [];
-                  const externalUrls = hrefMatches
-                    .map(m => m.match(/href="([^"]+)"/)[1])
-                    .map(u => { try { return decodeURIComponent(u); } catch { return u; } })
-                    .filter(u => !u.includes('facebook.com') && !u.includes('fbcdn.net') && !u.includes('fb.com') && !u.includes('instagram.com'));
-
-                  destinationUrl = redirectUrls[0] || externalUrls[0] || null;
+                if (!postData.error) {
+                  destinationUrl = postData.link
+                    || postData.call_to_action?.value?.link
+                    || null;
                 }
-              }
-            } catch (e) {}
+              } catch (e) {}
+            }
           }
 
           const imageUrl = creative.image_url
@@ -403,7 +368,7 @@ app.get('/api/test-permissions', requireAuth, async (req, res) => {
 
         // Try reading the post with page token
         const postUrl = `${META_BASE_URL}/375215066258824_1403167991809848`
-          + `?fields=link,call_to_action,attachments{url,unshimmed_url}`
+          + `?fields=link,call_to_action,permalink_url,message`
           + `&access_token=${encodeURIComponent(pageToken)}&appsecret_proof=${generateAppSecretProof(pageToken)}`;
         const postResponse = await fetch(postUrl);
         postTest = await postResponse.json();
@@ -460,7 +425,7 @@ app.get('/api/debug-ad', requireAuth, async (req, res) => {
 
     if (storyId) {
       const postUrl = `${META_BASE_URL}/${storyId}`
-        + `?fields=link,permalink_url,call_to_action,attachments{url,unshimmed_url}`
+        + `?fields=link,permalink_url,call_to_action`
         + `&${metaParams(req.accessToken)}`;
       const postResponse = await fetch(postUrl);
       postData = await postResponse.json();
