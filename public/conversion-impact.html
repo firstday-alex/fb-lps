@@ -3,16 +3,15 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Conversion Impact Calculator</title>
+  <title>Conversion Impact Analysis</title>
   <style>
-    /* === Reset + Base === */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
       --fb-blue: #1877f2;
       --fb-blue-dark: #166fe5;
       --bg: #f0f2f5;
-      --surface: #ffffff;
+      --surface: #fff;
       --text-primary: #1c1e21;
       --text-secondary: #65676b;
       --border: #dddfe2;
@@ -21,11 +20,15 @@
       --negative: #c0392b;
       --negative-bg: #fee2e2;
       --neutral-bg: #e4e6eb;
-      --color-sessions: #1877f2;
-      --color-cvr: #0a9396;
-      --color-interaction: #e76f51;
       --shadow: 0 1px 3px rgba(0,0,0,0.12);
       --radius: 8px;
+      /* channel colors */
+      --c-meta: #1877f2;
+      --c-retention: #7c3aed;
+      --c-direct: #65676b;
+      --c-search: #ea4335;
+      --c-topoffunnel: #f97316;
+      --c-other: #9ca3af;
     }
 
     body {
@@ -36,397 +39,177 @@
       min-height: 100vh;
     }
 
-    /* === Header === */
+    /* Header */
     header {
       background: var(--fb-blue);
       color: white;
       padding: 16px 24px;
       display: flex;
-      justify-content: space-between;
       align-items: center;
+      gap: 16px;
     }
-    .header__left { display: flex; align-items: center; gap: 16px; }
-    header h1 { font-size: 1.25rem; font-weight: 700; }
     .header__back {
       color: rgba(255,255,255,0.85);
       text-decoration: none;
-      font-size: 0.9rem;
-      display: flex;
-      align-items: center;
-      gap: 4px;
+      font-size: 0.875rem;
       border: 1px solid rgba(255,255,255,0.3);
       padding: 4px 10px;
       border-radius: 6px;
-      transition: background 0.15s;
+      white-space: nowrap;
     }
     .header__back:hover { background: rgba(255,255,255,0.15); color: white; }
-    .header__subtitle {
-      font-size: 0.8rem;
-      opacity: 0.75;
-      font-weight: 400;
-    }
+    header h1 { font-size: 1.2rem; font-weight: 700; }
+    header p { font-size: 0.8rem; opacity: 0.75; }
 
-    /* === Layout === */
-    .ci-layout {
-      display: grid;
-      grid-template-columns: 360px 1fr;
-      gap: 20px;
-      padding: 20px 24px;
-      max-width: 1400px;
-      margin: 0 auto;
+    /* Upload screen */
+    #upload-screen {
+      max-width: 560px;
+      margin: 60px auto;
+      padding: 0 24px;
     }
-    @media (max-width: 900px) {
-      .ci-layout { grid-template-columns: 1fr; padding: 16px; }
-    }
-
-    /* === Card === */
-    .ci-card {
+    .upload-card {
       background: var(--surface);
       border-radius: var(--radius);
       box-shadow: var(--shadow);
+      padding: 32px;
+      text-align: center;
     }
-
-    /* === Inputs Panel === */
-    .ci-inputs {
-      padding: 20px;
-      display: flex;
-      flex-direction: column;
-      gap: 20px;
-      align-self: start;
-      position: sticky;
-      top: 16px;
+    .upload-card h2 { font-size: 1.1rem; margin-bottom: 8px; }
+    .upload-card p { font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 24px; }
+    .upload-zone {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 32px 20px;
+      cursor: pointer;
+      position: relative;
+      transition: border-color 0.15s, background 0.15s;
     }
-    @media (max-width: 900px) {
-      .ci-inputs { position: static; }
-    }
-    .ci-section-label {
-      font-size: 0.7rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--text-secondary);
-      margin-bottom: 2px;
-    }
-    .ci-field {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-    .ci-field label {
-      font-size: 0.85rem;
-      font-weight: 600;
-      color: var(--text-primary);
-    }
-    .ci-field .ci-field__hint {
-      font-size: 0.75rem;
-      color: var(--text-secondary);
-      font-weight: 400;
-    }
-    .ci-input-row {
-      display: flex;
-      gap: 8px;
-      align-items: center;
-    }
-    .ci-input-row input[type="number"] {
-      flex: 1;
-      padding: 8px 12px;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      font-size: 0.9rem;
-      color: var(--text-primary);
-      background: var(--surface);
-      transition: border-color 0.15s;
-      -moz-appearance: textfield;
-    }
-    .ci-input-row input[type="number"]::-webkit-outer-spin-button,
-    .ci-input-row input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; }
-    .ci-input-row input[type="number"]:focus {
-      outline: none;
+    .upload-zone:hover, .upload-zone.drag-over {
       border-color: var(--fb-blue);
-      box-shadow: 0 0 0 3px rgba(24,119,242,0.15);
+      background: #f0f5ff;
     }
-    .ci-suffix {
-      font-size: 0.85rem;
-      color: var(--text-secondary);
-      font-weight: 600;
-      white-space: nowrap;
+    .upload-zone input[type="file"] {
+      position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
     }
-
-    /* Toggle pill group */
-    .ci-toggle-group {
-      display: flex;
-      border: 1px solid var(--border);
+    .upload-zone__icon { font-size: 2rem; margin-bottom: 10px; }
+    .upload-zone__label { font-size: 0.9rem; font-weight: 600; color: var(--fb-blue); }
+    .upload-zone__hint { font-size: 0.78rem; color: var(--text-secondary); margin-top: 4px; }
+    .upload-error {
+      margin-top: 12px;
+      padding: 10px 14px;
+      background: var(--negative-bg);
+      color: var(--negative);
       border-radius: 6px;
-      overflow: hidden;
-      width: fit-content;
+      font-size: 0.82rem;
+      display: none;
     }
-    .ci-toggle-group button {
-      padding: 5px 12px;
-      font-size: 0.78rem;
-      font-weight: 600;
-      border: none;
-      background: var(--surface);
-      color: var(--text-secondary);
-      cursor: pointer;
-      transition: background 0.15s, color 0.15s;
-    }
-    .ci-toggle-group button:not(:last-child) {
-      border-right: 1px solid var(--border);
-    }
-    .ci-toggle-group button.active {
-      background: var(--fb-blue);
-      color: white;
-    }
+    .upload-error.show { display: block; }
 
-    /* Sliders */
-    .ci-slider-field {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-    .ci-slider-field label {
-      font-size: 0.85rem;
-      font-weight: 600;
-      display: flex;
-      justify-content: space-between;
-    }
-    .ci-slider-readout {
-      font-weight: 700;
-      color: var(--fb-blue);
-    }
-    input[type="range"] {
-      width: 100%;
-      height: 4px;
-      -webkit-appearance: none;
-      appearance: none;
-      background: var(--neutral-bg);
-      border-radius: 2px;
-      cursor: pointer;
-    }
-    input[type="range"]::-webkit-slider-thumb {
-      -webkit-appearance: none;
-      width: 16px; height: 16px;
-      border-radius: 50%;
-      background: var(--fb-blue);
-      border: 2px solid white;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.2);
-    }
-    input[type="range"]::-moz-range-thumb {
-      width: 16px; height: 16px;
-      border-radius: 50%;
-      background: var(--fb-blue);
-      border: 2px solid white;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.2);
-    }
-
-    .ci-divider {
-      border: none;
-      border-top: 1px solid var(--border);
-      margin: 2px 0;
-    }
-
-    /* === Results Panel === */
-    .ci-results {
+    /* Results screen */
+    #results-screen { display: none; }
+    .results-wrap {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 20px 24px;
       display: flex;
       flex-direction: column;
       gap: 16px;
     }
 
-    /* Summary cards */
-    .ci-summary {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 12px;
+    /* Top bar */
+    .top-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 10px;
     }
-    @media (max-width: 700px) {
-      .ci-summary { grid-template-columns: repeat(2, 1fr); }
+    .top-bar__info { font-size: 0.82rem; color: var(--text-secondary); }
+    .top-bar__info strong { color: var(--text-primary); }
+    .btn-reset {
+      font-size: 0.82rem;
+      padding: 6px 14px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--surface);
+      cursor: pointer;
+      color: var(--text-secondary);
     }
-    @media (max-width: 400px) {
-      .ci-summary { grid-template-columns: 1fr; }
-    }
-    .ci-metric-card {
+    .btn-reset:hover { background: var(--bg); }
+
+    /* Card base */
+    .card {
       background: var(--surface);
       border-radius: var(--radius);
       box-shadow: var(--shadow);
-      padding: 16px;
     }
-    .ci-metric-card__label {
-      font-size: 0.75rem;
-      font-weight: 600;
+
+    /* KPI row */
+    .kpi-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+    }
+    @media (max-width: 700px) { .kpi-row { grid-template-columns: 1fr; } }
+    .kpi {
+      background: var(--surface);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 16px 18px;
+    }
+    .kpi__label {
+      font-size: 0.72rem;
+      font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.06em;
       color: var(--text-secondary);
       margin-bottom: 4px;
     }
-    .ci-metric-card__value {
-      font-size: 1.6rem;
+    .kpi__value {
+      font-size: 1.7rem;
       font-weight: 700;
-      color: var(--text-primary);
-      line-height: 1.2;
+      line-height: 1.1;
     }
-    .ci-metric-card__sub {
-      font-size: 0.8rem;
-      margin-top: 4px;
-      color: var(--text-secondary);
-    }
-    .ci-badge {
+    .kpi__sub { font-size: 0.78rem; color: var(--text-secondary); margin-top: 4px; }
+    .kpi__badge {
       display: inline-block;
+      margin-top: 4px;
       padding: 2px 8px;
       border-radius: 20px;
-      font-size: 0.75rem;
+      font-size: 0.72rem;
       font-weight: 700;
     }
-    .ci-badge--positive { background: var(--positive-bg); color: var(--positive); }
-    .ci-badge--negative { background: var(--negative-bg); color: var(--negative); }
-    .ci-badge--neutral { background: var(--neutral-bg); color: var(--text-secondary); }
-    .ci-badge--sessions { background: #dbeafe; color: #1d4ed8; }
-    .ci-badge--cvr { background: #ccfbf1; color: #0f766e; }
-    .ci-badge--both { background: #fef3c7; color: #92400e; }
+    .pos { color: var(--positive); }
+    .neg { color: var(--negative); }
+    .badge-pos { background: var(--positive-bg); color: var(--positive); }
+    .badge-neg { background: var(--negative-bg); color: var(--negative); }
+    .badge-neu { background: var(--neutral-bg); color: var(--text-secondary); }
 
-    /* Decomposition card */
-    .ci-decomp {
-      padding: 20px;
-    }
-    .ci-decomp h2 {
-      font-size: 0.95rem;
-      font-weight: 700;
-      margin-bottom: 16px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .ci-decomp h2 span {
-      font-size: 0.75rem;
-      font-weight: 400;
-      color: var(--text-secondary);
-    }
-
-    /* Waterfall bar */
-    .ci-waterfall {
-      margin-bottom: 16px;
-    }
-    .ci-waterfall__track {
-      height: 32px;
-      background: var(--neutral-bg);
-      border-radius: 6px;
-      overflow: hidden;
-      display: flex;
-      position: relative;
-    }
-    .ci-waterfall__segment {
-      height: 100%;
-      transition: width 0.3s ease;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 0.7rem;
-      font-weight: 700;
-      color: white;
-      white-space: nowrap;
-      overflow: hidden;
-      min-width: 0;
-    }
-    .ci-waterfall__segment--sessions { background: var(--color-sessions); }
-    .ci-waterfall__segment--cvr { background: var(--color-cvr); }
-    .ci-waterfall__segment--interaction { background: var(--color-interaction); }
-    .ci-waterfall__segment--neg-sessions { background: #93c5fd; }
-    .ci-waterfall__segment--neg-cvr { background: #99f6e4; }
-    .ci-waterfall__segment--neg-interaction { background: #fdba74; }
-    .ci-waterfall__legend {
-      display: flex;
-      gap: 16px;
-      margin-top: 10px;
-      flex-wrap: wrap;
-    }
-    .ci-legend-item {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 0.8rem;
-    }
-    .ci-legend-dot {
-      width: 10px; height: 10px;
+    .ch-dot {
+      width: 9px; height: 9px;
       border-radius: 50%;
       flex-shrink: 0;
     }
-    .ci-legend-item__label { color: var(--text-secondary); }
-    .ci-legend-item__value { font-weight: 700; }
 
-    /* Decomp table */
-    .ci-decomp-table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 0.85rem;
-      margin-top: 16px;
-    }
-    .ci-decomp-table th {
-      text-align: left;
-      padding: 8px 10px;
-      font-size: 0.75rem;
+    /* Channel breakdown table */
+    .breakdown-card { padding: 20px; }
+    .breakdown-card h3 {
+      font-size: 0.82rem;
       font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 0.05em;
+      letter-spacing: 0.06em;
       color: var(--text-secondary);
-      border-bottom: 2px solid var(--border);
+      margin-bottom: 14px;
     }
-    .ci-decomp-table td {
-      padding: 10px 10px;
-      border-bottom: 1px solid var(--border);
-      vertical-align: middle;
-    }
-    .ci-decomp-table tr:last-child td {
-      border-bottom: none;
-      font-weight: 700;
-      background: var(--bg);
-    }
-    .ci-decomp-table tr.total-row td { font-weight: 700; }
-    .ci-component-dot {
-      width: 8px; height: 8px;
-      border-radius: 50%;
-      display: inline-block;
-      margin-right: 6px;
-    }
-    .positive-text { color: var(--positive); font-weight: 700; }
-    .negative-text { color: var(--negative); font-weight: 700; }
-    .ci-progress-mini {
-      height: 6px;
-      border-radius: 3px;
-      background: var(--neutral-bg);
-      overflow: hidden;
-      min-width: 60px;
-    }
-    .ci-progress-mini__fill {
-      height: 100%;
-      border-radius: 3px;
-      transition: width 0.3s ease;
-    }
-
-    /* Multi-source section */
-    .ci-sources {
-      padding: 20px;
-    }
-    .ci-sources__header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 0;
-    }
-    .ci-sources__header h2 {
-      font-size: 0.95rem;
-      font-weight: 700;
-    }
-    .ci-sources__body {
-      margin-top: 16px;
-    }
-    .ci-sources-table {
+    .breakdown-table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 0.82rem;
+      font-size: 0.83rem;
     }
-    .ci-sources-table th {
+    .breakdown-table th {
       text-align: left;
-      padding: 6px 8px;
-      font-size: 0.72rem;
+      padding: 7px 10px;
+      font-size: 0.7rem;
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.05em;
@@ -434,158 +217,28 @@
       border-bottom: 2px solid var(--border);
       white-space: nowrap;
     }
-    .ci-sources-table td {
-      padding: 8px 8px;
+    .breakdown-table th.r { text-align: right; }
+    .breakdown-table td {
+      padding: 9px 10px;
       border-bottom: 1px solid var(--border);
       vertical-align: middle;
     }
-    .ci-sources-table input[type="text"],
-    .ci-sources-table input[type="number"] {
-      width: 100%;
-      padding: 5px 8px;
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      font-size: 0.82rem;
-      -moz-appearance: textfield;
-    }
-    .ci-sources-table input[type="number"]::-webkit-outer-spin-button,
-    .ci-sources-table input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; }
-    .ci-sources-table input:focus {
-      outline: none;
-      border-color: var(--fb-blue);
-    }
-    .ci-sources__add-row {
-      margin-top: 10px;
-      display: flex;
-      gap: 8px;
-    }
-    .btn-sm {
-      padding: 5px 12px;
-      border: none;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 0.8rem;
-      font-weight: 600;
-    }
-    .btn-sm.btn-primary { background: var(--fb-blue); color: white; }
-    .btn-sm.btn-primary:hover { background: var(--fb-blue-dark); }
-    .btn-sm.btn-ghost {
-      background: none;
-      color: var(--text-secondary);
-      border: 1px solid var(--border);
-    }
-    .btn-sm.btn-ghost:hover { background: var(--bg); }
-    .btn-sm.btn-danger { background: none; color: var(--negative); border: none; padding: 4px 6px; }
-    .btn-sm.btn-danger:hover { background: var(--negative-bg); }
-    .btn {
-      padding: 8px 16px;
-      border: none;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 0.85rem;
-      font-weight: 600;
-    }
-    .btn.btn-ghost-md {
-      background: none;
-      color: var(--text-secondary);
-      border: 1px solid var(--border);
-    }
-    .btn.btn-ghost-md:hover { background: var(--bg); }
-    .btn.btn-primary { background: var(--fb-blue); color: white; }
-    .btn.btn-primary:hover { background: var(--fb-blue-dark); }
-
-    /* Totals row in sources table */
-    .ci-sources-table tr.src-total td {
+    .breakdown-table td.r { text-align: right; }
+    .breakdown-table tbody tr:last-child td { border-bottom: none; }
+    .breakdown-table tfoot td {
+      padding: 9px 10px;
       font-weight: 700;
       background: var(--bg);
       border-top: 2px solid var(--border);
     }
+    .breakdown-table tfoot td.r { text-align: right; }
 
-    /* CSV Upload */
-    .ci-upload-zone {
-      border: 2px dashed var(--border);
-      border-radius: var(--radius);
-      padding: 20px 16px;
-      text-align: center;
-      cursor: pointer;
-      transition: border-color 0.15s, background 0.15s;
-      position: relative;
-    }
-    .ci-upload-zone:hover, .ci-upload-zone.drag-over {
-      border-color: var(--fb-blue);
-      background: #f0f5ff;
-    }
-    .ci-upload-zone input[type="file"] {
-      position: absolute;
-      inset: 0;
-      opacity: 0;
-      cursor: pointer;
-      width: 100%;
-      height: 100%;
-    }
-    .ci-upload-zone__icon { font-size: 1.5rem; margin-bottom: 6px; }
-    .ci-upload-zone__label { font-size: 0.85rem; font-weight: 600; color: var(--fb-blue); }
-    .ci-upload-zone__hint { font-size: 0.75rem; color: var(--text-secondary); margin-top: 2px; }
-    .ci-upload-status {
-      font-size: 0.8rem;
-      margin-top: 8px;
-      padding: 6px 10px;
-      border-radius: 6px;
-      display: none;
-    }
-    .ci-upload-status.success { background: var(--positive-bg); color: var(--positive); display: block; }
-    .ci-upload-status.error   { background: var(--negative-bg); color: var(--negative); display: block; }
+    /* Decomp mini bars */
+    .decomp-mini { display: flex; gap: 2px; height: 6px; border-radius: 3px; overflow: hidden; min-width: 80px; }
+    .decomp-mini__seg { height: 100%; }
 
-    /* Channel groups table */
-    .ci-channels-table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 0.82rem;
-    }
-    .ci-channels-table th {
-      text-align: left;
-      padding: 6px 10px;
-      font-size: 0.72rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: var(--text-secondary);
-      border-bottom: 2px solid var(--border);
-      white-space: nowrap;
-    }
-    .ci-channels-table td {
-      padding: 8px 10px;
-      border-bottom: 1px solid var(--border);
-      vertical-align: middle;
-    }
-    .ci-channels-table tr:last-child td { border-bottom: none; }
-    .ci-channels-table tr.ch-total td {
-      font-weight: 700;
-      background: var(--bg);
-      border-top: 2px solid var(--border);
-    }
-    .ci-channels-table input[type="number"] {
-      width: 80px;
-      padding: 4px 8px;
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      font-size: 0.82rem;
-      -moz-appearance: textfield;
-    }
-    .ci-channels-table input[type="number"]::-webkit-outer-spin-button,
-    .ci-channels-table input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; }
-    .ci-channels-table input:focus { outline: none; border-color: var(--fb-blue); }
-    .ch-dot {
-      width: 8px; height: 8px;
-      border-radius: 50%;
-      display: inline-block;
-      margin-right: 6px;
-      vertical-align: middle;
-    }
-    .ci-raw-sources {
-      margin-top: 12px;
-    }
-    .ci-raw-toggle {
+    /* Raw rows toggle */
+    .raw-toggle-btn {
       font-size: 0.78rem;
       color: var(--fb-blue);
       background: none;
@@ -593,27 +246,30 @@
       cursor: pointer;
       padding: 0;
       text-decoration: underline;
+      margin-top: 12px;
+      display: block;
     }
-    .ci-raw-table-wrap {
-      margin-top: 8px;
-      overflow-x: auto;
-      max-height: 260px;
-      overflow-y: auto;
+    .raw-wrap {
+      margin-top: 10px;
       border: 1px solid var(--border);
       border-radius: 6px;
+      overflow: hidden;
+      max-height: 280px;
+      overflow-y: auto;
+      display: none;
     }
-    .ci-raw-table {
+    .raw-wrap.open { display: block; }
+    .raw-table {
       width: 100%;
       border-collapse: collapse;
       font-size: 0.78rem;
     }
-    .ci-raw-table th {
-      position: sticky;
-      top: 0;
+    .raw-table th {
+      position: sticky; top: 0;
       background: var(--bg);
       padding: 6px 10px;
       text-align: left;
-      font-size: 0.7rem;
+      font-size: 0.68rem;
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.05em;
@@ -621,1286 +277,558 @@
       border-bottom: 1px solid var(--border);
       white-space: nowrap;
     }
-    .ci-raw-table td {
-      padding: 5px 10px;
+    .raw-table th.r { text-align: right; }
+    .raw-table td { padding: 5px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    .raw-table td.r { text-align: right; }
+    .raw-table tr:last-child td { border-bottom: none; }
+    .raw-table tr.unmapped td { color: var(--text-secondary); }
+
+    /* Headline card */
+    .headline-card {
+      padding: 18px 20px;
+      border-left: 4px solid var(--border);
+    }
+    .headline-card.up   { border-left-color: var(--positive); }
+    .headline-card.down { border-left-color: var(--negative); }
+    .headline-card h3   { font-size: 1rem; margin-bottom: 4px; }
+    .headline-card p    { font-size: 0.875rem; color: var(--text-secondary); margin: 0; }
+
+    /* Contributors list */
+    .card__sub { font-size: 0.8rem; color: var(--text-secondary); margin: -6px 0 14px; }
+    .contrib-item {
+      display: grid;
+      grid-template-columns: 180px 1fr 80px 90px 90px;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 0;
       border-bottom: 1px solid var(--border);
+      font-size: 0.82rem;
+    }
+    .contrib-item:last-child { border-bottom: none; }
+    .contrib-label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+    }
+    .contrib-type {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
       white-space: nowrap;
     }
-    .ci-raw-table tr:last-child td { border-bottom: none; }
-    .ci-raw-table tr.unmapped-row td { color: var(--text-secondary); }
-
-    /* === Utility === */
-    .hidden { display: none !important; }
-    .text-secondary { color: var(--text-secondary); }
-
-    /* Formula explainer */
-    .ci-formula {
-      background: #f8f9fb;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 12px 14px;
-      font-size: 0.78rem;
-      color: var(--text-secondary);
-      line-height: 1.7;
-    }
-    .ci-formula code {
-      font-family: 'SFMono-Regular', Consolas, monospace;
-      font-size: 0.75rem;
-      color: var(--text-primary);
+    .contrib-bar-wrap {
+      height: 10px;
       background: var(--neutral-bg);
-      padding: 1px 4px;
-      border-radius: 3px;
+      border-radius: 5px;
+      overflow: hidden;
+    }
+    .contrib-bar {
+      height: 100%;
+      border-radius: 5px;
+      min-width: 2px;
+    }
+    .contrib-val { text-align: right; font-weight: 600; }
+    .contrib-pct { text-align: right; font-size: 0.75rem; color: var(--text-secondary); }
+    .contrib-base { text-align: right; font-size: 0.75rem; color: var(--text-secondary); }
+
+    .hidden { display: none !important; }
+    .section-label {
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-secondary);
     }
   </style>
 </head>
 <body>
 
 <header>
-  <div class="header__left">
-    <a class="header__back" href="/">&#8592; Ads Viewer</a>
-    <div>
-      <h1>Conversion Impact Calculator</h1>
-      <div class="header__subtitle">Sessions &times; CVR decomposition by utm_source</div>
-    </div>
+  <a class="header__back" href="/">&#8592; Ads Viewer</a>
+  <div>
+    <h1>Conversion Impact Analysis</h1>
+    <p>Upload a period-comparison CSV to see what drove conversion changes</p>
   </div>
 </header>
 
-<main class="ci-layout">
+<!-- ===== UPLOAD SCREEN ===== -->
+<div id="upload-screen">
+  <div class="upload-card">
+    <h2>Upload your CVR by Channel CSV</h2>
+    <p>Export from Shopify Analytics with a date range and "previous period" comparison enabled. The tool will automatically calculate what drove the change in overall conversions.</p>
+    <div class="upload-zone" id="upload-zone">
+      <input type="file" id="csv-input" accept=".csv,text/csv">
+      <div class="upload-zone__icon">&#128196;</div>
+      <div class="upload-zone__label">Click or drag CSV here</div>
+      <div class="upload-zone__hint">Needs columns: UTM source · Sessions · Conversion rate · Sessions (previous_period) · Conversion rate (previous_period)</div>
+    </div>
+    <div class="upload-error" id="upload-error"></div>
+  </div>
+</div>
 
-  <!-- ===== LEFT: INPUTS ===== -->
-  <section class="ci-inputs ci-card">
+<!-- ===== RESULTS SCREEN ===== -->
+<div id="results-screen">
+  <div class="results-wrap">
 
-    <div>
-      <div class="ci-section-label">Baseline (current period)</div>
-      <div style="display:flex;flex-direction:column;gap:12px;margin-top:10px">
+    <!-- Top bar -->
+    <div class="top-bar">
+      <div class="top-bar__info" id="top-bar-info"></div>
+      <button class="btn-reset" id="btn-reset">&#8592; Upload new file</button>
+    </div>
 
-        <div class="ci-field">
-          <label for="inp-sessions">Sessions</label>
-          <div class="ci-input-row">
-            <input type="number" id="inp-sessions" value="10000" min="0" step="100" placeholder="e.g. 10000">
-          </div>
-        </div>
+    <!-- Overall summary -->
+    <div class="kpi-row" id="kpi-row"></div>
 
-        <div class="ci-field">
-          <label for="inp-cvr">Conversion Rate <span class="ci-field__hint">(% of sessions)</span></label>
-          <div class="ci-input-row">
-            <input type="number" id="inp-cvr" value="3.00" min="0" max="100" step="0.01" placeholder="e.g. 3.00">
-            <span class="ci-suffix">%</span>
-          </div>
-        </div>
+    <!-- Headline insight -->
+    <div class="card headline-card" id="headline-card"></div>
 
+    <!-- Ranked contributors -->
+    <div class="card breakdown-card">
+      <h3>Top Contributors to Conversion Change</h3>
+      <p class="card__sub">Each bar shows one channel's sessions or CVR effect, ranked by absolute impact on transactions.</p>
+      <div id="contributors-list"></div>
+    </div>
+
+    <!-- Channel breakdown table -->
+    <div class="card breakdown-card">
+      <h3>Channel Breakdown</h3>
+      <div style="overflow-x:auto">
+        <table class="breakdown-table" id="breakdown-table">
+          <thead>
+            <tr>
+              <th>Channel</th>
+              <th class="r">Prev Sessions</th>
+              <th class="r">Curr Sessions</th>
+              <th class="r">Δ Sessions</th>
+              <th class="r">Prev CVR</th>
+              <th class="r">Curr CVR</th>
+              <th class="r">Δ CVR (pp)</th>
+              <th class="r">Prev Conv.</th>
+              <th class="r">Curr Conv.</th>
+              <th class="r">Δ Conv.</th>
+              <th class="r">Sessions Effect</th>
+              <th class="r">CVR Effect</th>
+              <th class="r">Interaction</th>
+            </tr>
+          </thead>
+          <tbody id="breakdown-tbody"></tbody>
+          <tfoot id="breakdown-tfoot"></tfoot>
+        </table>
+      </div>
+
+      <!-- Raw rows -->
+      <button class="raw-toggle-btn" id="btn-raw-toggle">Show raw utm_source rows</button>
+      <div class="raw-wrap" id="raw-wrap">
+        <table class="raw-table" id="raw-table">
+          <thead>
+            <tr>
+              <th>UTM Source</th>
+              <th>Channel</th>
+              <th class="r">Prev Sessions</th>
+              <th class="r">Curr Sessions</th>
+              <th class="r">Prev CVR</th>
+              <th class="r">Curr CVR</th>
+              <th class="r">Curr Conv.</th>
+            </tr>
+          </thead>
+          <tbody id="raw-tbody"></tbody>
+        </table>
       </div>
     </div>
 
-    <hr class="ci-divider">
-
-    <div>
-      <div class="ci-section-label">Delta (change to model)</div>
-      <div style="display:flex;flex-direction:column;gap:12px;margin-top:10px">
-
-        <div class="ci-field">
-          <label>Sessions change mode</label>
-          <div class="ci-toggle-group" id="tgl-sessions-mode">
-            <button class="active" data-value="absolute">Absolute</button>
-            <button data-value="percent">% of baseline</button>
-          </div>
-        </div>
-
-        <div class="ci-field">
-          <label for="inp-d-sessions">
-            &Delta; Sessions
-            <span class="ci-field__hint" id="hint-d-sessions">(e.g. +500 or &#8722;200)</span>
-          </label>
-          <div class="ci-input-row">
-            <input type="number" id="inp-d-sessions" value="500" step="100" placeholder="0">
-            <span class="ci-suffix" id="sfx-d-sessions"></span>
-          </div>
-        </div>
-
-        <div class="ci-field">
-          <label>CVR change mode</label>
-          <div class="ci-toggle-group" id="tgl-cvr-mode">
-            <button class="active" data-value="pp">Percentage points (pp)</button>
-            <button data-value="percent">% change</button>
-          </div>
-        </div>
-
-        <div class="ci-field">
-          <label for="inp-d-cvr">
-            &Delta; CVR
-            <span class="ci-field__hint" id="hint-d-cvr">(e.g. +0.5pp or &#8722;1pp)</span>
-          </label>
-          <div class="ci-input-row">
-            <input type="number" id="inp-d-cvr" value="0.5" step="0.01" placeholder="0">
-            <span class="ci-suffix" id="sfx-d-cvr">pp</span>
-          </div>
-        </div>
-
-      </div>
-    </div>
-
-    <hr class="ci-divider">
-
-    <div>
-      <div class="ci-section-label">Scenario sliders</div>
-      <div style="display:flex;flex-direction:column;gap:14px;margin-top:10px">
-
-        <div class="ci-slider-field">
-          <label>
-            Sessions change
-            <span class="ci-slider-readout" id="sld-sessions-readout">+500</span>
-          </label>
-          <input type="range" id="sld-sessions" min="-5000" max="20000" step="100" value="500">
-        </div>
-
-        <div class="ci-slider-field">
-          <label>
-            CVR change
-            <span class="ci-slider-readout" id="sld-cvr-readout">+0.50pp</span>
-          </label>
-          <input type="range" id="sld-cvr" min="-3" max="5" step="0.05" value="0.5">
-        </div>
-
-      </div>
-    </div>
-
-    <div class="ci-formula">
-      <strong>Decomposition formula:</strong><br>
-      <code>Total &Delta;</code> = <code>dS &times; C</code> + <code>S &times; dC</code> + <code>dS &times; dC</code><br>
-      &nbsp;&nbsp;&nbsp;= Sessions effect + CVR effect + Interaction
-    </div>
-
-  </section>
-
-  <!-- ===== RIGHT: RESULTS ===== -->
-  <section class="ci-results">
-
-    <!-- Summary cards -->
-    <div class="ci-summary">
-      <div class="ci-metric-card">
-        <div class="ci-metric-card__label">Baseline Conversions</div>
-        <div class="ci-metric-card__value" id="out-base-conv">300</div>
-        <div class="ci-metric-card__sub" id="out-base-detail">10,000 sessions &times; 3.00%</div>
-      </div>
-      <div class="ci-metric-card">
-        <div class="ci-metric-card__label">New Conversions</div>
-        <div class="ci-metric-card__value" id="out-new-conv">358</div>
-        <div class="ci-metric-card__sub" id="out-new-detail">10,500 sessions &times; 3.50%</div>
-      </div>
-      <div class="ci-metric-card">
-        <div class="ci-metric-card__label">Conversion Delta</div>
-        <div class="ci-metric-card__value" id="out-delta-abs">+58</div>
-        <div class="ci-metric-card__sub"><span class="ci-badge" id="out-delta-pct-badge">+19.3%</span></div>
-      </div>
-      <div class="ci-metric-card">
-        <div class="ci-metric-card__label">Dominant Lever</div>
-        <div class="ci-metric-card__value" style="font-size:1.1rem;line-height:1.4" id="out-dominant-label">Sessions</div>
-        <div class="ci-metric-card__sub"><span class="ci-badge" id="out-dominant-badge">Sessions-driven</span></div>
-      </div>
-    </div>
-
-    <!-- Decomposition card -->
-    <div class="ci-card ci-decomp">
-      <h2>Impact Decomposition <span>How total &Delta; conversions breaks down</span></h2>
-
-      <div class="ci-waterfall">
-        <div class="ci-waterfall__track" id="wf-track">
-          <div class="ci-waterfall__segment ci-waterfall__segment--sessions" id="wf-sessions" style="width:0%"></div>
-          <div class="ci-waterfall__segment ci-waterfall__segment--cvr" id="wf-cvr" style="width:0%"></div>
-          <div class="ci-waterfall__segment ci-waterfall__segment--interaction" id="wf-interaction" style="width:0%"></div>
-        </div>
-        <div class="ci-waterfall__legend">
-          <div class="ci-legend-item">
-            <div class="ci-legend-dot" style="background:var(--color-sessions)"></div>
-            <span class="ci-legend-item__label">Sessions effect</span>
-            <span class="ci-legend-item__value" id="leg-sessions">—</span>
-          </div>
-          <div class="ci-legend-item">
-            <div class="ci-legend-dot" style="background:var(--color-cvr)"></div>
-            <span class="ci-legend-item__label">CVR effect</span>
-            <span class="ci-legend-item__value" id="leg-cvr">—</span>
-          </div>
-          <div class="ci-legend-item">
-            <div class="ci-legend-dot" style="background:var(--color-interaction)"></div>
-            <span class="ci-legend-item__label">Interaction effect</span>
-            <span class="ci-legend-item__value" id="leg-interaction">—</span>
-          </div>
-        </div>
-      </div>
-
-      <table class="ci-decomp-table" id="decomp-table">
-        <thead>
-          <tr>
-            <th>Component</th>
-            <th>&Delta; Conversions</th>
-            <th>% of Total &Delta;</th>
-            <th>% of Baseline</th>
-            <th style="min-width:80px">Share</th>
-          </tr>
-        </thead>
-        <tbody id="decomp-tbody">
-          <!-- filled by JS -->
-        </tbody>
-      </table>
-
-    </div>
-
-    <!-- CSV Upload + Channel Groups section -->
-    <div class="ci-card ci-sources">
-      <div class="ci-sources__header">
-        <h2>Channel Group Analysis <span class="text-secondary" style="font-size:0.8rem;font-weight:400">(by utm_source)</span></h2>
-        <button class="btn btn-ghost-md" id="btn-toggle-sources">+ Expand</button>
-      </div>
-
-      <div class="ci-sources__body hidden" id="sources-body">
-
-        <!-- Upload zone -->
-        <div style="margin-bottom:16px">
-          <div class="ci-section-label" style="margin-bottom:8px">Upload CSV</div>
-          <div class="ci-upload-zone" id="upload-zone">
-            <input type="file" id="csv-file-input" accept=".csv,text/csv">
-            <div class="ci-upload-zone__icon">&#128196;</div>
-            <div class="ci-upload-zone__label">Click or drag a CSV file here</div>
-            <div class="ci-upload-zone__hint">Expected columns: UTM source, Sessions, Conversion rate</div>
-          </div>
-          <div class="ci-upload-status" id="upload-status"></div>
-        </div>
-
-        <!-- Channel groups table -->
-        <div id="channels-section" class="hidden">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-            <div class="ci-section-label">Channel Groups — set deltas to model scenarios</div>
-            <span id="prev-period-badge" class="ci-badge ci-badge--neutral hidden" style="font-size:0.72rem">Period comparison loaded</span>
-          </div>
-          <div style="overflow-x:auto">
-            <table class="ci-channels-table" id="channels-table">
-              <thead>
-                <tr id="channels-thead-row">
-                  <th>Channel</th>
-                  <th>Sources</th>
-                  <th>Curr Sessions</th>
-                  <th>Prev Sessions</th>
-                  <th>Curr CVR</th>
-                  <th>Prev CVR</th>
-                  <th>&Delta; Sessions <span style="font-weight:400;text-transform:none;font-size:0.68rem">(editable)</span></th>
-                  <th>&Delta; CVR pp <span style="font-weight:400;text-transform:none;font-size:0.68rem">(editable)</span></th>
-                  <th>Prev Conv.</th>
-                  <th>Curr Conv.</th>
-                  <th>&Delta; Conv.</th>
-                  <th>&Delta; %</th>
-                </tr>
-              </thead>
-              <tbody id="channels-tbody">
-                <!-- filled by JS -->
-              </tbody>
-              <tfoot>
-                <tr class="ch-total">
-                  <td>Total</td>
-                  <td id="ch-tot-sources">—</td>
-                  <td id="ch-tot-sessions">—</td>
-                  <td id="ch-tot-prev-sessions">—</td>
-                  <td id="ch-tot-cvr">—</td>
-                  <td id="ch-tot-prev-cvr">—</td>
-                  <td id="ch-tot-d-sessions">—</td>
-                  <td>—</td>
-                  <td id="ch-tot-base">—</td>
-                  <td id="ch-tot-new">—</td>
-                  <td id="ch-tot-delta">—</td>
-                  <td id="ch-tot-pct">—</td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-
-          <!-- Raw rows toggle -->
-          <div class="ci-raw-sources">
-            <button class="ci-raw-toggle" id="btn-toggle-raw">Show raw utm_source rows</button>
-            <div class="ci-raw-table-wrap hidden" id="raw-table-wrap">
-              <table class="ci-raw-table" id="raw-table">
-                <thead>
-                  <tr>
-                    <th>UTM Source</th>
-                    <th>Channel</th>
-                    <th>Sessions</th>
-                    <th>CVR %</th>
-                    <th>Conversions</th>
-                  </tr>
-                </thead>
-                <tbody id="raw-tbody"></tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-
-        <!-- Manual add row (shown when no CSV) -->
-        <div id="manual-sources-section">
-          <div class="ci-section-label" style="margin-bottom:8px">Or add sources manually</div>
-          <div style="overflow-x:auto">
-            <table class="ci-sources-table" id="sources-table">
-              <thead>
-                <tr>
-                  <th>Source</th>
-                  <th>Baseline Sessions</th>
-                  <th>Baseline CVR %</th>
-                  <th>&Delta; Sessions</th>
-                  <th>&Delta; CVR</th>
-                  <th>Base Conv.</th>
-                  <th>New Conv.</th>
-                  <th>&Delta; Conv.</th>
-                  <th>&Delta; %</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody id="sources-tbody">
-                <!-- rows filled by JS -->
-              </tbody>
-              <tfoot>
-                <tr class="src-total">
-                  <td>Total</td>
-                  <td id="src-tot-sessions">—</td>
-                  <td>—</td>
-                  <td id="src-tot-d-sessions">—</td>
-                  <td>—</td>
-                  <td id="src-tot-base">—</td>
-                  <td id="src-tot-new">—</td>
-                  <td id="src-tot-delta">—</td>
-                  <td id="src-tot-pct">—</td>
-                  <td></td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-          <div class="ci-sources__add-row">
-            <button class="btn-sm btn-primary" id="btn-add-source">+ Add row</button>
-          </div>
-        </div>
-
-      </div>
-    </div>
-
-  </section>
-</main>
+  </div>
+</div>
 
 <script>
-// ============================================================
-// CHANNEL GROUPING CONFIG
-// ============================================================
-const CHANNEL_GROUPS = {
-  meta:       { label: 'Meta',          color: '#1877f2', sources: ['facebook', 'ig', 'instagram', 'igshopping'] },
-  retention:  { label: 'Retention',     color: '#7c3aed', sources: ['klaviyo', 'postscript'] },
-  direct:     { label: 'Direct',        color: '#65676b', sources: ['none', '', null, 'direct'] },
-  search:     { label: 'Search',        color: '#ea4335', sources: ['google', 'bing'] },
-  topOfFunnel:{ label: 'Top of Funnel', color: '#f97316', sources: ['demand-gen', 'snapchat', 'squaredance', 'applovin', 'tiktok'] },
+// ─────────────────────────────────────────────
+// CHANNEL CONFIG
+// ─────────────────────────────────────────────
+const CHANNELS = {
+  meta:        { label: 'Meta',          color: '#1877f2', match: s => ['facebook','ig','instagram','igshopping'].includes(s) || s.startsWith('facebook') },
+  retention:   { label: 'Retention',     color: '#7c3aed', match: s => ['klaviyo','postscript'].includes(s) },
+  direct:      { label: 'Direct',        color: '#65676b', match: s => s === '' || s === 'none' || s === 'null' },
+  search:      { label: 'Search',        color: '#ea4335', match: s => ['google','bing'].includes(s) },
+  topOfFunnel: { label: 'Top of Funnel', color: '#f97316', match: s => ['demand-gen','snapchat','squaredance','applovin','tiktok'].includes(s) },
 };
-const CHANNEL_ORDER = ['meta', 'retention', 'direct', 'search', 'topOfFunnel', 'other'];
+const CHANNEL_ORDER = ['meta','retention','direct','search','topOfFunnel','other'];
 
-function classifySource(rawSource) {
-  // Normalize: trim, lowercase
-  const s = (rawSource == null ? '' : String(rawSource)).trim().toLowerCase();
-  // Direct = empty/null/none
-  if (s === '' || s === 'none' || s === 'null') return 'direct';
-  // Check each group (sources already lowercased in config)
-  for (const [groupKey, group] of Object.entries(CHANNEL_GROUPS)) {
-    if (group.sources.includes(s)) return groupKey;
+function classifySource(raw) {
+  const s = (raw == null ? '' : String(raw)).trim().toLowerCase();
+  for (const [key, ch] of Object.entries(CHANNELS)) {
+    if (ch.match(s)) return key;
   }
-  // facebook UTM params that start with "facebook" (e.g. "facebook#...")
-  if (s.startsWith('facebook')) return 'meta';
   return 'other';
 }
+function chLabel(key) { return key === 'other' ? 'Other' : CHANNELS[key].label; }
+function chColor(key) { return key === 'other' ? '#9ca3af' : CHANNELS[key].color; }
 
-// ============================================================
-// STATE
-// ============================================================
-const state = {
-  sessions: 10000,
-  cvr: 3.00,        // stored as percent (e.g. 3.00 = 3%)
-  dSessions: 500,   // raw input value
-  dCvr: 0.5,        // raw input value
-  sessionsDeltaMode: 'absolute', // 'absolute' | 'percent'
-  cvrDeltaMode: 'pp',            // 'pp' | 'percent'
-  sources: [],      // [{id, name, sessions, cvr, dSessions, dCvr}]
-  nextSourceId: 1,
-  sourcesVisible: false,
-  // CSV state
-  csvLoaded: false,
-  rawRows: [],      // [{source, channel, sessions, cvrDecimal}]
-  channelDeltas: {} // {groupKey: {dSessions, dCvr}} — user-editable deltas per channel
-};
-
-// ============================================================
-// CORE CALCULATION
-// ============================================================
-function resolveDelta(base, rawDelta, mode, isPercent) {
-  if (mode === 'percent' || isPercent) {
-    return base * (rawDelta / 100);
-  }
-  return rawDelta;
-}
-
-function calculate(sessions, cvrPct, rawDSessions, rawDCvr, sessionsDeltaMode, cvrDeltaMode) {
-  const S = sessions;
-  const C = cvrPct / 100; // decimal
-
-  // Resolve session delta
-  const dS = sessionsDeltaMode === 'percent'
-    ? S * (rawDSessions / 100)
-    : rawDSessions;
-
-  // Resolve CVR delta (always in decimal for math)
-  let dC;
-  if (cvrDeltaMode === 'pp') {
-    dC = rawDCvr / 100; // pp → decimal
-  } else {
-    // percent change of current CVR
-    dC = C * (rawDCvr / 100);
-  }
-
-  const baseConv = S * C;
-  const newS = S + dS;
-  const newC = C + dC;
-  const newConv = newS * newC;
-
-  // Decomposition: (S + dS)(C + dC) = SC + dS·C + S·dC + dS·dC
-  const sessionsEffect = dS * C;
-  const cvrEffect = S * dC;
-  const interactionEffect = dS * dC;
-  const totalDelta = newConv - baseConv;
-  // Verify: sessionsEffect + cvrEffect + interactionEffect ≈ totalDelta
-
-  const totalDeltaPct = baseConv !== 0 ? (totalDelta / baseConv) * 100 : 0;
-
-  // Dominant lever
-  const aSE = Math.abs(sessionsEffect);
-  const aCE = Math.abs(cvrEffect);
-  let dominant;
-  if (aSE === 0 && aCE === 0) dominant = 'none';
-  else if (aSE > aCE * 1.2) dominant = 'sessions';
-  else if (aCE > aSE * 1.2) dominant = 'cvr';
-  else dominant = 'both';
-
-  return {
-    S, C, dS, dC, newS, newC,
-    baseConv, newConv, totalDelta, totalDeltaPct,
-    sessionsEffect, cvrEffect, interactionEffect,
-    dominant
-  };
-}
-
-// ============================================================
-// FORMAT HELPERS
-// ============================================================
-function fmt(n, decimals = 0) {
-  if (!isFinite(n)) return '—';
-  return n.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
-}
-function fmtPct(n, decimals = 1) {
-  if (!isFinite(n)) return '—';
-  const sign = n > 0 ? '+' : '';
-  return sign + n.toFixed(decimals) + '%';
-}
-function fmtSign(n, decimals = 0) {
-  if (!isFinite(n)) return '—';
-  const sign = n > 0 ? '+' : n < 0 ? '' : '';
-  return sign + fmt(n, decimals);
-}
-function colorClass(n) {
-  if (n > 0) return 'positive-text';
-  if (n < 0) return 'negative-text';
-  return '';
-}
-function badgeClass(n) {
-  if (n > 0) return 'ci-badge--positive';
-  if (n < 0) return 'ci-badge--negative';
-  return 'ci-badge--neutral';
-}
-
-// ============================================================
-// RENDER
-// ============================================================
-function renderSummary(r) {
-  const { S, C, dS, newS, newC, baseConv, newConv, totalDelta, totalDeltaPct, dominant } = r;
-
-  el('out-base-conv').textContent = fmt(Math.round(baseConv));
-  el('out-base-detail').textContent = fmt(S) + ' sessions × ' + (C * 100).toFixed(2) + '%';
-
-  el('out-new-conv').textContent = fmt(Math.round(newConv));
-  el('out-new-detail').textContent = fmt(Math.round(newS)) + ' sessions × ' + (newC * 100).toFixed(2) + '%';
-
-  const deltaAbsEl = el('out-delta-abs');
-  deltaAbsEl.textContent = fmtSign(Math.round(totalDelta));
-  deltaAbsEl.className = 'ci-metric-card__value ' + colorClass(totalDelta);
-
-  const pctBadge = el('out-delta-pct-badge');
-  pctBadge.textContent = fmtPct(totalDeltaPct);
-  pctBadge.className = 'ci-badge ' + badgeClass(totalDelta);
-
-  const dominantLabels = {
-    sessions: 'Sessions',
-    cvr: 'CVR',
-    both: 'Both',
-    none: 'None'
-  };
-  const dominantBadges = {
-    sessions: ['Sessions-driven', 'ci-badge--sessions'],
-    cvr: ['CVR-driven', 'ci-badge--cvr'],
-    both: ['Both levers', 'ci-badge--both'],
-    none: ['No change', 'ci-badge--neutral']
-  };
-  el('out-dominant-label').textContent = dominantLabels[dominant] || '—';
-  const [badgeText, badgeClsName] = dominantBadges[dominant] || ['—', 'ci-badge--neutral'];
-  const domBadge = el('out-dominant-badge');
-  domBadge.textContent = badgeText;
-  domBadge.className = 'ci-badge ' + badgeClsName;
-}
-
-function renderWaterfall(r) {
-  const { sessionsEffect, cvrEffect, interactionEffect, totalDelta } = r;
-
-  const effects = [
-    { id: 'wf-sessions', legId: 'leg-sessions', val: sessionsEffect },
-    { id: 'wf-cvr',      legId: 'leg-cvr',      val: cvrEffect },
-    { id: 'wf-interaction', legId: 'leg-interaction', val: interactionEffect }
-  ];
-
-  // For waterfall bar: use absolute sum to size segments proportionally
-  const absSum = Math.abs(sessionsEffect) + Math.abs(cvrEffect) + Math.abs(interactionEffect);
-
-  effects.forEach(({ id, legId, val }) => {
-    const seg = el(id);
-    const pct = absSum > 0 ? (Math.abs(val) / absSum) * 100 : 0;
-    seg.style.width = pct.toFixed(1) + '%';
-
-    // Label inside bar (only if wide enough)
-    seg.textContent = pct > 10 ? fmtSign(Math.round(val)) : '';
-
-    // Legend
-    const pctOfTotal = totalDelta !== 0 ? (val / totalDelta) * 100 : 0;
-    el(legId).textContent = fmtSign(Math.round(val)) + ' (' + pctOfTotal.toFixed(0) + '% of Δ)';
-    el(legId).className = 'ci-legend-item__value ' + colorClass(val);
-  });
-}
-
-function renderDecompTable(r) {
-  const { baseConv, sessionsEffect, cvrEffect, interactionEffect, totalDelta } = r;
-
-  const rows = [
-    { label: 'Sessions effect', color: 'var(--color-sessions)', val: sessionsEffect },
-    { label: 'CVR effect',      color: 'var(--color-cvr)',      val: cvrEffect },
-    { label: 'Interaction',     color: 'var(--color-interaction)', val: interactionEffect },
-  ];
-
-  const tbody = el('decomp-tbody');
-  tbody.innerHTML = '';
-
-  rows.forEach(({ label, color, val }) => {
-    const pctOfTotal = totalDelta !== 0 ? (val / totalDelta) * 100 : 0;
-    const pctOfBase  = baseConv !== 0   ? (val / baseConv)   * 100 : 0;
-    const barPct     = totalDelta !== 0 ? Math.min(100, Math.abs(pctOfTotal)) : 0;
-
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td>
-        <span class="ci-component-dot" style="background:${color}"></span>
-        ${escHtml(label)}
-      </td>
-      <td class="${colorClass(val)}">${fmtSign(Math.round(val))}</td>
-      <td class="${colorClass(val)}">${isFinite(pctOfTotal) ? pctOfTotal.toFixed(1) + '%' : '—'}</td>
-      <td class="${colorClass(val)}">${isFinite(pctOfBase) ? fmtPct(pctOfBase, 2) : '—'}</td>
-      <td>
-        <div class="ci-progress-mini">
-          <div class="ci-progress-mini__fill" style="width:${barPct.toFixed(1)}%;background:${color}"></div>
-        </div>
-      </td>
-    `;
-    tbody.appendChild(tr);
-  });
-
-  // Total row
-  const pctOfBase = baseConv !== 0 ? (totalDelta / baseConv) * 100 : 0;
-  const tr = document.createElement('tr');
-  tr.className = 'total-row';
-  tr.innerHTML = `
-    <td><strong>Total &Delta;</strong></td>
-    <td class="${colorClass(totalDelta)}"><strong>${fmtSign(Math.round(totalDelta))}</strong></td>
-    <td class="${colorClass(totalDelta)}"><strong>100%</strong></td>
-    <td class="${colorClass(totalDelta)}"><strong>${isFinite(pctOfBase) ? fmtPct(pctOfBase, 2) : '—'}</strong></td>
-    <td></td>
-  `;
-  tbody.appendChild(tr);
-}
-
-// ============================================================
-// SLIDER READOUTS
-// ============================================================
-function updateSliderReadouts() {
-  const sldSessions = el('sld-sessions');
-  const sldCvr = el('sld-cvr');
-  const dS = parseFloat(sldSessions.value) || 0;
-  const dC = parseFloat(sldCvr.value) || 0;
-
-  const sSuffix = state.sessionsDeltaMode === 'percent' ? '%' : '';
-  el('sld-sessions-readout').textContent = (dS >= 0 ? '+' : '') + fmt(dS) + sSuffix;
-
-  const cSuffix = state.cvrDeltaMode === 'pp' ? 'pp' : '%';
-  el('sld-cvr-readout').textContent = (dC >= 0 ? '+' : '') + dC.toFixed(2) + cSuffix;
-}
-
-// ============================================================
-// SOURCES TABLE
-// ============================================================
-function addDefaultSources() {
-  const defaultSources = [
-    { name: 'Facebook', sessions: 6000, cvr: 3.20, dSessions: 400, dCvr: 0.3 },
-    { name: 'Google',   sessions: 2500, cvr: 2.80, dSessions: 100, dCvr: 0.2 },
-    { name: 'Direct',   sessions: 1500, cvr: 4.10, dSessions: 0,   dCvr: 0.0 },
-  ];
-  defaultSources.forEach(s => {
-    state.sources.push({ id: state.nextSourceId++, ...s });
-  });
-  renderSourcesTable();
-}
-
-function renderSourcesTable() {
-  const tbody = el('sources-tbody');
-  tbody.innerHTML = '';
-
-  let totSessions = 0, totDSessions = 0, totBase = 0, totNew = 0, totDelta = 0;
-
-  state.sources.forEach(src => {
-    const r = calculate(src.sessions, src.cvr, src.dSessions, src.dCvr,
-                        state.sessionsDeltaMode, state.cvrDeltaMode);
-    totSessions  += r.S;
-    totDSessions += r.dS;
-    totBase      += r.baseConv;
-    totNew       += r.newConv;
-    totDelta     += r.totalDelta;
-
-    const tr = document.createElement('tr');
-    tr.dataset.srcId = src.id;
-    tr.innerHTML = `
-      <td><input type="text" class="src-name" value="${escHtml(src.name)}" placeholder="Source name" style="min-width:80px"></td>
-      <td><input type="number" class="src-sessions" value="${src.sessions}" min="0" step="100" style="min-width:80px"></td>
-      <td><input type="number" class="src-cvr" value="${src.cvr}" min="0" max="100" step="0.01" style="min-width:60px"></td>
-      <td><input type="number" class="src-d-sessions" value="${src.dSessions}" step="100" style="min-width:80px"></td>
-      <td><input type="number" class="src-d-cvr" value="${src.dCvr}" step="0.01" style="min-width:60px"></td>
-      <td>${fmt(Math.round(r.baseConv))}</td>
-      <td>${fmt(Math.round(r.newConv))}</td>
-      <td class="${colorClass(r.totalDelta)}">${fmtSign(Math.round(r.totalDelta))}</td>
-      <td class="${colorClass(r.totalDeltaPct)}">${fmtPct(r.totalDeltaPct)}</td>
-      <td><button class="btn-sm btn-danger src-remove" title="Remove">&#10005;</button></td>
-    `;
-
-    // Wire up input changes
-    tr.querySelectorAll('input').forEach(inp => {
-      inp.addEventListener('input', () => {
-        syncSourceRow(tr, src.id);
-        renderSourcesTable();
-      });
-    });
-
-    tr.querySelector('.src-remove').addEventListener('click', () => {
-      state.sources = state.sources.filter(s => s.id !== src.id);
-      renderSourcesTable();
-    });
-
-    tbody.appendChild(tr);
-  });
-
-  // Totals
-  const totPct = totBase !== 0 ? (totDelta / totBase) * 100 : 0;
-  el('src-tot-sessions').textContent = fmt(Math.round(totSessions));
-  el('src-tot-d-sessions').textContent = fmtSign(Math.round(totDSessions));
-  el('src-tot-base').textContent = fmt(Math.round(totBase));
-  el('src-tot-new').textContent = fmt(Math.round(totNew));
-  const totDeltaEl = el('src-tot-delta');
-  totDeltaEl.textContent = fmtSign(Math.round(totDelta));
-  totDeltaEl.className = colorClass(totDelta);
-  const totPctEl = el('src-tot-pct');
-  totPctEl.textContent = fmtPct(totPct);
-  totPctEl.className = colorClass(totDelta);
-}
-
-function syncSourceRow(tr, srcId) {
-  const src = state.sources.find(s => s.id === srcId);
-  if (!src) return;
-  src.name      = tr.querySelector('.src-name').value;
-  src.sessions  = parseFloat(tr.querySelector('.src-sessions').value) || 0;
-  src.cvr       = parseFloat(tr.querySelector('.src-cvr').value) || 0;
-  src.dSessions = parseFloat(tr.querySelector('.src-d-sessions').value) || 0;
-  src.dCvr      = parseFloat(tr.querySelector('.src-d-cvr').value) || 0;
-}
-
-// ============================================================
+// ─────────────────────────────────────────────
 // CSV PARSING
-// ============================================================
+// ─────────────────────────────────────────────
+function splitLine(line) {
+  const out = []; let cur = ''; let q = false;
+  for (const c of line) {
+    if (c === '"') { q = !q; }
+    else if (c === ',' && !q) { out.push(cur); cur = ''; }
+    else cur += c;
+  }
+  out.push(cur);
+  return out;
+}
+function cleanVal(v) { return (v || '').replace(/^"|"$/g,'').replace(/,/g,'').trim(); }
+function toNum(v) { const n = parseFloat(cleanVal(v)); return isFinite(n) ? n : null; }
+function toInt(v) { const n = parseInt(cleanVal(v), 10); return isFinite(n) ? n : null; }
+function normCvr(v) { if (v == null) return null; return v > 1 ? v / 100 : v; }
+
 function parseCSV(text) {
   const lines = text.trim().split(/\r?\n/);
-  if (lines.length < 2) throw new Error('CSV has no data rows');
+  if (lines.length < 2) throw new Error('File has no data rows.');
 
-  // Parse header — strip BOM and quotes, normalize whitespace
-  const rawHeaders = splitCSVLine(lines[0].replace(/^\uFEFF/, ''));
-  const header = rawHeaders.map(h => h.replace(/^"|"$/g, '').trim().toLowerCase());
+  const rawH = splitLine(lines[0].replace(/^\uFEFF/,''));
+  const h = rawH.map(s => cleanVal(s).toLowerCase());
 
-  // Current period columns
-  const colSource   = header.findIndex(h => h.includes('utm') || h === 'source');
-  // Sessions: first col containing 'session' that does NOT contain 'previous'
-  const colSessions = header.findIndex(h => h.includes('session') && !h.includes('previous'));
-  // CVR: first col containing 'conversion' that does NOT contain 'previous'
-  const colCvr      = header.findIndex(h => (h.includes('conversion') || h === 'cvr' || h === 'cr') && !h.includes('previous'));
+  // Require previous period columns
+  const iSrc     = h.findIndex(s => s.includes('utm') || s === 'source');
+  const iSess    = h.findIndex(s => s.includes('session') && !s.includes('previous'));
+  const iCvr     = h.findIndex(s => (s.includes('conversion') || s === 'cvr') && !s.includes('previous'));
+  const iPrevS   = h.findIndex(s => s.includes('session') && s.includes('previous'));
+  const iPrevCvr = h.findIndex(s => (s.includes('conversion') || s === 'cvr') && s.includes('previous'));
 
-  if (colSessions === -1) throw new Error('Could not find a "Sessions" column');
-  if (colCvr === -1)      throw new Error('Could not find a "Conversion rate" column');
-
-  // Previous period columns (optional)
-  const colPrevSessions = header.findIndex(h => h.includes('session') && h.includes('previous'));
-  const colPrevCvr      = header.findIndex(h => (h.includes('conversion') || h === 'cvr') && h.includes('previous'));
-  const hasPrevPeriod   = colPrevSessions !== -1 || colPrevCvr !== -1;
+  if (iSess    < 0) throw new Error('Missing "Sessions" column.');
+  if (iCvr     < 0) throw new Error('Missing "Conversion rate" column.');
+  if (iPrevS   < 0) throw new Error('Missing "Sessions (previous_period)" column. Please export with previous period comparison enabled.');
+  if (iPrevCvr < 0) throw new Error('Missing "Conversion rate (previous_period)" column. Please export with previous period comparison enabled.');
 
   const rows = [];
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line) continue;
-    const cols = splitCSVLine(line);
+    const cols = splitLine(line);
+    const source   = iSrc >= 0 ? cleanVal(cols[iSrc]) : '';
+    const sessions = toInt(cols[iSess]);
+    const cvrRaw   = toNum(cols[iCvr]);
+    const prevS    = toNum(cols[iPrevS]);
+    const prevCvrR = toNum(cols[iPrevCvr]);
 
-    const rawSource = colSource >= 0 ? (cols[colSource] || '').replace(/^"|"$/g, '').trim() : '';
-    const sessions  = parseInt(cleanNum(cols[colSessions]), 10);
-    const cvrRaw    = parseFloat(cleanNum(cols[colCvr]));
+    // Skip rows where we can't determine anything useful
+    const currS = sessions != null ? sessions : 0;
+    const currC = normCvr(cvrRaw) ?? 0;
+    const prevSess = prevS != null ? Math.round(prevS) : 0;
+    const prevCvr  = normCvr(prevCvrR) ?? 0;
 
-    // CVR: if > 1 assume already percent, else treat as decimal
-    const cvrDecimal = normalizeCvr(cvrRaw);
-
-    if (isNaN(sessions) || sessions < 0) continue;
-
-    // Previous period
-    let prevSessions = null, prevCvrDecimal = null;
-    if (colPrevSessions !== -1) {
-      const v = parseFloat(cleanNum(cols[colPrevSessions]));
-      if (isFinite(v)) prevSessions = v;
-    }
-    if (colPrevCvr !== -1) {
-      const v = parseFloat(cleanNum(cols[colPrevCvr]));
-      if (isFinite(v)) prevCvrDecimal = normalizeCvr(v);
-    }
-
-    rows.push({
-      source:       rawSource,
-      channel:      classifySource(rawSource),
-      sessions,
-      cvrDecimal:   isFinite(cvrDecimal) ? cvrDecimal : 0,
-      prevSessions,
-      prevCvrDecimal
-    });
+    rows.push({ source, channel: classifySource(source), currS, currC, prevSess, prevCvr });
   }
 
-  if (rows.length === 0) throw new Error('No valid data rows found');
-  rows._hasPrevPeriod = hasPrevPeriod;
+  if (rows.length === 0) throw new Error('No valid rows found.');
   return rows;
 }
 
-function cleanNum(v) {
-  return (v || '0').replace(/^"|"$/g, '').replace(/,/g, '').trim() || '0';
+// ─────────────────────────────────────────────
+// DECOMPOSITION MATH
+// ─────────────────────────────────────────────
+// Baseline = previous period. Current = previous + delta.
+// (S_prev + dS)(C_prev + dC) = S_prev·C_prev + dS·C_prev + S_prev·dC + dS·dC
+function decompose(prevS, prevC, currS, currC) {
+  const dS = currS - prevS;
+  const dC = currC - prevC;
+  const prevConv = prevS * prevC;
+  const currConv = currS * currC;
+  const sessEffect  = dS * prevC;
+  const cvrEffect   = prevS * dC;
+  const interaction = dS * dC;
+  const totalDelta  = currConv - prevConv; // = sessEffect + cvrEffect + interaction
+  return { prevConv, currConv, totalDelta, sessEffect, cvrEffect, interaction, dS, dC };
 }
 
-function normalizeCvr(raw) {
-  // Values from this Shopify export are decimals (e.g. 0.0168). If > 1, treat as percent.
-  if (!isFinite(raw)) return 0;
-  return raw > 1 ? raw / 100 : raw;
-}
-
-function splitCSVLine(line) {
-  // Handles quoted fields with commas
-  const result = [];
-  let cur = '';
-  let inQuote = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (ch === '"') { inQuote = !inQuote; }
-    else if (ch === ',' && !inQuote) { result.push(cur); cur = ''; }
-    else { cur += ch; }
-  }
-  result.push(cur);
-  return result;
-}
-
-// ============================================================
-// CHANNEL AGGREGATION
-// ============================================================
-function aggregateChannels(rows) {
-  const hasPrev = rows._hasPrevPeriod === true;
-
+// ─────────────────────────────────────────────
+// AGGREGATION
+// ─────────────────────────────────────────────
+function aggregate(rows) {
   const groups = {};
   for (const key of CHANNEL_ORDER) {
-    groups[key] = {
-      sessions: 0, weightedCvr: 0,
-      prevSessions: 0, prevWeightedCvr: 0, prevCount: 0,
-      sourceNames: [], rowCount: 0
-    };
+    groups[key] = { prevS: 0, currS: 0, prevWC: 0, currWC: 0, sources: [] };
   }
-
-  rows.forEach(row => {
-    const g = groups[row.channel] || groups['other'];
-    g.sessions    += row.sessions;
-    g.weightedCvr += row.sessions * row.cvrDecimal;
-    if (row.prevSessions != null) {
-      g.prevSessions    += row.prevSessions;
-      g.prevWeightedCvr += row.prevSessions * (row.prevCvrDecimal || 0);
-      g.prevCount++;
-    }
-    if (!g.sourceNames.includes(row.source) && row.source) {
-      g.sourceNames.push(row.source);
-    }
-    g.rowCount++;
+  rows.forEach(r => {
+    const g = groups[r.channel] || groups.other;
+    g.prevS  += r.prevSess;
+    g.currS  += r.currS;
+    g.prevWC += r.prevSess * r.prevCvr;
+    g.currWC += r.currS * r.currC;
+    if (r.source && !g.sources.includes(r.source)) g.sources.push(r.source);
   });
 
-  const result = [];
-  for (const key of CHANNEL_ORDER) {
-    const g = groups[key];
-    if (g.sessions === 0 && (g.prevSessions === 0 || !hasPrev)) continue;
-    const blendedCvr     = g.sessions > 0     ? (g.weightedCvr     / g.sessions)     * 100 : 0;
-    const prevBlendedCvr = g.prevSessions > 0  ? (g.prevWeightedCvr / g.prevSessions) * 100 : null;
-    // Auto-computed deltas from period comparison (absolute)
-    const autoDSessions = hasPrev && g.prevSessions > 0 ? g.sessions - g.prevSessions : null;
-    // CVR delta in pp (current - previous)
-    const autoDCvr = (hasPrev && prevBlendedCvr != null) ? blendedCvr - prevBlendedCvr : null;
-
-    result.push({
-      key,
-      label:      key === 'other' ? 'Other' : CHANNEL_GROUPS[key].label,
-      color:      key === 'other' ? '#9ca3af' : CHANNEL_GROUPS[key].color,
-      sessions:   g.sessions,
-      cvrPct:     blendedCvr,
-      prevSessions:   hasPrev ? g.prevSessions   : null,
-      prevCvrPct:     hasPrev ? prevBlendedCvr   : null,
-      autoDSessions,
-      autoDCvr,
-      sourceNames: g.sourceNames,
-      rowCount:    g.rowCount
-    });
-  }
-  result._hasPrevPeriod = hasPrev;
-  return result;
+  return CHANNEL_ORDER
+    .map(key => {
+      const g = groups[key];
+      if (g.prevS === 0 && g.currS === 0) return null;
+      const prevC = g.prevS > 0 ? g.prevWC / g.prevS : 0;
+      const currC = g.currS > 0 ? g.currWC / g.currS : 0;
+      const d = decompose(g.prevS, prevC, g.currS, currC);
+      return { key, prevS: g.prevS, currS: g.currS, prevC, currC, sources: g.sources, ...d };
+    })
+    .filter(Boolean);
 }
 
-// ============================================================
-// RENDER CHANNEL GROUPS TABLE
-// ============================================================
-function renderChannelsTable() {
-  const channels = aggregateChannels(state.rawRows);
-  const hasPrev  = channels._hasPrevPeriod === true;
-  const tbody    = el('channels-tbody');
-  tbody.innerHTML = '';
+// ─────────────────────────────────────────────
+// FORMAT HELPERS
+// ─────────────────────────────────────────────
+const fmtN  = (n, d=0) => isFinite(n) ? n.toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d}) : '—';
+const fmtS  = (n, d=0) => { if(!isFinite(n)) return '—'; return (n>0?'+':'')+fmtN(n,d); };
+const fmtP  = (n, d=1) => { if(!isFinite(n)) return '—'; return (n>0?'+':'')+n.toFixed(d)+'%'; };
+const fmtPP = (n, d=2) => { if(!isFinite(n)) return '—'; return (n>0?'+':'')+n.toFixed(d)+'pp'; };
+const cls   = n => n > 0 ? 'pos' : n < 0 ? 'neg' : '';
+const bcls  = n => n > 0 ? 'badge-pos' : n < 0 ? 'badge-neg' : 'badge-neu';
+function esc(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
 
-  // Show/hide prev period badge
-  const badge = el('prev-period-badge');
-  if (hasPrev) badge.classList.remove('hidden');
-  else badge.classList.add('hidden');
+// ─────────────────────────────────────────────
+// RENDER
+// ─────────────────────────────────────────────
+function render(rows, filename) {
+  const channels = aggregate(rows);
 
-  let totSessions = 0, totPrevSessions = 0, totBase = 0, totNew = 0, totDelta = 0, totDSessions = 0;
-  let totWeightedCvr = 0, totPrevWeightedCvr = 0;
-
+  // Totals
+  let tPrevS=0, tCurrS=0, tPrevConv=0, tCurrConv=0, tDelta=0;
+  let tSessEff=0, tCvrEff=0, tInteract=0;
+  let tPrevWC=0, tCurrWC=0;
   channels.forEach(ch => {
-    // Auto-populate delta from period comparison on first load (if not overridden)
-    if (hasPrev && !(ch.key in state.channelDeltas)) {
-      state.channelDeltas[ch.key] = {
-        dSessions: ch.autoDSessions != null ? Math.round(ch.autoDSessions) : 0,
-        dCvr:      ch.autoDCvr      != null ? parseFloat(ch.autoDCvr.toFixed(4)) : 0,
-        fromAuto:  true
-      };
-    }
+    tPrevS    += ch.prevS;
+    tCurrS    += ch.currS;
+    tPrevConv += ch.prevConv;
+    tCurrConv += ch.currConv;
+    tDelta    += ch.totalDelta;
+    tSessEff  += ch.sessEffect;
+    tCvrEff   += ch.cvrEffect;
+    tInteract += ch.interaction;
+    tPrevWC   += ch.prevS * ch.prevC;
+    tCurrWC   += ch.currS * ch.currC;
+  });
+  const tPrevCvr = tPrevS > 0 ? tPrevWC / tPrevS : 0;
+  const tCurrCvr = tCurrS > 0 ? tCurrWC / tCurrS : 0;
 
-    const delta = state.channelDeltas[ch.key] || { dSessions: 0, dCvr: 0 };
+  // Top bar
+  document.getElementById('top-bar-info').innerHTML =
+    `<strong>${esc(filename)}</strong> &nbsp;·&nbsp; ${rows.length} utm_source rows &nbsp;·&nbsp; ${channels.length} channel groups`;
 
-    // "baseline" for decomp = previous period (if available), otherwise current
-    const baseSessions = (hasPrev && ch.prevSessions != null) ? ch.prevSessions : ch.sessions;
-    const baseCvrPct   = (hasPrev && ch.prevCvrPct   != null) ? ch.prevCvrPct   : ch.cvrPct;
+  // Overall Summary KPIs
+  const sessDelta = tCurrS - tPrevS;
+  const sessPct = tPrevS > 0 ? sessDelta / tPrevS * 100 : 0;
+  const cvrDelta = tCurrCvr - tPrevCvr;
+  const txnPct = tPrevConv > 0 ? tDelta / tPrevConv * 100 : 0;
 
-    const r = calculate(baseSessions, baseCvrPct, delta.dSessions, delta.dCvr, 'absolute', 'pp');
+  document.getElementById('kpi-row').innerHTML = `
+    <div class="kpi">
+      <div class="kpi__label">Total Sessions</div>
+      <div class="kpi__value">${fmtN(tCurrS)}</div>
+      <div class="kpi__sub">was ${fmtN(tPrevS)}</div>
+      <div class="kpi__badge ${bcls(sessDelta)}">${fmtS(Math.round(sessDelta))} (${fmtP(sessPct,1)})</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi__label">Conversion Rate</div>
+      <div class="kpi__value">${(tCurrCvr*100).toFixed(2)}%</div>
+      <div class="kpi__sub">was ${(tPrevCvr*100).toFixed(2)}%</div>
+      <div class="kpi__badge ${bcls(cvrDelta)}">${fmtPP(cvrDelta*100)}</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi__label">Transactions</div>
+      <div class="kpi__value">${fmtN(Math.round(tCurrConv))}</div>
+      <div class="kpi__sub">was ${fmtN(Math.round(tPrevConv))}</div>
+      <div class="kpi__badge ${bcls(tDelta)}">${fmtS(Math.round(tDelta))} (${fmtP(txnPct,1)})</div>
+    </div>
+  `;
 
-    totSessions     += ch.sessions;
-    totPrevSessions += (ch.prevSessions || 0);
-    totWeightedCvr  += ch.sessions * (ch.cvrPct / 100);
-    totPrevWeightedCvr += (ch.prevSessions || 0) * ((ch.prevCvrPct || 0) / 100);
-    totBase         += r.baseConv;
-    totNew          += r.newConv;
-    totDelta        += r.totalDelta;
-    totDSessions    += r.dS;
-
-    const srcList = ch.sourceNames.slice(0, 4).join(', ') + (ch.sourceNames.length > 4 ? ` +${ch.sourceNames.length - 4}` : '');
-
-    // Badge on delta cells to indicate auto-filled vs manually overridden
-    const autoTag = delta.fromAuto
-      ? `<span style="font-size:0.65rem;color:var(--text-secondary);display:block;margin-top:2px">auto</span>`
-      : `<span style="font-size:0.65rem;color:var(--fb-blue);display:block;margin-top:2px">edited</span>`;
-
-    const prevSessionsTxt = hasPrev
-      ? (ch.prevSessions != null ? fmt(ch.prevSessions) : '—')
-      : '—';
-    const prevCvrTxt = hasPrev
-      ? (ch.prevCvrPct != null ? ch.prevCvrPct.toFixed(2) + '%' : '—')
-      : '—';
-
-    // Prev sessions delta vs current (for context color)
-    const sessionsWoW = (hasPrev && ch.prevSessions != null) ? ch.sessions - ch.prevSessions : null;
-
-    const tr = document.createElement('tr');
-    tr.dataset.chKey = ch.key;
-    tr.innerHTML = `
-      <td>
-        <span class="ch-dot" style="background:${escHtml(ch.color)}"></span>
-        <strong>${escHtml(ch.label)}</strong>
-      </td>
-      <td style="color:var(--text-secondary);font-size:0.75rem;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(ch.sourceNames.join(', '))}">${escHtml(srcList)}</td>
-      <td>
-        ${fmt(ch.sessions)}
-        ${sessionsWoW != null ? `<span style="font-size:0.72rem;display:block" class="${colorClass(sessionsWoW)}">${fmtSign(Math.round(sessionsWoW))}</span>` : ''}
-      </td>
-      <td style="color:var(--text-secondary)">${prevSessionsTxt}</td>
-      <td>
-        ${ch.cvrPct.toFixed(2)}%
-        ${(hasPrev && ch.prevCvrPct != null) ? `<span style="font-size:0.72rem;display:block" class="${colorClass(ch.cvrPct - ch.prevCvrPct)}">${fmtSign(ch.cvrPct - ch.prevCvrPct, 2)}pp</span>` : ''}
-      </td>
-      <td style="color:var(--text-secondary)">${prevCvrTxt}</td>
-      <td>
-        <input type="number" class="ch-d-sessions" data-key="${escHtml(ch.key)}" value="${delta.dSessions}" step="100" placeholder="0">
-        ${autoTag}
-      </td>
-      <td>
-        <input type="number" class="ch-d-cvr" data-key="${escHtml(ch.key)}" value="${delta.dCvr.toFixed(4)}" step="0.0001" placeholder="0">
-        ${autoTag}
-      </td>
-      <td>${fmt(Math.round(r.baseConv))}</td>
-      <td>${fmt(Math.round(r.newConv))}</td>
-      <td class="${colorClass(r.totalDelta)}">${fmtSign(Math.round(r.totalDelta))}</td>
-      <td class="${colorClass(r.totalDeltaPct)}">${fmtPct(r.totalDeltaPct)}</td>
-    `;
-
-    // Wire delta inputs — mark as manually overridden when user edits
-    tr.querySelectorAll('input[type="number"]').forEach(inp => {
-      inp.addEventListener('input', () => {
-        const key = inp.dataset.key;
-        if (!state.channelDeltas[key]) state.channelDeltas[key] = { dSessions: 0, dCvr: 0 };
-        state.channelDeltas[key].fromAuto = false; // user override
-        if (inp.classList.contains('ch-d-sessions')) {
-          state.channelDeltas[key].dSessions = parseFloat(inp.value) || 0;
-        } else {
-          state.channelDeltas[key].dCvr = parseFloat(inp.value) || 0;
-        }
-        renderChannelsTable();
-        syncChannelTotalsToMain(channels);
+  // ── Ranked contributors ──────────────────────
+  const contributors = [];
+  channels.forEach(ch => {
+    if (ch.sessEffect !== 0) {
+      contributors.push({
+        channel: ch.key,
+        typeLabel: ch.dS >= 0 ? 'Sessions Increase' : 'Sessions Decrease',
+        value: ch.sessEffect,
+        detail: `${fmtS(Math.round(ch.dS))} sessions (${fmtP(ch.prevS > 0 ? ch.dS / ch.prevS * 100 : 0, 1)})`,
       });
-    });
+    }
+    if (ch.cvrEffect !== 0) {
+      contributors.push({
+        channel: ch.key,
+        typeLabel: ch.dC >= 0 ? 'CVR Increase' : 'CVR Decrease',
+        value: ch.cvrEffect,
+        detail: `${fmtPP(ch.dC * 100)} (${(ch.prevC*100).toFixed(2)}% → ${(ch.currC*100).toFixed(2)}%)`,
+      });
+    }
+    if (Math.abs(ch.interaction) > 0.5) {
+      contributors.push({
+        channel: ch.key,
+        typeLabel: 'Interaction Effect',
+        value: ch.interaction,
+        detail: 'Combined sessions + CVR movement',
+      });
+    }
+  });
+  contributors.sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
 
-    tbody.appendChild(tr);
+  // Headline
+  const top = contributors[0];
+  const headlineCard = document.getElementById('headline-card');
+  const direction = tDelta >= 0 ? 'increased' : 'decreased';
+  headlineCard.className = 'card headline-card ' + (tDelta >= 0 ? 'up' : 'down');
+  const topDesc = top ? `Largest driver: ${top.typeLabel} from ${chLabel(top.channel)} — contributed ${fmtS(Math.round(top.value))} transactions.` : '';
+  headlineCard.innerHTML = `
+    <h3>Overall transactions ${direction} by ${fmtS(Math.round(tDelta))} (${fmtP(txnPct, 1)})</h3>
+    <p>${esc(topDesc)}</p>
+  `;
+
+  // Contributors list
+  const maxAbs = contributors.length > 0 ? Math.abs(contributors[0].value) : 1;
+  const contribList = document.getElementById('contributors-list');
+  contribList.innerHTML = '';
+  contributors.forEach(c => {
+    const barPct = Math.round(Math.abs(c.value) / maxAbs * 100);
+    const barColor = c.value >= 0 ? 'var(--positive)' : 'var(--negative)';
+    const pctOfDelta = tDelta !== 0 ? (c.value / tDelta * 100) : 0;
+    const pctOfBase  = tPrevConv > 0 ? (c.value / tPrevConv * 100) : 0;
+    const row = document.createElement('div');
+    row.className = 'contrib-item';
+    row.innerHTML = `
+      <div class="contrib-label">
+        <span class="ch-dot" style="background:${esc(chColor(c.channel))}"></span>
+        <div>
+          <div>${esc(chLabel(c.channel))}</div>
+          <div class="contrib-type">${esc(c.typeLabel)}</div>
+        </div>
+      </div>
+      <div>
+        <div class="contrib-bar-wrap">
+          <div class="contrib-bar" style="width:${barPct}%;background:${barColor}"></div>
+        </div>
+        <div style="font-size:0.72rem;color:var(--text-secondary);margin-top:2px">${esc(c.detail)}</div>
+      </div>
+      <div class="contrib-val ${cls(c.value)}">${fmtS(Math.round(c.value))}</div>
+      <div class="contrib-pct">${fmtP(pctOfDelta, 1)} of Δ</div>
+      <div class="contrib-base">${fmtP(pctOfBase, 2)} of prev</div>
+    `;
+    contribList.appendChild(row);
   });
 
-  // Totals row
-  const totPct    = totBase  !== 0 ? (totDelta / totBase) * 100 : 0;
-  const totCvr    = totSessions     > 0 ? (totWeightedCvr     / totSessions)     * 100 : 0;
-  const totPrevCvr= totPrevSessions > 0 ? (totPrevWeightedCvr / totPrevSessions) * 100 : null;
-
-  el('ch-tot-sources').textContent      = state.rawRows.length + ' rows';
-  el('ch-tot-sessions').textContent     = fmt(totSessions);
-  el('ch-tot-prev-sessions').textContent= hasPrev ? fmt(totPrevSessions) : '—';
-  el('ch-tot-cvr').textContent          = totCvr.toFixed(2) + '%';
-  el('ch-tot-prev-cvr').textContent     = (hasPrev && totPrevCvr != null) ? totPrevCvr.toFixed(2) + '%' : '—';
-  el('ch-tot-d-sessions').textContent   = fmtSign(Math.round(totDSessions));
-  el('ch-tot-base').textContent         = fmt(Math.round(totBase));
-  el('ch-tot-new').textContent          = fmt(Math.round(totNew));
-  const totDeltaEl = el('ch-tot-delta');
-  totDeltaEl.textContent = fmtSign(Math.round(totDelta));
-  totDeltaEl.className   = colorClass(totDelta);
-  const totPctEl = el('ch-tot-pct');
-  totPctEl.textContent   = fmtPct(totPct);
-  totPctEl.className     = colorClass(totDelta);
-}
-
-function syncChannelTotalsToMain(channels) {
-  const hasPrev = channels._hasPrevPeriod === true;
-
-  // Baseline = previous period (if available), otherwise current
-  let totBaseS = 0, totBaseWeightedCvr = 0;
-  channels.forEach(ch => {
-    const s   = (hasPrev && ch.prevSessions != null) ? ch.prevSessions : ch.sessions;
-    const cvr = (hasPrev && ch.prevCvrPct   != null) ? ch.prevCvrPct   : ch.cvrPct;
-    totBaseS           += s;
-    totBaseWeightedCvr += s * (cvr / 100);
-  });
-  const blendedBaseCvrPct = totBaseS > 0 ? (totBaseWeightedCvr / totBaseS) * 100 : 0;
-
-  el('inp-sessions').value = totBaseS;
-  el('inp-cvr').value      = blendedBaseCvrPct.toFixed(4);
-
-  // Aggregate channel deltas into main delta inputs
-  let totDSessions = 0, totDCvr = 0;
-  channels.forEach(ch => {
-    const delta = state.channelDeltas[ch.key] || { dSessions: 0, dCvr: 0 };
-    totDSessions += delta.dSessions;
-    // Weight CVR delta by base sessions share
-    const s = (hasPrev && ch.prevSessions != null) ? ch.prevSessions : ch.sessions;
-    totDCvr += (s / (totBaseS || 1)) * delta.dCvr;
-  });
-
-  el('inp-d-sessions').value = Math.round(totDSessions);
-  el('inp-d-cvr').value      = totDCvr.toFixed(4);
-  el('sld-sessions').value   = Math.round(totDSessions);
-  el('sld-cvr').value        = totDCvr.toFixed(4);
-  update();
-}
-
-// ============================================================
-// RENDER RAW TABLE
-// ============================================================
-function renderRawTable() {
-  const tbody = el('raw-tbody');
+  // Breakdown table
+  const tbody = document.getElementById('breakdown-tbody');
   tbody.innerHTML = '';
-  // Sort by sessions desc
-  const sorted = [...state.rawRows].sort((a, b) => b.sessions - a.sessions);
-  sorted.forEach(row => {
-    const chKey = row.channel;
-    const chColor = chKey === 'other' ? '#9ca3af' : (CHANNEL_GROUPS[chKey] ? CHANNEL_GROUPS[chKey].color : '#9ca3af');
-    const chLabel = chKey === 'other' ? 'Other' : (CHANNEL_GROUPS[chKey] ? CHANNEL_GROUPS[chKey].label : chKey);
+  channels.forEach(ch => {
+    const prevConvPct = ch.prevS > 0 ? ch.prevC * 100 : 0;
+    const currConvPct = ch.currS > 0 ? ch.currC * 100 : 0;
+    const srcList = ch.sources.slice(0,3).join(', ') + (ch.sources.length > 3 ? ` +${ch.sources.length-3}` : '');
     const tr = document.createElement('tr');
-    if (chKey === 'other') tr.className = 'unmapped-row';
     tr.innerHTML = `
-      <td>${escHtml(row.source || '(empty)')}</td>
-      <td><span class="ch-dot" style="background:${escHtml(chColor)}"></span>${escHtml(chLabel)}</td>
-      <td>${fmt(row.sessions)}</td>
-      <td>${(row.cvrDecimal * 100).toFixed(3)}%</td>
-      <td>${fmt(Math.round(row.sessions * row.cvrDecimal))}</td>
+      <td>
+        <span class="ch-dot" style="background:${esc(chColor(ch.key))}"></span>
+        <strong>${esc(chLabel(ch.key))}</strong>
+        <div style="font-size:0.72rem;color:var(--text-secondary);margin-top:1px" title="${esc(ch.sources.join(', '))}">${esc(srcList)}</div>
+      </td>
+      <td class="r">${fmtN(ch.prevS)}</td>
+      <td class="r">${fmtN(ch.currS)}</td>
+      <td class="r ${cls(ch.dS)}">${fmtS(Math.round(ch.dS))}</td>
+      <td class="r">${prevConvPct.toFixed(2)}%</td>
+      <td class="r">${currConvPct.toFixed(2)}%</td>
+      <td class="r ${cls(ch.dC)}">${fmtPP(ch.dC*100)}</td>
+      <td class="r">${fmtN(Math.round(ch.prevConv))}</td>
+      <td class="r">${fmtN(Math.round(ch.currConv))}</td>
+      <td class="r ${cls(ch.totalDelta)}"><strong>${fmtS(Math.round(ch.totalDelta))}</strong></td>
+      <td class="r ${cls(ch.sessEffect)}">${fmtS(Math.round(ch.sessEffect))}</td>
+      <td class="r ${cls(ch.cvrEffect)}">${fmtS(Math.round(ch.cvrEffect))}</td>
+      <td class="r ${cls(ch.interaction)}">${fmtS(Math.round(ch.interaction))}</td>
     `;
     tbody.appendChild(tr);
   });
+
+  // Totals footer
+  document.getElementById('breakdown-tfoot').innerHTML = `
+    <tr>
+      <td>Total</td>
+      <td class="r">${fmtN(tPrevS)}</td>
+      <td class="r">${fmtN(tCurrS)}</td>
+      <td class="r ${cls(tCurrS-tPrevS)}">${fmtS(Math.round(tCurrS-tPrevS))}</td>
+      <td class="r">${(tPrevCvr*100).toFixed(2)}%</td>
+      <td class="r">${(tCurrCvr*100).toFixed(2)}%</td>
+      <td class="r ${cls(tCurrCvr-tPrevCvr)}">${fmtPP((tCurrCvr-tPrevCvr)*100)}</td>
+      <td class="r">${fmtN(Math.round(tPrevConv))}</td>
+      <td class="r">${fmtN(Math.round(tCurrConv))}</td>
+      <td class="r ${cls(tDelta)}"><strong>${fmtS(Math.round(tDelta))}</strong></td>
+      <td class="r ${cls(tSessEff)}">${fmtS(Math.round(tSessEff))}</td>
+      <td class="r ${cls(tCvrEff)}">${fmtS(Math.round(tCvrEff))}</td>
+      <td class="r ${cls(tInteract)}">${fmtS(Math.round(tInteract))}</td>
+    </tr>
+  `;
+
+  // Raw rows table
+  const rawTbody = document.getElementById('raw-tbody');
+  rawTbody.innerHTML = '';
+  const sorted = [...rows].sort((a,b) => b.currS - a.currS);
+  sorted.forEach(r => {
+    const tr = document.createElement('tr');
+    if (r.channel === 'other') tr.className = 'unmapped';
+    tr.innerHTML = `
+      <td>${esc(r.source || '(empty)')}</td>
+      <td><span class="ch-dot" style="background:${esc(chColor(r.channel))}"></span>${esc(chLabel(r.channel))}</td>
+      <td class="r">${fmtN(r.prevSess)}</td>
+      <td class="r">${fmtN(r.currS)}</td>
+      <td class="r">${(r.prevCvr*100).toFixed(3)}%</td>
+      <td class="r">${(r.currC*100).toFixed(3)}%</td>
+      <td class="r">${fmtN(Math.round(r.currS*r.currC))}</td>
+    `;
+    rawTbody.appendChild(tr);
+  });
+
+  // Show results
+  document.getElementById('upload-screen').style.display = 'none';
+  document.getElementById('results-screen').style.display = 'block';
 }
 
-// ============================================================
-// MAIN UPDATE LOOP
-// ============================================================
-function update() {
-  const sessions  = parseFloat(el('inp-sessions').value) || 0;
-  const cvr       = parseFloat(el('inp-cvr').value) || 0;
-  const dSessions = parseFloat(el('inp-d-sessions').value) || 0;
-  const dCvr      = parseFloat(el('inp-d-cvr').value) || 0;
-
-  state.sessions  = sessions;
-  state.cvr       = cvr;
-  state.dSessions = dSessions;
-  state.dCvr      = dCvr;
-
-  const r = calculate(sessions, cvr, dSessions, dCvr, state.sessionsDeltaMode, state.cvrDeltaMode);
-
-  renderSummary(r);
-  renderWaterfall(r);
-  renderDecompTable(r);
-
-  updateSliderReadouts();
-
-  if (state.sourcesVisible) renderSourcesTable();
-}
-
-// ============================================================
+// ─────────────────────────────────────────────
 // EVENT WIRING
-// ============================================================
-function wireToggleGroup(groupId, stateKey, callback) {
-  const group = el(groupId);
-  group.querySelectorAll('button').forEach(btn => {
-    btn.addEventListener('click', () => {
-      group.querySelectorAll('button').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      state[stateKey] = btn.dataset.value;
-      if (callback) callback();
-      update();
-    });
-  });
-}
-
-function updateDeltaLabels() {
-  const sm = state.sessionsDeltaMode;
-  el('hint-d-sessions').textContent = sm === 'absolute'
-    ? '(e.g. +500 or −200)'
-    : '(e.g. +5 means +5% of baseline sessions)';
-  el('sfx-d-sessions').textContent = sm === 'percent' ? '%' : '';
-
-  const cm = state.cvrDeltaMode;
-  el('hint-d-cvr').textContent = cm === 'pp'
-    ? '(e.g. +0.5pp means 3% → 3.5%)'
-    : '(e.g. +10 means 3% → 3.3% ≈ +10% of CVR)';
-  el('sfx-d-cvr').textContent = cm === 'pp' ? 'pp' : '%';
-
-  // Update slider ranges and labels based on mode
-  const sld = el('sld-sessions');
-  if (sm === 'percent') {
-    sld.min = -50; sld.max = 150; sld.step = 1;
-    sld.value = state.dSessions;
-  } else {
-    sld.min = -Math.round(state.sessions * 0.5);
-    sld.max = Math.round(state.sessions * 2);
-    sld.step = 100;
-    sld.value = state.dSessions;
-  }
-
-  const sldC = el('sld-cvr');
-  if (cm === 'pp') {
-    sldC.min = -3; sldC.max = 5; sldC.step = 0.05;
-  } else {
-    sldC.min = -50; sldC.max = 100; sldC.step = 1;
-  }
-  sldC.value = state.dCvr;
-}
-
-function init() {
-  // Wire number inputs
-  ['inp-sessions', 'inp-cvr', 'inp-d-sessions', 'inp-d-cvr'].forEach(id => {
-    el(id).addEventListener('input', () => {
-      // Sync sliders when number input changes
-      if (id === 'inp-d-sessions') {
-        el('sld-sessions').value = el('inp-d-sessions').value;
-      }
-      if (id === 'inp-d-cvr') {
-        el('sld-cvr').value = el('inp-d-cvr').value;
-      }
-      // Update slider ranges when baseline sessions changes
-      if (id === 'inp-sessions') {
-        updateDeltaLabels();
-      }
-      update();
-    });
-  });
-
-  // Wire sliders → number inputs
-  el('sld-sessions').addEventListener('input', () => {
-    el('inp-d-sessions').value = el('sld-sessions').value;
-    update();
-  });
-  el('sld-cvr').addEventListener('input', () => {
-    el('inp-d-cvr').value = el('sld-cvr').value;
-    update();
-  });
-
-  // Toggle groups
-  wireToggleGroup('tgl-sessions-mode', 'sessionsDeltaMode', updateDeltaLabels);
-  wireToggleGroup('tgl-cvr-mode', 'cvrDeltaMode', updateDeltaLabels);
-
-  // Toggle sources panel
-  el('btn-toggle-sources').addEventListener('click', () => {
-    state.sourcesVisible = !state.sourcesVisible;
-    const body = el('sources-body');
-    if (state.sourcesVisible) {
-      body.classList.remove('hidden');
-      el('btn-toggle-sources').textContent = '− Collapse';
-      if (!state.csvLoaded && state.sources.length === 0) addDefaultSources();
-      else if (!state.csvLoaded) renderSourcesTable();
-    } else {
-      body.classList.add('hidden');
-      el('btn-toggle-sources').textContent = '+ Expand';
-    }
-  });
-
-  // Add source row (manual)
-  el('btn-add-source').addEventListener('click', () => {
-    state.sources.push({
-      id: state.nextSourceId++,
-      name: 'New source',
-      sessions: 1000,
-      cvr: 3.0,
-      dSessions: 0,
-      dCvr: 0
-    });
-    renderSourcesTable();
-  });
-
-  // CSV file input
-  el('csv-file-input').addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (file) handleCSVFile(file);
-  });
-
-  // Drag and drop
-  const uploadZone = el('upload-zone');
-  uploadZone.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    uploadZone.classList.add('drag-over');
-  });
-  uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag-over'));
-  uploadZone.addEventListener('drop', (e) => {
-    e.preventDefault();
-    uploadZone.classList.remove('drag-over');
-    const file = e.dataTransfer.files[0];
-    if (file) handleCSVFile(file);
-  });
-
-  // Raw table toggle
-  el('btn-toggle-raw').addEventListener('click', () => {
-    const wrap = el('raw-table-wrap');
-    const isHidden = wrap.classList.contains('hidden');
-    wrap.classList.toggle('hidden');
-    el('btn-toggle-raw').textContent = isHidden ? 'Hide raw utm_source rows' : 'Show raw utm_source rows';
-    if (isHidden) renderRawTable();
-  });
-
-  // Initial render
-  update();
-}
-
-// ============================================================
-// CSV HANDLER
-// ============================================================
-function handleCSVFile(file) {
-  const statusEl = el('upload-status');
-  statusEl.className = 'ci-upload-status';
-  statusEl.style.display = 'none';
-
+// ─────────────────────────────────────────────
+function handleFile(file) {
+  const errEl = document.getElementById('upload-error');
+  errEl.className = 'upload-error';
   const reader = new FileReader();
-  reader.onload = (e) => {
+  reader.onload = e => {
     try {
       const rows = parseCSV(e.target.result);
-      state.rawRows = rows;
-      state.csvLoaded = true;
-      state.channelDeltas = {}; // reset so auto-populate fires fresh
-
-      // Show channel section, hide manual section
-      el('channels-section').classList.remove('hidden');
-      el('manual-sources-section').classList.add('hidden');
-
-      // Auto-open if not open
-      if (!state.sourcesVisible) {
-        state.sourcesVisible = true;
-        el('sources-body').classList.remove('hidden');
-        el('btn-toggle-sources').textContent = '− Collapse';
-      }
-
-      renderChannelsTable();
-
-      // Sync totals to main calculator
-      const channels = aggregateChannels(rows);
-      syncChannelTotalsToMain(channels);
-
-      // Update upload zone to show filename
-      el('upload-zone').querySelector('.ci-upload-zone__label').textContent = file.name;
-      el('upload-zone').querySelector('.ci-upload-zone__hint').textContent =
-        rows.length + ' rows loaded, ' + (new Set(rows.map(r => r.channel)).size) + ' channel groups';
-
-      statusEl.textContent = `Loaded ${rows.length} utm_source rows → ${aggregateChannels(rows).length} channel groups`;
-      statusEl.className = 'ci-upload-status success';
-
+      render(rows, file.name);
     } catch (err) {
-      statusEl.textContent = 'Error parsing CSV: ' + err.message;
-      statusEl.className = 'ci-upload-status error';
+      errEl.textContent = err.message;
+      errEl.className = 'upload-error show';
     }
   };
   reader.readAsText(file);
 }
 
-// ============================================================
-// UTILS
-// ============================================================
-function el(id) { return document.getElementById(id); }
-function escHtml(s) {
-  const d = document.createElement('div');
-  d.textContent = s;
-  return d.innerHTML;
-}
+document.addEventListener('DOMContentLoaded', () => {
+  const input  = document.getElementById('csv-input');
+  const zone   = document.getElementById('upload-zone');
 
-document.addEventListener('DOMContentLoaded', init);
+  input.addEventListener('change', e => { if (e.target.files[0]) handleFile(e.target.files[0]); });
+
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault();
+    zone.classList.remove('drag-over');
+    if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+  });
+
+  document.getElementById('btn-reset').addEventListener('click', () => {
+    document.getElementById('results-screen').style.display = 'none';
+    document.getElementById('upload-screen').style.display = 'block';
+    input.value = '';
+  });
+
+  document.getElementById('btn-raw-toggle').addEventListener('click', function() {
+    const wrap = document.getElementById('raw-wrap');
+    const open = wrap.classList.toggle('open');
+    this.textContent = open ? 'Hide raw utm_source rows' : 'Show raw utm_source rows';
+  });
+});
 </script>
 </body>
 </html>
