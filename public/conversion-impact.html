@@ -664,7 +664,7 @@ function render(rows, filename) {
         source: srcLabel, channel: r.channel,
         typeLabel: 'Interaction Effect',
         value: d.interaction,
-        detail: 'Combined sessions + CVR movement',
+        detail: `${fmtS(Math.round(d.dS))} sessions × ${fmtPP(d.dC * 100)} CVR`,
       });
     }
   });

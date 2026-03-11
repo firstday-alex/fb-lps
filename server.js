@@ -312,7 +312,7 @@ app.get('/api/debug-ad', requireAuth, async (req, res) => {
   try {
     // Fetch ad with creative - try many fields including effective_link_url
     const adUrl = `${META_BASE_URL}/${ad_id}`
-      + `?fields=creative{id,name,thumbnail_url,image_url,object_story_spec,link_url,object_url,object_story_id,effective_object_story_id,effective_link_url,call_to_action_type}`
+      + `?fields=creative{id,name,thumbnail_url,image_url,object_story_spec,link_url,object_url,object_story_id,effective_object_story_id}`
       + `&${metaParams(req.accessToken)}`;
     const adResponse = await fetch(adUrl);
     const adData = await adResponse.json();
@@ -323,7 +323,7 @@ app.get('/api/debug-ad', requireAuth, async (req, res) => {
 
     if (creative.id) {
       const directUrl = `${META_BASE_URL}/${creative.id}`
-        + `?fields=link_url,object_story_spec,asset_feed_spec,object_url,object_story_id,effective_object_story_id,effective_link_url,link_destination_display_url,template_url,url_tags`
+        + `?fields=link_url,object_story_spec,asset_feed_spec,object_url,object_story_id,effective_object_story_id`
         + `&${metaParams(req.accessToken)}`;
       const directResponse = await fetch(directUrl);
       creativeDirectData = await directResponse.json();
@@ -345,30 +345,43 @@ app.get('/api/debug-ad', requireAuth, async (req, res) => {
 
     // Try ad preview to extract URL from rendered HTML
     let previewData = null;
+    let extractedUrl = null;
     try {
       const previewUrl = `${META_BASE_URL}/${ad_id}/previews`
         + `?ad_format=DESKTOP_FEED_STANDARD`
         + `&${metaParams(req.accessToken)}`;
       const previewResponse = await fetch(previewUrl);
       previewData = await previewResponse.json();
-    } catch (e) {}
 
-    // Try the ads_posts edge on the page
-    let adsPostData = null;
-    if (storyId) {
-      const pageId = storyId.split('_')[0];
-      const postId = storyId;
-      try {
-        const adsPostUrl = `${META_BASE_URL}/${pageId}/ads_posts`
-          + `?filtering=[{"field":"effective_object_story_id","operator":"IN","value":["${postId}"]}]`
-          + `&fields=link,call_to_action`
-          + `&${metaParams(req.accessToken)}`;
-        const adsPostResponse = await fetch(adsPostUrl);
-        adsPostData = await adsPostResponse.json();
-      } catch (e) {}
+      // Try to fetch the iframe content and extract destination URL
+      if (previewData.data?.[0]?.body) {
+        const iframeSrcMatch = previewData.data[0].body.match(/src="([^"]+)"/);
+        if (iframeSrcMatch) {
+          const iframeUrl = iframeSrcMatch[1].replace(/&amp;/g, '&');
+          const iframeResponse = await fetch(iframeUrl);
+          const iframeHtml = await iframeResponse.text();
+
+          // Extract external URLs from the iframe HTML (exclude facebook.com URLs)
+          const urlMatches = iframeHtml.match(/href="(https?:\/\/[^"]+)"/g) || [];
+          const externalUrls = urlMatches
+            .map(m => m.match(/href="([^"]+)"/)[1])
+            .map(u => { try { return decodeURIComponent(u); } catch { return u; } })
+            .filter(u => !u.includes('facebook.com') && !u.includes('fbcdn.net') && !u.includes('fb.com'));
+
+          // Also try to find URLs in l.facebook.com redirect links
+          const redirectMatches = iframeHtml.match(/l\.facebook\.com\/l\.php\?u=([^&"]+)/g) || [];
+          const redirectUrls = redirectMatches
+            .map(m => { try { return decodeURIComponent(m.split('u=')[1]); } catch { return null; } })
+            .filter(Boolean);
+
+          extractedUrl = redirectUrls[0] || externalUrls[0] || null;
+        }
+      }
+    } catch (e) {
+      console.error('Preview fetch error:', e.message);
     }
 
-    res.json({ adData, creativeDirectData, storyId, postData, previewData, adsPostData });
+    res.json({ adData, creativeDirectData, storyId, postData, extractedUrl });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
