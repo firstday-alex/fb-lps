@@ -798,10 +798,14 @@ function render(rawRows, filename) {
       });
     }
     if (Math.abs(mixShift) > 0.5) {
+      // Positive mixShift = low-CVR source lost sessions (good: shed bad traffic, blended CVR improves)
+      //                   OR high-CVR source gained sessions (good: gained quality traffic)
+      // Negative mixShift = high-CVR source lost sessions (bad: lost quality traffic, blended CVR drops)
+      //                   OR low-CVR source gained sessions (bad: gained bad traffic, dilutes blended CVR)
       contributors.push({
         source: srcLabel, channel: r.channel, currS: r.currS, currC: r.currC,
         aboveAvg, prevCvr: r.prevCvr, blendedCvr: tPrevCvr,
-        typeLabel: 'Mix-Shift Effect',
+        typeLabel: mixShift >= 0 ? 'Mix Improvement' : 'Mix Drag',
         isMixShift: true,
         value: mixShift,
         detail: `CVR ${(r.prevCvr*100).toFixed(2)}% vs avg ${(tPrevCvr*100).toFixed(2)}% · ${fmtS(Math.round(d.dS))} sessions`,
@@ -827,11 +831,21 @@ function render(rawRows, filename) {
   contribList.innerHTML = '';
   contributors.forEach(c => {
     const barPct = Math.round(Math.abs(c.value) / maxAbs * 100);
-    // Amber for mix-harmful sessions effect or mix-shift effect
-    const barColor = c.mixHarmful || c.isMixShift
+    // Color logic:
+    // - mix-harmful sessions effect (high-CVR loses, low-CVR gains) → amber (misleading sign)
+    // - mix-shift positive (shed bad traffic / gained good traffic) → green
+    // - mix-shift negative (lost good traffic / gained bad traffic) → amber
+    // - everything else → normal green/red
+    const barColor = c.mixHarmful
       ? 'var(--amber)'
-      : c.value >= 0 ? 'var(--positive)' : 'var(--negative)';
-    const valCls = c.mixHarmful || c.isMixShift ? 'amb' : cls(c.value);
+      : c.isMixShift
+        ? (c.value >= 0 ? 'var(--positive)' : 'var(--amber)')
+        : (c.value >= 0 ? 'var(--positive)' : 'var(--negative)');
+    const valCls = c.mixHarmful
+      ? 'amb'
+      : c.isMixShift
+        ? (c.value >= 0 ? 'pos' : 'amb')
+        : cls(c.value);
     const pctOfDelta = tDelta !== 0 ? (c.value / tDelta * 100) : 0;
 
     // CVR vs average badge

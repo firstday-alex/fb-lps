@@ -94,7 +94,7 @@ app.get('/auth/facebook', (req, res) => {
   const authUrl = `https://www.facebook.com/${META_API_VERSION}/dialog/oauth`
     + `?client_id=${META_APP_ID}`
     + `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}`
-    + `&scope=ads_read,pages_read_engagement,pages_show_list`
+    + `&scope=ads_read,pages_read_engagement,pages_show_list,business_management`
     + `&response_type=code`;
   res.redirect(authUrl);
 });
@@ -367,29 +367,60 @@ app.get('/api/test-permissions', requireAuth, async (req, res) => {
     const permsResponse = await fetch(permsUrl);
     const permsData = await permsResponse.json();
 
-    // Test 2: List pages the user manages (tests pages_show_list)
+    // Test 2: List pages via personal account
     const pagesUrl = `${META_BASE_URL}/me/accounts`
       + `?fields=id,name,access_token`
       + `&${metaParams(req.accessToken)}`;
     const pagesResponse = await fetch(pagesUrl);
     const pagesData = await pagesResponse.json();
 
-    // Test 3: If we have a page, try reading an ads_post from it
-    let adsPostTest = null;
-    if (pagesData.data?.[0]) {
-      const pageId = pagesData.data[0].id;
-      const pageToken = pagesData.data[0].access_token;
+    // Test 3: List businesses the user belongs to
+    const bizUrl = `${META_BASE_URL}/me/businesses`
+      + `?fields=id,name`
+      + `&${metaParams(req.accessToken)}`;
+    const bizResponse = await fetch(bizUrl);
+    const bizData = await bizResponse.json();
 
-      // Try using the page access token to read ads posts
-      const adsPostsUrl = `${META_BASE_URL}/${pageId}/ads_posts`
-        + `?fields=id,link,call_to_action`
-        + `&limit=3`
-        + `&access_token=${encodeURIComponent(pageToken)}&appsecret_proof=${generateAppSecretProof(pageToken)}`;
-      const adsPostsResponse = await fetch(adsPostsUrl);
-      adsPostTest = await adsPostsResponse.json();
+    // Test 4: If we have a business, get its pages
+    let bizPages = null;
+    let pageToken = null;
+    let postTest = null;
+
+    if (bizData.data?.[0]) {
+      const bizId = bizData.data[0].id;
+
+      // Try owned_pages
+      const bizPagesUrl = `${META_BASE_URL}/${bizId}/owned_pages`
+        + `?fields=id,name,access_token`
+        + `&${metaParams(req.accessToken)}`;
+      const bizPagesResponse = await fetch(bizPagesUrl);
+      bizPages = await bizPagesResponse.json();
+
+      // Try to find page 375215066258824 (the ad's page) and read a post
+      const targetPage = bizPages.data?.find(p => p.id === '375215066258824') || bizPages.data?.[0];
+      if (targetPage?.access_token) {
+        pageToken = targetPage.access_token;
+
+        // Try reading the post with page token
+        const postUrl = `${META_BASE_URL}/375215066258824_1403167991809848`
+          + `?fields=link,call_to_action,attachments{url,unshimmed_url}`
+          + `&access_token=${encodeURIComponent(pageToken)}&appsecret_proof=${generateAppSecretProof(pageToken)}`;
+        const postResponse = await fetch(postUrl);
+        postTest = await postResponse.json();
+      }
     }
 
-    res.json({ permissions: permsData, pages: pagesData, adsPostTest });
+    // Test 5: Also try direct page token request for the known page
+    let directPageTest = null;
+    try {
+      const directUrl = `${META_BASE_URL}/375215066258824`
+        + `?fields=id,name,access_token`
+        + `&${metaParams(req.accessToken)}`;
+      const directResponse = await fetch(directUrl);
+      directPageTest = await directResponse.json();
+    } catch (e) {}
+
+    res.json({ permissions: permsData, personalPages: pagesData, businesses: bizData, bizPages, postTest, directPageTest });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
