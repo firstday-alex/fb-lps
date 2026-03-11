@@ -343,7 +343,32 @@ app.get('/api/debug-ad', requireAuth, async (req, res) => {
       postData = await postResponse.json();
     }
 
-    res.json({ adData, creativeDirectData, storyId, postData });
+    // Try ad preview to extract URL from rendered HTML
+    let previewData = null;
+    try {
+      const previewUrl = `${META_BASE_URL}/${ad_id}/previews`
+        + `?ad_format=DESKTOP_FEED_STANDARD`
+        + `&${metaParams(req.accessToken)}`;
+      const previewResponse = await fetch(previewUrl);
+      previewData = await previewResponse.json();
+    } catch (e) {}
+
+    // Try the ads_posts edge on the page
+    let adsPostData = null;
+    if (storyId) {
+      const pageId = storyId.split('_')[0];
+      const postId = storyId;
+      try {
+        const adsPostUrl = `${META_BASE_URL}/${pageId}/ads_posts`
+          + `?filtering=[{"field":"effective_object_story_id","operator":"IN","value":["${postId}"]}]`
+          + `&fields=link,call_to_action`
+          + `&${metaParams(req.accessToken)}`;
+        const adsPostResponse = await fetch(adsPostUrl);
+        adsPostData = await adsPostResponse.json();
+      } catch (e) {}
+    }
+
+    res.json({ adData, creativeDirectData, storyId, postData, previewData, adsPostData });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -387,7 +387,7 @@
     <!-- Ranked contributors -->
     <div class="card breakdown-card">
       <h3>Top Contributors to Conversion Change</h3>
-      <p class="card__sub">Each bar shows one channel's sessions or CVR effect, ranked by absolute impact on transactions.</p>
+      <p class="card__sub">Each row is one utm_source, ranked by absolute impact on transactions. Dot color = channel group.</p>
       <div id="contributors-list"></div>
     </div>
 
@@ -638,30 +638,32 @@ function render(rows, filename) {
     </div>
   `;
 
-  // ── Ranked contributors ──────────────────────
+  // ── Ranked contributors (per utm_source) ─────
   const contributors = [];
-  channels.forEach(ch => {
-    if (ch.sessEffect !== 0) {
+  rows.forEach(r => {
+    const d = decompose(r.prevSess, r.prevCvr, r.currS, r.currC);
+    const srcLabel = r.source || '(direct / none)';
+    if (d.sessEffect !== 0) {
       contributors.push({
-        channel: ch.key,
-        typeLabel: ch.dS >= 0 ? 'Sessions Increase' : 'Sessions Decrease',
-        value: ch.sessEffect,
-        detail: `${fmtS(Math.round(ch.dS))} sessions (${fmtP(ch.prevS > 0 ? ch.dS / ch.prevS * 100 : 0, 1)})`,
+        source: srcLabel, channel: r.channel,
+        typeLabel: d.dS >= 0 ? 'Sessions Increase' : 'Sessions Decrease',
+        value: d.sessEffect,
+        detail: `${fmtS(Math.round(d.dS))} sessions (${fmtP(r.prevSess > 0 ? d.dS / r.prevSess * 100 : 0, 1)})`,
       });
     }
-    if (ch.cvrEffect !== 0) {
+    if (d.cvrEffect !== 0) {
       contributors.push({
-        channel: ch.key,
-        typeLabel: ch.dC >= 0 ? 'CVR Increase' : 'CVR Decrease',
-        value: ch.cvrEffect,
-        detail: `${fmtPP(ch.dC * 100)} (${(ch.prevC*100).toFixed(2)}% → ${(ch.currC*100).toFixed(2)}%)`,
+        source: srcLabel, channel: r.channel,
+        typeLabel: d.dC >= 0 ? 'CVR Increase' : 'CVR Decrease',
+        value: d.cvrEffect,
+        detail: `${fmtPP(d.dC * 100)} (${(r.prevCvr*100).toFixed(2)}% → ${(r.currC*100).toFixed(2)}%)`,
       });
     }
-    if (Math.abs(ch.interaction) > 0.5) {
+    if (Math.abs(d.interaction) > 0.5) {
       contributors.push({
-        channel: ch.key,
+        source: srcLabel, channel: r.channel,
         typeLabel: 'Interaction Effect',
-        value: ch.interaction,
+        value: d.interaction,
         detail: 'Combined sessions + CVR movement',
       });
     }
@@ -673,7 +675,7 @@ function render(rows, filename) {
   const headlineCard = document.getElementById('headline-card');
   const direction = tDelta >= 0 ? 'increased' : 'decreased';
   headlineCard.className = 'card headline-card ' + (tDelta >= 0 ? 'up' : 'down');
-  const topDesc = top ? `Largest driver: ${top.typeLabel} from ${chLabel(top.channel)} — contributed ${fmtS(Math.round(top.value))} transactions.` : '';
+  const topDesc = top ? `Largest driver: ${top.typeLabel} from ${top.source} — contributed ${fmtS(Math.round(top.value))} transactions.` : '';
   headlineCard.innerHTML = `
     <h3>Overall transactions ${direction} by ${fmtS(Math.round(tDelta))} (${fmtP(txnPct, 1)})</h3>
     <p>${esc(topDesc)}</p>
@@ -690,11 +692,13 @@ function render(rows, filename) {
     const pctOfBase  = tPrevConv > 0 ? (c.value / tPrevConv * 100) : 0;
     const row = document.createElement('div');
     row.className = 'contrib-item';
+    // Truncate long utm source names (e.g. facebook# tracking params)
+    const shortSrc = c.source.length > 30 ? c.source.slice(0, 28) + '…' : c.source;
     row.innerHTML = `
-      <div class="contrib-label">
+      <div class="contrib-label" title="${esc(c.source)}">
         <span class="ch-dot" style="background:${esc(chColor(c.channel))}"></span>
         <div>
-          <div>${esc(chLabel(c.channel))}</div>
+          <div>${esc(shortSrc)}</div>
           <div class="contrib-type">${esc(c.typeLabel)}</div>
         </div>
       </div>
