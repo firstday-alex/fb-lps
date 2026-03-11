@@ -256,7 +256,7 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
             if (pageToken) {
               try {
                 const postUrl = `${META_BASE_URL}/${creative.effective_object_story_id}`
-                  + `?fields=link,permalink_url`
+                  + `?fields=link`
                   + `&access_token=${encodeURIComponent(pageToken)}&appsecret_proof=${generateAppSecretProof(pageToken)}`;
                 const postResponse = await fetch(postUrl);
                 const postData = await postResponse.json();
@@ -364,12 +364,21 @@ app.get('/api/test-permissions', requireAuth, async (req, res) => {
       if (targetPage?.access_token) {
         pageToken = targetPage.access_token;
 
-        // Try reading the post with page token
-        const postUrl = `${META_BASE_URL}/375215066258824_1403167991809848`
-          + `?fields=link,permalink_url`
+        // Try reading the post with page token - multiple attempts
+        // Attempt 1: just 'link' field
+        const postUrl1 = `${META_BASE_URL}/375215066258824_1403167991809848`
+          + `?fields=link`
           + `&access_token=${encodeURIComponent(pageToken)}&appsecret_proof=${generateAppSecretProof(pageToken)}`;
-        const postResponse = await fetch(postUrl);
-        postTest = await postResponse.json();
+        const postResponse1 = await fetch(postUrl1);
+        const postTest1 = await postResponse1.json();
+
+        // Attempt 2: no fields (default)
+        const postUrl2 = `${META_BASE_URL}/375215066258824_1403167991809848`
+          + `?access_token=${encodeURIComponent(pageToken)}&appsecret_proof=${generateAppSecretProof(pageToken)}`;
+        const postResponse2 = await fetch(postUrl2);
+        const postTest2 = await postResponse2.json();
+
+        postTest = { withLinkField: postTest1, defaultFields: postTest2 };
       }
     }
 
@@ -423,7 +432,7 @@ app.get('/api/debug-ad', requireAuth, async (req, res) => {
 
     if (storyId) {
       const postUrl = `${META_BASE_URL}/${storyId}`
-        + `?fields=link,permalink_url,call_to_action`
+        + `?fields=link`
         + `&${metaParams(req.accessToken)}`;
       const postResponse = await fetch(postUrl);
       postData = await postResponse.json();
