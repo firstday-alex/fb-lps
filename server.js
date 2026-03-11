@@ -364,21 +364,22 @@ app.get('/api/test-permissions', requireAuth, async (req, res) => {
       if (targetPage?.access_token) {
         pageToken = targetPage.access_token;
 
-        // Try reading the post with page token - multiple attempts
-        // Attempt 1: just 'link' field
-        const postUrl1 = `${META_BASE_URL}/375215066258824_1403167991809848`
-          + `?fields=link`
+        // Try reading the post with page token using older API version (v16.0)
+        // v21.0 deprecates the 'link' field on posts
+        const postUrl1 = `https://graph.facebook.com/v16.0/375215066258824_1403167991809848`
+          + `?fields=link,name,caption,description,type`
           + `&access_token=${encodeURIComponent(pageToken)}&appsecret_proof=${generateAppSecretProof(pageToken)}`;
         const postResponse1 = await fetch(postUrl1);
         const postTest1 = await postResponse1.json();
 
-        // Attempt 2: no fields (default)
-        const postUrl2 = `${META_BASE_URL}/375215066258824_1403167991809848`
-          + `?access_token=${encodeURIComponent(pageToken)}&appsecret_proof=${generateAppSecretProof(pageToken)}`;
+        // Also try the child_attachments or target fields
+        const postUrl2 = `https://graph.facebook.com/v16.0/375215066258824_1403167991809848`
+          + `?fields=id,story,target,properties,child_attachments`
+          + `&access_token=${encodeURIComponent(pageToken)}&appsecret_proof=${generateAppSecretProof(pageToken)}`;
         const postResponse2 = await fetch(postUrl2);
         const postTest2 = await postResponse2.json();
 
-        postTest = { withLinkField: postTest1, defaultFields: postTest2 };
+        postTest = { v16WithLink: postTest1, v16WithOtherFields: postTest2 };
       }
     }
 
