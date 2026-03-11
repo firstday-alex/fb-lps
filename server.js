@@ -248,24 +248,68 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
             || creative.link_url
             || null;
 
-          // Fallback: Read the page post using page access token
+          // Fallback 1: Read the page post attachments using page access token
           if (!destinationUrl && creative.effective_object_story_id) {
             const pageId = creative.effective_object_story_id.split('_')[0];
             const pageToken = pageTokenMap[pageId];
 
             if (pageToken) {
               try {
-                const postUrl = `${META_BASE_URL}/${creative.effective_object_story_id}`
-                  + `?fields=link`
+                const attachUrl = `${META_BASE_URL}/${creative.effective_object_story_id}/attachments`
+                  + `?fields=url,unshimmed_url,target,type,subattachments`
                   + `&access_token=${encodeURIComponent(pageToken)}&appsecret_proof=${generateAppSecretProof(pageToken)}`;
-                const postResponse = await fetch(postUrl);
-                const postData = await postResponse.json();
+                const attachResponse = await fetch(attachUrl);
+                const attachData = await attachResponse.json();
 
-                if (!postData.error) {
-                  destinationUrl = postData.link || null;
+                if (attachData.data?.[0]) {
+                  const att = attachData.data[0];
+                  destinationUrl = att.unshimmed_url || att.url || att.target?.url || null;
+                  // Check subattachments if main has no URL
+                  if (!destinationUrl && att.subattachments?.data?.[0]) {
+                    const sub = att.subattachments.data[0];
+                    destinationUrl = sub.unshimmed_url || sub.url || sub.target?.url || null;
+                  }
                 }
               } catch (e) {}
             }
+          }
+
+          // Fallback 2: Extract URL from ad preview iframe
+          if (!destinationUrl) {
+            try {
+              const previewUrl = `${META_BASE_URL}/${ad.ad_id}/previews`
+                + `?ad_format=DESKTOP_FEED_STANDARD`
+                + `&${metaParams(req.accessToken)}`;
+              const previewResponse = await fetch(previewUrl);
+              const previewData = await previewResponse.json();
+
+              if (previewData.data?.[0]?.body) {
+                const iframeSrcMatch = previewData.data[0].body.match(/src="([^"]+)"/);
+                if (iframeSrcMatch) {
+                  const iframeUrl = iframeSrcMatch[1].replace(/&amp;/g, '&');
+                  const iframeResponse = await fetch(iframeUrl);
+                  const iframeHtml = await iframeResponse.text();
+
+                  // Extract URLs from l.facebook.com redirect links
+                  const redirectMatches = iframeHtml.match(/l\.facebook\.com\/l\.php\?u=([^&"]+)/g) || [];
+                  const redirectUrls = redirectMatches
+                    .map(m => { try { return decodeURIComponent(m.split('u=')[1]); } catch { return null; } })
+                    .filter(Boolean);
+
+                  if (redirectUrls[0]) {
+                    destinationUrl = redirectUrls[0];
+                  } else {
+                    // Fall back to any external URL in the iframe
+                    const urlMatches = iframeHtml.match(/href="(https?:\/\/[^"]+)"/g) || [];
+                    const externalUrls = urlMatches
+                      .map(m => m.match(/href="([^"]+)"/)[1])
+                      .map(u => { try { return decodeURIComponent(u); } catch { return u; } })
+                      .filter(u => !u.includes('facebook.com') && !u.includes('fbcdn.net') && !u.includes('fb.com'));
+                    destinationUrl = externalUrls[0] || null;
+                  }
+                }
+              }
+            } catch (e) {}
           }
 
           const imageUrl = creative.image_url
