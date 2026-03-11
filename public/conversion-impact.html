@@ -868,19 +868,24 @@
 
         <!-- Channel groups table -->
         <div id="channels-section" class="hidden">
-          <div class="ci-section-label" style="margin-bottom:8px">Channel Groups — set deltas to model scenarios</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <div class="ci-section-label">Channel Groups — set deltas to model scenarios</div>
+            <span id="prev-period-badge" class="ci-badge ci-badge--neutral hidden" style="font-size:0.72rem">Period comparison loaded</span>
+          </div>
           <div style="overflow-x:auto">
             <table class="ci-channels-table" id="channels-table">
               <thead>
-                <tr>
+                <tr id="channels-thead-row">
                   <th>Channel</th>
                   <th>Sources</th>
-                  <th>Baseline Sessions</th>
-                  <th>Blended CVR</th>
-                  <th>&Delta; Sessions</th>
-                  <th>&Delta; CVR (pp)</th>
-                  <th>Base Conv.</th>
-                  <th>New Conv.</th>
+                  <th>Curr Sessions</th>
+                  <th>Prev Sessions</th>
+                  <th>Curr CVR</th>
+                  <th>Prev CVR</th>
+                  <th>&Delta; Sessions <span style="font-weight:400;text-transform:none;font-size:0.68rem">(editable)</span></th>
+                  <th>&Delta; CVR pp <span style="font-weight:400;text-transform:none;font-size:0.68rem">(editable)</span></th>
+                  <th>Prev Conv.</th>
+                  <th>Curr Conv.</th>
                   <th>&Delta; Conv.</th>
                   <th>&Delta; %</th>
                 </tr>
@@ -893,7 +898,9 @@
                   <td>Total</td>
                   <td id="ch-tot-sources">—</td>
                   <td id="ch-tot-sessions">—</td>
+                  <td id="ch-tot-prev-sessions">—</td>
                   <td id="ch-tot-cvr">—</td>
+                  <td id="ch-tot-prev-cvr">—</td>
                   <td id="ch-tot-d-sessions">—</td>
                   <td>—</td>
                   <td id="ch-tot-base">—</td>
@@ -1330,41 +1337,74 @@ function parseCSV(text) {
   const lines = text.trim().split(/\r?\n/);
   if (lines.length < 2) throw new Error('CSV has no data rows');
 
-  // Parse header — strip BOM and quotes
-  const header = lines[0].replace(/^\uFEFF/, '').split(',').map(h => h.replace(/^"|"$/g, '').trim().toLowerCase());
+  // Parse header — strip BOM and quotes, normalize whitespace
+  const rawHeaders = splitCSVLine(lines[0].replace(/^\uFEFF/, ''));
+  const header = rawHeaders.map(h => h.replace(/^"|"$/g, '').trim().toLowerCase());
 
-  // Find column indices (flexible matching)
-  const colSource  = header.findIndex(h => h.includes('utm') || h.includes('source'));
-  const colSessions = header.findIndex(h => h.includes('session'));
-  const colCvr     = header.findIndex(h => h.includes('conversion') || h === 'cvr' || h === 'cr');
+  // Current period columns
+  const colSource   = header.findIndex(h => h.includes('utm') || h === 'source');
+  // Sessions: first col containing 'session' that does NOT contain 'previous'
+  const colSessions = header.findIndex(h => h.includes('session') && !h.includes('previous'));
+  // CVR: first col containing 'conversion' that does NOT contain 'previous'
+  const colCvr      = header.findIndex(h => (h.includes('conversion') || h === 'cvr' || h === 'cr') && !h.includes('previous'));
 
   if (colSessions === -1) throw new Error('Could not find a "Sessions" column');
   if (colCvr === -1)      throw new Error('Could not find a "Conversion rate" column');
+
+  // Previous period columns (optional)
+  const colPrevSessions = header.findIndex(h => h.includes('session') && h.includes('previous'));
+  const colPrevCvr      = header.findIndex(h => (h.includes('conversion') || h === 'cvr') && h.includes('previous'));
+  const hasPrevPeriod   = colPrevSessions !== -1 || colPrevCvr !== -1;
 
   const rows = [];
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line) continue;
     const cols = splitCSVLine(line);
+
     const rawSource = colSource >= 0 ? (cols[colSource] || '').replace(/^"|"$/g, '').trim() : '';
-    const sessions  = parseInt((cols[colSessions] || '0').replace(/[",]/g, ''), 10);
-    const cvrRaw    = parseFloat((cols[colCvr] || '0').replace(/[",]/g, ''));
+    const sessions  = parseInt(cleanNum(cols[colSessions]), 10);
+    const cvrRaw    = parseFloat(cleanNum(cols[colCvr]));
 
     // CVR: if > 1 assume already percent, else treat as decimal
-    const cvrDecimal = cvrRaw > 1 ? cvrRaw / 100 : cvrRaw;
+    const cvrDecimal = normalizeCvr(cvrRaw);
 
     if (isNaN(sessions) || sessions < 0) continue;
 
+    // Previous period
+    let prevSessions = null, prevCvrDecimal = null;
+    if (colPrevSessions !== -1) {
+      const v = parseFloat(cleanNum(cols[colPrevSessions]));
+      if (isFinite(v)) prevSessions = v;
+    }
+    if (colPrevCvr !== -1) {
+      const v = parseFloat(cleanNum(cols[colPrevCvr]));
+      if (isFinite(v)) prevCvrDecimal = normalizeCvr(v);
+    }
+
     rows.push({
-      source: rawSource,
-      channel: classifySource(rawSource),
+      source:       rawSource,
+      channel:      classifySource(rawSource),
       sessions,
-      cvrDecimal: isFinite(cvrDecimal) ? cvrDecimal : 0
+      cvrDecimal:   isFinite(cvrDecimal) ? cvrDecimal : 0,
+      prevSessions,
+      prevCvrDecimal
     });
   }
 
   if (rows.length === 0) throw new Error('No valid data rows found');
+  rows._hasPrevPeriod = hasPrevPeriod;
   return rows;
+}
+
+function cleanNum(v) {
+  return (v || '0').replace(/^"|"$/g, '').replace(/,/g, '').trim() || '0';
+}
+
+function normalizeCvr(raw) {
+  // Values from this Shopify export are decimals (e.g. 0.0168). If > 1, treat as percent.
+  if (!isFinite(raw)) return 0;
+  return raw > 1 ? raw / 100 : raw;
 }
 
 function splitCSVLine(line) {
@@ -1386,39 +1426,58 @@ function splitCSVLine(line) {
 // CHANNEL AGGREGATION
 // ============================================================
 function aggregateChannels(rows) {
-  // Group rows by channel, aggregate sessions and weighted CVR
+  const hasPrev = rows._hasPrevPeriod === true;
+
   const groups = {};
   for (const key of CHANNEL_ORDER) {
-    groups[key] = { sessions: 0, weightedCvr: 0, sourceNames: [], rowCount: 0 };
+    groups[key] = {
+      sessions: 0, weightedCvr: 0,
+      prevSessions: 0, prevWeightedCvr: 0, prevCount: 0,
+      sourceNames: [], rowCount: 0
+    };
   }
 
   rows.forEach(row => {
     const g = groups[row.channel] || groups['other'];
-    g.sessions += row.sessions;
-    g.weightedCvr += row.sessions * row.cvrDecimal; // sum(sessions * cvr) for weighted avg
+    g.sessions    += row.sessions;
+    g.weightedCvr += row.sessions * row.cvrDecimal;
+    if (row.prevSessions != null) {
+      g.prevSessions    += row.prevSessions;
+      g.prevWeightedCvr += row.prevSessions * (row.prevCvrDecimal || 0);
+      g.prevCount++;
+    }
     if (!g.sourceNames.includes(row.source) && row.source) {
       g.sourceNames.push(row.source);
     }
     g.rowCount++;
   });
 
-  // Compute blended CVR (weighted average) for each group
   const result = [];
   for (const key of CHANNEL_ORDER) {
     const g = groups[key];
-    if (g.sessions === 0 && key !== 'other') continue; // skip empty defined groups
-    if (g.sessions === 0) continue; // skip empty other
-    const blendedCvr = g.sessions > 0 ? (g.weightedCvr / g.sessions) * 100 : 0; // as percent
+    if (g.sessions === 0 && (g.prevSessions === 0 || !hasPrev)) continue;
+    const blendedCvr     = g.sessions > 0     ? (g.weightedCvr     / g.sessions)     * 100 : 0;
+    const prevBlendedCvr = g.prevSessions > 0  ? (g.prevWeightedCvr / g.prevSessions) * 100 : null;
+    // Auto-computed deltas from period comparison (absolute)
+    const autoDSessions = hasPrev && g.prevSessions > 0 ? g.sessions - g.prevSessions : null;
+    // CVR delta in pp (current - previous)
+    const autoDCvr = (hasPrev && prevBlendedCvr != null) ? blendedCvr - prevBlendedCvr : null;
+
     result.push({
       key,
-      label: key === 'other' ? 'Other' : CHANNEL_GROUPS[key].label,
-      color: key === 'other' ? '#9ca3af' : CHANNEL_GROUPS[key].color,
-      sessions: g.sessions,
-      cvrPct: blendedCvr,
+      label:      key === 'other' ? 'Other' : CHANNEL_GROUPS[key].label,
+      color:      key === 'other' ? '#9ca3af' : CHANNEL_GROUPS[key].color,
+      sessions:   g.sessions,
+      cvrPct:     blendedCvr,
+      prevSessions:   hasPrev ? g.prevSessions   : null,
+      prevCvrPct:     hasPrev ? prevBlendedCvr   : null,
+      autoDSessions,
+      autoDCvr,
       sourceNames: g.sourceNames,
-      rowCount: g.rowCount
+      rowCount:    g.rowCount
     });
   }
+  result._hasPrevPeriod = hasPrev;
   return result;
 }
 

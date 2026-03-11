@@ -310,9 +310,9 @@ app.get('/api/debug-ad', requireAuth, async (req, res) => {
   if (!ad_id) return res.status(400).json({ error: 'ad_id required' });
 
   try {
-    // Fetch ad with creative - try many fields
+    // Fetch ad with creative - try many fields including effective_link_url
     const adUrl = `${META_BASE_URL}/${ad_id}`
-      + `?fields=creative{id,name,thumbnail_url,image_url,object_story_spec,link_url,object_url,object_story_id,effective_object_story_id}`
+      + `?fields=creative{id,name,thumbnail_url,image_url,object_story_spec,link_url,object_url,object_story_id,effective_object_story_id,effective_link_url,call_to_action_type}`
       + `&${metaParams(req.accessToken)}`;
     const adResponse = await fetch(adUrl);
     const adData = await adResponse.json();
@@ -323,13 +323,13 @@ app.get('/api/debug-ad', requireAuth, async (req, res) => {
 
     if (creative.id) {
       const directUrl = `${META_BASE_URL}/${creative.id}`
-        + `?fields=link_url,object_story_spec,asset_feed_spec,object_url,object_story_id,effective_object_story_id`
+        + `?fields=link_url,object_story_spec,asset_feed_spec,object_url,object_story_id,effective_object_story_id,effective_link_url,link_destination_display_url,template_url,url_tags`
         + `&${metaParams(req.accessToken)}`;
       const directResponse = await fetch(directUrl);
       creativeDirectData = await directResponse.json();
     }
 
-    // If we have an object_story_id or effective_object_story_id, fetch the post
+    // If we have an object_story_id, try fetching the post
     const storyId = creative.effective_object_story_id
       || creative.object_story_id
       || creativeDirectData?.effective_object_story_id
