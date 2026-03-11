@@ -94,7 +94,7 @@ app.get('/auth/facebook', (req, res) => {
   const authUrl = `https://www.facebook.com/${META_API_VERSION}/dialog/oauth`
     + `?client_id=${META_APP_ID}`
     + `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}`
-    + `&scope=ads_read,pages_read_engagement`
+    + `&scope=ads_read,pages_read_engagement,pages_manage_ads,pages_show_list`
     + `&response_type=code`;
   res.redirect(authUrl);
 });
@@ -214,7 +214,7 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
         try {
           // Fetch creative with multiple URL-related fields
           const creativeUrl = `${META_BASE_URL}/${ad.ad_id}`
-            + `?fields=creative{id,name,thumbnail_url,image_url,object_story_spec,link_url,effective_object_story_id}`
+            + `?fields=creative{id,name,thumbnail_url,image_url,object_story_spec,asset_feed_spec,link_url,effective_object_story_id}`
             + `&${metaParams(req.accessToken)}`;
 
           const creativeResponse = await fetch(creativeUrl);
@@ -226,12 +226,14 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
 
           const creative = creativeData.creative || {};
           const storySpec = creative.object_story_spec || {};
+          const assetFeed = creative.asset_feed_spec || {};
 
           let destinationUrl = extractDestinationUrl(storySpec)
+            || extractAssetFeedUrl(assetFeed)
             || creative.link_url
             || null;
 
-          // If no URL found, try fetching the page post via effective_object_story_id
+          // Fallback 1: Try reading the post directly (needs pages_read_engagement)
           if (!destinationUrl && creative.effective_object_story_id) {
             try {
               const postUrl = `${META_BASE_URL}/${creative.effective_object_story_id}`
@@ -246,9 +248,61 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
                   || postData.attachments?.data?.[0]?.url
                   || null;
               }
-            } catch (e) {
-              console.error(`Failed to fetch post for creative ${creative.id}:`, e);
-            }
+            } catch (e) {}
+          }
+
+          // Fallback 2: Try page ads_posts endpoint (needs pages_manage_ads)
+          if (!destinationUrl && creative.effective_object_story_id) {
+            try {
+              const pageId = creative.effective_object_story_id.split('_')[0];
+              const adsPostsUrl = `${META_BASE_URL}/${pageId}/ads_posts`
+                + `?fields=id,link,call_to_action`
+                + `&filtering=[{"field":"effective_object_story_id","operator":"IN","value":["${creative.effective_object_story_id}"]}]`
+                + `&${metaParams(req.accessToken)}`;
+              const adsPostsResponse = await fetch(adsPostsUrl);
+              const adsPostsData = await adsPostsResponse.json();
+
+              if (adsPostsData.data?.[0]) {
+                destinationUrl = adsPostsData.data[0].link
+                  || adsPostsData.data[0].call_to_action?.value?.link
+                  || null;
+              }
+            } catch (e) {}
+          }
+
+          // Fallback 3: Extract from ad preview HTML
+          if (!destinationUrl) {
+            try {
+              const previewUrl = `${META_BASE_URL}/${ad.ad_id}/previews`
+                + `?ad_format=DESKTOP_FEED_STANDARD`
+                + `&${metaParams(req.accessToken)}`;
+              const previewResponse = await fetch(previewUrl);
+              const previewData = await previewResponse.json();
+
+              if (previewData.data?.[0]?.body) {
+                const iframeSrcMatch = previewData.data[0].body.match(/src="([^"]+)"/);
+                if (iframeSrcMatch) {
+                  const iframeUrl = iframeSrcMatch[1].replace(/&amp;/g, '&');
+                  const iframeResponse = await fetch(iframeUrl);
+                  const iframeHtml = await iframeResponse.text();
+
+                  // Look for l.facebook.com redirect URLs
+                  const redirectMatches = iframeHtml.match(/l\.facebook\.com\/l\.php\?u=([^&"']+)/g) || [];
+                  const redirectUrls = redirectMatches
+                    .map(m => { try { return decodeURIComponent(m.split('u=')[1]); } catch { return null; } })
+                    .filter(Boolean);
+
+                  // Look for external hrefs
+                  const hrefMatches = iframeHtml.match(/href="(https?:\/\/[^"]+)"/g) || [];
+                  const externalUrls = hrefMatches
+                    .map(m => m.match(/href="([^"]+)"/)[1])
+                    .map(u => { try { return decodeURIComponent(u); } catch { return u; } })
+                    .filter(u => !u.includes('facebook.com') && !u.includes('fbcdn.net') && !u.includes('fb.com') && !u.includes('instagram.com'));
+
+                  destinationUrl = redirectUrls[0] || externalUrls[0] || null;
+                }
+              }
+            } catch (e) {}
           }
 
           const imageUrl = creative.image_url
