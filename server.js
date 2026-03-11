@@ -364,22 +364,12 @@ app.get('/api/test-permissions', requireAuth, async (req, res) => {
       if (targetPage?.access_token) {
         pageToken = targetPage.access_token;
 
-        // Try reading the post with page token using older API version (v16.0)
-        // v21.0 deprecates the 'link' field on posts
-        const postUrl1 = `https://graph.facebook.com/v16.0/375215066258824_1403167991809848`
-          + `?fields=link,name,caption,description,type`
+        // Use the attachments EDGE (separate call, not a field on the post)
+        const attachUrl = `${META_BASE_URL}/375215066258824_1403167991809848/attachments`
+          + `?fields=url,unshimmed_url,target,title,type,subattachments`
           + `&access_token=${encodeURIComponent(pageToken)}&appsecret_proof=${generateAppSecretProof(pageToken)}`;
-        const postResponse1 = await fetch(postUrl1);
-        const postTest1 = await postResponse1.json();
-
-        // Also try the child_attachments or target fields
-        const postUrl2 = `https://graph.facebook.com/v16.0/375215066258824_1403167991809848`
-          + `?fields=id,story,target,properties,child_attachments`
-          + `&access_token=${encodeURIComponent(pageToken)}&appsecret_proof=${generateAppSecretProof(pageToken)}`;
-        const postResponse2 = await fetch(postUrl2);
-        const postTest2 = await postResponse2.json();
-
-        postTest = { v16WithLink: postTest1, v16WithOtherFields: postTest2 };
+        const attachResponse = await fetch(attachUrl);
+        postTest = await attachResponse.json();
       }
     }
 
