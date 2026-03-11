@@ -1,0 +1,1247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Conversion Impact Calculator</title>
+  <style>
+    /* === Reset + Base === */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --fb-blue: #1877f2;
+      --fb-blue-dark: #166fe5;
+      --bg: #f0f2f5;
+      --surface: #ffffff;
+      --text-primary: #1c1e21;
+      --text-secondary: #65676b;
+      --border: #dddfe2;
+      --positive: #1a7f37;
+      --positive-bg: #dcfce7;
+      --negative: #c0392b;
+      --negative-bg: #fee2e2;
+      --neutral-bg: #e4e6eb;
+      --color-sessions: #1877f2;
+      --color-cvr: #0a9396;
+      --color-interaction: #e76f51;
+      --shadow: 0 1px 3px rgba(0,0,0,0.12);
+      --radius: 8px;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text-primary);
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    /* === Header === */
+    header {
+      background: var(--fb-blue);
+      color: white;
+      padding: 16px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .header__left { display: flex; align-items: center; gap: 16px; }
+    header h1 { font-size: 1.25rem; font-weight: 700; }
+    .header__back {
+      color: rgba(255,255,255,0.85);
+      text-decoration: none;
+      font-size: 0.9rem;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      border: 1px solid rgba(255,255,255,0.3);
+      padding: 4px 10px;
+      border-radius: 6px;
+      transition: background 0.15s;
+    }
+    .header__back:hover { background: rgba(255,255,255,0.15); color: white; }
+    .header__subtitle {
+      font-size: 0.8rem;
+      opacity: 0.75;
+      font-weight: 400;
+    }
+
+    /* === Layout === */
+    .ci-layout {
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      gap: 20px;
+      padding: 20px 24px;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+    @media (max-width: 900px) {
+      .ci-layout { grid-template-columns: 1fr; padding: 16px; }
+    }
+
+    /* === Card === */
+    .ci-card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    /* === Inputs Panel === */
+    .ci-inputs {
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      align-self: start;
+      position: sticky;
+      top: 16px;
+    }
+    @media (max-width: 900px) {
+      .ci-inputs { position: static; }
+    }
+    .ci-section-label {
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-secondary);
+      margin-bottom: 2px;
+    }
+    .ci-field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .ci-field label {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+    .ci-field .ci-field__hint {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      font-weight: 400;
+    }
+    .ci-input-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .ci-input-row input[type="number"] {
+      flex: 1;
+      padding: 8px 12px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 0.9rem;
+      color: var(--text-primary);
+      background: var(--surface);
+      transition: border-color 0.15s;
+      -moz-appearance: textfield;
+    }
+    .ci-input-row input[type="number"]::-webkit-outer-spin-button,
+    .ci-input-row input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; }
+    .ci-input-row input[type="number"]:focus {
+      outline: none;
+      border-color: var(--fb-blue);
+      box-shadow: 0 0 0 3px rgba(24,119,242,0.15);
+    }
+    .ci-suffix {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    /* Toggle pill group */
+    .ci-toggle-group {
+      display: flex;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+      width: fit-content;
+    }
+    .ci-toggle-group button {
+      padding: 5px 12px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      border: none;
+      background: var(--surface);
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .ci-toggle-group button:not(:last-child) {
+      border-right: 1px solid var(--border);
+    }
+    .ci-toggle-group button.active {
+      background: var(--fb-blue);
+      color: white;
+    }
+
+    /* Sliders */
+    .ci-slider-field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .ci-slider-field label {
+      font-size: 0.85rem;
+      font-weight: 600;
+      display: flex;
+      justify-content: space-between;
+    }
+    .ci-slider-readout {
+      font-weight: 700;
+      color: var(--fb-blue);
+    }
+    input[type="range"] {
+      width: 100%;
+      height: 4px;
+      -webkit-appearance: none;
+      appearance: none;
+      background: var(--neutral-bg);
+      border-radius: 2px;
+      cursor: pointer;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 16px; height: 16px;
+      border-radius: 50%;
+      background: var(--fb-blue);
+      border: 2px solid white;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+    }
+    input[type="range"]::-moz-range-thumb {
+      width: 16px; height: 16px;
+      border-radius: 50%;
+      background: var(--fb-blue);
+      border: 2px solid white;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+    }
+
+    .ci-divider {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 2px 0;
+    }
+
+    /* === Results Panel === */
+    .ci-results {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* Summary cards */
+    .ci-summary {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+    }
+    @media (max-width: 700px) {
+      .ci-summary { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 400px) {
+      .ci-summary { grid-template-columns: 1fr; }
+    }
+    .ci-metric-card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 16px;
+    }
+    .ci-metric-card__label {
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-secondary);
+      margin-bottom: 4px;
+    }
+    .ci-metric-card__value {
+      font-size: 1.6rem;
+      font-weight: 700;
+      color: var(--text-primary);
+      line-height: 1.2;
+    }
+    .ci-metric-card__sub {
+      font-size: 0.8rem;
+      margin-top: 4px;
+      color: var(--text-secondary);
+    }
+    .ci-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 20px;
+      font-size: 0.75rem;
+      font-weight: 700;
+    }
+    .ci-badge--positive { background: var(--positive-bg); color: var(--positive); }
+    .ci-badge--negative { background: var(--negative-bg); color: var(--negative); }
+    .ci-badge--neutral { background: var(--neutral-bg); color: var(--text-secondary); }
+    .ci-badge--sessions { background: #dbeafe; color: #1d4ed8; }
+    .ci-badge--cvr { background: #ccfbf1; color: #0f766e; }
+    .ci-badge--both { background: #fef3c7; color: #92400e; }
+
+    /* Decomposition card */
+    .ci-decomp {
+      padding: 20px;
+    }
+    .ci-decomp h2 {
+      font-size: 0.95rem;
+      font-weight: 700;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .ci-decomp h2 span {
+      font-size: 0.75rem;
+      font-weight: 400;
+      color: var(--text-secondary);
+    }
+
+    /* Waterfall bar */
+    .ci-waterfall {
+      margin-bottom: 16px;
+    }
+    .ci-waterfall__track {
+      height: 32px;
+      background: var(--neutral-bg);
+      border-radius: 6px;
+      overflow: hidden;
+      display: flex;
+      position: relative;
+    }
+    .ci-waterfall__segment {
+      height: 100%;
+      transition: width 0.3s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.7rem;
+      font-weight: 700;
+      color: white;
+      white-space: nowrap;
+      overflow: hidden;
+      min-width: 0;
+    }
+    .ci-waterfall__segment--sessions { background: var(--color-sessions); }
+    .ci-waterfall__segment--cvr { background: var(--color-cvr); }
+    .ci-waterfall__segment--interaction { background: var(--color-interaction); }
+    .ci-waterfall__segment--neg-sessions { background: #93c5fd; }
+    .ci-waterfall__segment--neg-cvr { background: #99f6e4; }
+    .ci-waterfall__segment--neg-interaction { background: #fdba74; }
+    .ci-waterfall__legend {
+      display: flex;
+      gap: 16px;
+      margin-top: 10px;
+      flex-wrap: wrap;
+    }
+    .ci-legend-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.8rem;
+    }
+    .ci-legend-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .ci-legend-item__label { color: var(--text-secondary); }
+    .ci-legend-item__value { font-weight: 700; }
+
+    /* Decomp table */
+    .ci-decomp-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+      margin-top: 16px;
+    }
+    .ci-decomp-table th {
+      text-align: left;
+      padding: 8px 10px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-secondary);
+      border-bottom: 2px solid var(--border);
+    }
+    .ci-decomp-table td {
+      padding: 10px 10px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+    .ci-decomp-table tr:last-child td {
+      border-bottom: none;
+      font-weight: 700;
+      background: var(--bg);
+    }
+    .ci-decomp-table tr.total-row td { font-weight: 700; }
+    .ci-component-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 6px;
+    }
+    .positive-text { color: var(--positive); font-weight: 700; }
+    .negative-text { color: var(--negative); font-weight: 700; }
+    .ci-progress-mini {
+      height: 6px;
+      border-radius: 3px;
+      background: var(--neutral-bg);
+      overflow: hidden;
+      min-width: 60px;
+    }
+    .ci-progress-mini__fill {
+      height: 100%;
+      border-radius: 3px;
+      transition: width 0.3s ease;
+    }
+
+    /* Multi-source section */
+    .ci-sources {
+      padding: 20px;
+    }
+    .ci-sources__header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 0;
+    }
+    .ci-sources__header h2 {
+      font-size: 0.95rem;
+      font-weight: 700;
+    }
+    .ci-sources__body {
+      margin-top: 16px;
+    }
+    .ci-sources-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+    }
+    .ci-sources-table th {
+      text-align: left;
+      padding: 6px 8px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-secondary);
+      border-bottom: 2px solid var(--border);
+      white-space: nowrap;
+    }
+    .ci-sources-table td {
+      padding: 8px 8px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+    .ci-sources-table input[type="text"],
+    .ci-sources-table input[type="number"] {
+      width: 100%;
+      padding: 5px 8px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-size: 0.82rem;
+      -moz-appearance: textfield;
+    }
+    .ci-sources-table input[type="number"]::-webkit-outer-spin-button,
+    .ci-sources-table input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; }
+    .ci-sources-table input:focus {
+      outline: none;
+      border-color: var(--fb-blue);
+    }
+    .ci-sources__add-row {
+      margin-top: 10px;
+      display: flex;
+      gap: 8px;
+    }
+    .btn-sm {
+      padding: 5px 12px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+    .btn-sm.btn-primary { background: var(--fb-blue); color: white; }
+    .btn-sm.btn-primary:hover { background: var(--fb-blue-dark); }
+    .btn-sm.btn-ghost {
+      background: none;
+      color: var(--text-secondary);
+      border: 1px solid var(--border);
+    }
+    .btn-sm.btn-ghost:hover { background: var(--bg); }
+    .btn-sm.btn-danger { background: none; color: var(--negative); border: none; padding: 4px 6px; }
+    .btn-sm.btn-danger:hover { background: var(--negative-bg); }
+    .btn {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+    .btn.btn-ghost-md {
+      background: none;
+      color: var(--text-secondary);
+      border: 1px solid var(--border);
+    }
+    .btn.btn-ghost-md:hover { background: var(--bg); }
+    .btn.btn-primary { background: var(--fb-blue); color: white; }
+    .btn.btn-primary:hover { background: var(--fb-blue-dark); }
+
+    /* Totals row in sources table */
+    .ci-sources-table tr.src-total td {
+      font-weight: 700;
+      background: var(--bg);
+      border-top: 2px solid var(--border);
+    }
+
+    /* === Utility === */
+    .hidden { display: none !important; }
+    .text-secondary { color: var(--text-secondary); }
+
+    /* Formula explainer */
+    .ci-formula {
+      background: #f8f9fb;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px 14px;
+      font-size: 0.78rem;
+      color: var(--text-secondary);
+      line-height: 1.7;
+    }
+    .ci-formula code {
+      font-family: 'SFMono-Regular', Consolas, monospace;
+      font-size: 0.75rem;
+      color: var(--text-primary);
+      background: var(--neutral-bg);
+      padding: 1px 4px;
+      border-radius: 3px;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="header__left">
+    <a class="header__back" href="/">&#8592; Ads Viewer</a>
+    <div>
+      <h1>Conversion Impact Calculator</h1>
+      <div class="header__subtitle">Sessions &times; CVR decomposition by utm_source</div>
+    </div>
+  </div>
+</header>
+
+<main class="ci-layout">
+
+  <!-- ===== LEFT: INPUTS ===== -->
+  <section class="ci-inputs ci-card">
+
+    <div>
+      <div class="ci-section-label">Baseline (current period)</div>
+      <div style="display:flex;flex-direction:column;gap:12px;margin-top:10px">
+
+        <div class="ci-field">
+          <label for="inp-sessions">Sessions</label>
+          <div class="ci-input-row">
+            <input type="number" id="inp-sessions" value="10000" min="0" step="100" placeholder="e.g. 10000">
+          </div>
+        </div>
+
+        <div class="ci-field">
+          <label for="inp-cvr">Conversion Rate <span class="ci-field__hint">(% of sessions)</span></label>
+          <div class="ci-input-row">
+            <input type="number" id="inp-cvr" value="3.00" min="0" max="100" step="0.01" placeholder="e.g. 3.00">
+            <span class="ci-suffix">%</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <hr class="ci-divider">
+
+    <div>
+      <div class="ci-section-label">Delta (change to model)</div>
+      <div style="display:flex;flex-direction:column;gap:12px;margin-top:10px">
+
+        <div class="ci-field">
+          <label>Sessions change mode</label>
+          <div class="ci-toggle-group" id="tgl-sessions-mode">
+            <button class="active" data-value="absolute">Absolute</button>
+            <button data-value="percent">% of baseline</button>
+          </div>
+        </div>
+
+        <div class="ci-field">
+          <label for="inp-d-sessions">
+            &Delta; Sessions
+            <span class="ci-field__hint" id="hint-d-sessions">(e.g. +500 or &#8722;200)</span>
+          </label>
+          <div class="ci-input-row">
+            <input type="number" id="inp-d-sessions" value="500" step="100" placeholder="0">
+            <span class="ci-suffix" id="sfx-d-sessions"></span>
+          </div>
+        </div>
+
+        <div class="ci-field">
+          <label>CVR change mode</label>
+          <div class="ci-toggle-group" id="tgl-cvr-mode">
+            <button class="active" data-value="pp">Percentage points (pp)</button>
+            <button data-value="percent">% change</button>
+          </div>
+        </div>
+
+        <div class="ci-field">
+          <label for="inp-d-cvr">
+            &Delta; CVR
+            <span class="ci-field__hint" id="hint-d-cvr">(e.g. +0.5pp or &#8722;1pp)</span>
+          </label>
+          <div class="ci-input-row">
+            <input type="number" id="inp-d-cvr" value="0.5" step="0.01" placeholder="0">
+            <span class="ci-suffix" id="sfx-d-cvr">pp</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <hr class="ci-divider">
+
+    <div>
+      <div class="ci-section-label">Scenario sliders</div>
+      <div style="display:flex;flex-direction:column;gap:14px;margin-top:10px">
+
+        <div class="ci-slider-field">
+          <label>
+            Sessions change
+            <span class="ci-slider-readout" id="sld-sessions-readout">+500</span>
+          </label>
+          <input type="range" id="sld-sessions" min="-5000" max="20000" step="100" value="500">
+        </div>
+
+        <div class="ci-slider-field">
+          <label>
+            CVR change
+            <span class="ci-slider-readout" id="sld-cvr-readout">+0.50pp</span>
+          </label>
+          <input type="range" id="sld-cvr" min="-3" max="5" step="0.05" value="0.5">
+        </div>
+
+      </div>
+    </div>
+
+    <div class="ci-formula">
+      <strong>Decomposition formula:</strong><br>
+      <code>Total &Delta;</code> = <code>dS &times; C</code> + <code>S &times; dC</code> + <code>dS &times; dC</code><br>
+      &nbsp;&nbsp;&nbsp;= Sessions effect + CVR effect + Interaction
+    </div>
+
+  </section>
+
+  <!-- ===== RIGHT: RESULTS ===== -->
+  <section class="ci-results">
+
+    <!-- Summary cards -->
+    <div class="ci-summary">
+      <div class="ci-metric-card">
+        <div class="ci-metric-card__label">Baseline Conversions</div>
+        <div class="ci-metric-card__value" id="out-base-conv">300</div>
+        <div class="ci-metric-card__sub" id="out-base-detail">10,000 sessions &times; 3.00%</div>
+      </div>
+      <div class="ci-metric-card">
+        <div class="ci-metric-card__label">New Conversions</div>
+        <div class="ci-metric-card__value" id="out-new-conv">358</div>
+        <div class="ci-metric-card__sub" id="out-new-detail">10,500 sessions &times; 3.50%</div>
+      </div>
+      <div class="ci-metric-card">
+        <div class="ci-metric-card__label">Conversion Delta</div>
+        <div class="ci-metric-card__value" id="out-delta-abs">+58</div>
+        <div class="ci-metric-card__sub"><span class="ci-badge" id="out-delta-pct-badge">+19.3%</span></div>
+      </div>
+      <div class="ci-metric-card">
+        <div class="ci-metric-card__label">Dominant Lever</div>
+        <div class="ci-metric-card__value" style="font-size:1.1rem;line-height:1.4" id="out-dominant-label">Sessions</div>
+        <div class="ci-metric-card__sub"><span class="ci-badge" id="out-dominant-badge">Sessions-driven</span></div>
+      </div>
+    </div>
+
+    <!-- Decomposition card -->
+    <div class="ci-card ci-decomp">
+      <h2>Impact Decomposition <span>How total &Delta; conversions breaks down</span></h2>
+
+      <div class="ci-waterfall">
+        <div class="ci-waterfall__track" id="wf-track">
+          <div class="ci-waterfall__segment ci-waterfall__segment--sessions" id="wf-sessions" style="width:0%"></div>
+          <div class="ci-waterfall__segment ci-waterfall__segment--cvr" id="wf-cvr" style="width:0%"></div>
+          <div class="ci-waterfall__segment ci-waterfall__segment--interaction" id="wf-interaction" style="width:0%"></div>
+        </div>
+        <div class="ci-waterfall__legend">
+          <div class="ci-legend-item">
+            <div class="ci-legend-dot" style="background:var(--color-sessions)"></div>
+            <span class="ci-legend-item__label">Sessions effect</span>
+            <span class="ci-legend-item__value" id="leg-sessions">—</span>
+          </div>
+          <div class="ci-legend-item">
+            <div class="ci-legend-dot" style="background:var(--color-cvr)"></div>
+            <span class="ci-legend-item__label">CVR effect</span>
+            <span class="ci-legend-item__value" id="leg-cvr">—</span>
+          </div>
+          <div class="ci-legend-item">
+            <div class="ci-legend-dot" style="background:var(--color-interaction)"></div>
+            <span class="ci-legend-item__label">Interaction effect</span>
+            <span class="ci-legend-item__value" id="leg-interaction">—</span>
+          </div>
+        </div>
+      </div>
+
+      <table class="ci-decomp-table" id="decomp-table">
+        <thead>
+          <tr>
+            <th>Component</th>
+            <th>&Delta; Conversions</th>
+            <th>% of Total &Delta;</th>
+            <th>% of Baseline</th>
+            <th style="min-width:80px">Share</th>
+          </tr>
+        </thead>
+        <tbody id="decomp-tbody">
+          <!-- filled by JS -->
+        </tbody>
+      </table>
+
+    </div>
+
+    <!-- Multi-source section -->
+    <div class="ci-card ci-sources">
+      <div class="ci-sources__header">
+        <h2>Multi-Source Comparison <span class="text-secondary" style="font-size:0.8rem;font-weight:400">(by utm_source)</span></h2>
+        <button class="btn btn-ghost-md" id="btn-toggle-sources">+ Add Sources</button>
+      </div>
+
+      <div class="ci-sources__body hidden" id="sources-body">
+        <div style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:12px">
+          Add rows for each utm_source (e.g. Facebook, Google, Direct). Each row uses its own baseline &amp; delta values and shares the same delta mode settings above.
+        </div>
+        <div style="overflow-x:auto">
+          <table class="ci-sources-table" id="sources-table">
+            <thead>
+              <tr>
+                <th>Source</th>
+                <th>Baseline Sessions</th>
+                <th>Baseline CVR %</th>
+                <th>&Delta; Sessions</th>
+                <th>&Delta; CVR</th>
+                <th>Base Conv.</th>
+                <th>New Conv.</th>
+                <th>&Delta; Conv.</th>
+                <th>&Delta; %</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="sources-tbody">
+              <!-- rows filled by JS -->
+            </tbody>
+            <tfoot>
+              <tr class="src-total">
+                <td>Total</td>
+                <td id="src-tot-sessions">—</td>
+                <td>—</td>
+                <td id="src-tot-d-sessions">—</td>
+                <td>—</td>
+                <td id="src-tot-base">—</td>
+                <td id="src-tot-new">—</td>
+                <td id="src-tot-delta">—</td>
+                <td id="src-tot-pct">—</td>
+                <td></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+        <div class="ci-sources__add-row">
+          <button class="btn-sm btn-primary" id="btn-add-source">+ Add row</button>
+        </div>
+      </div>
+    </div>
+
+  </section>
+</main>
+
+<script>
+// ============================================================
+// STATE
+// ============================================================
+const state = {
+  sessions: 10000,
+  cvr: 3.00,        // stored as percent (e.g. 3.00 = 3%)
+  dSessions: 500,   // raw input value
+  dCvr: 0.5,        // raw input value
+  sessionsDeltaMode: 'absolute', // 'absolute' | 'percent'
+  cvrDeltaMode: 'pp',            // 'pp' | 'percent'
+  sources: [],      // [{id, name, sessions, cvr, dSessions, dCvr}]
+  nextSourceId: 1,
+  sourcesVisible: false
+};
+
+// ============================================================
+// CORE CALCULATION
+// ============================================================
+function resolveDelta(base, rawDelta, mode, isPercent) {
+  if (mode === 'percent' || isPercent) {
+    return base * (rawDelta / 100);
+  }
+  return rawDelta;
+}
+
+function calculate(sessions, cvrPct, rawDSessions, rawDCvr, sessionsDeltaMode, cvrDeltaMode) {
+  const S = sessions;
+  const C = cvrPct / 100; // decimal
+
+  // Resolve session delta
+  const dS = sessionsDeltaMode === 'percent'
+    ? S * (rawDSessions / 100)
+    : rawDSessions;
+
+  // Resolve CVR delta (always in decimal for math)
+  let dC;
+  if (cvrDeltaMode === 'pp') {
+    dC = rawDCvr / 100; // pp → decimal
+  } else {
+    // percent change of current CVR
+    dC = C * (rawDCvr / 100);
+  }
+
+  const baseConv = S * C;
+  const newS = S + dS;
+  const newC = C + dC;
+  const newConv = newS * newC;
+
+  // Decomposition: (S + dS)(C + dC) = SC + dS·C + S·dC + dS·dC
+  const sessionsEffect = dS * C;
+  const cvrEffect = S * dC;
+  const interactionEffect = dS * dC;
+  const totalDelta = newConv - baseConv;
+  // Verify: sessionsEffect + cvrEffect + interactionEffect ≈ totalDelta
+
+  const totalDeltaPct = baseConv !== 0 ? (totalDelta / baseConv) * 100 : 0;
+
+  // Dominant lever
+  const aSE = Math.abs(sessionsEffect);
+  const aCE = Math.abs(cvrEffect);
+  let dominant;
+  if (aSE === 0 && aCE === 0) dominant = 'none';
+  else if (aSE > aCE * 1.2) dominant = 'sessions';
+  else if (aCE > aSE * 1.2) dominant = 'cvr';
+  else dominant = 'both';
+
+  return {
+    S, C, dS, dC, newS, newC,
+    baseConv, newConv, totalDelta, totalDeltaPct,
+    sessionsEffect, cvrEffect, interactionEffect,
+    dominant
+  };
+}
+
+// ============================================================
+// FORMAT HELPERS
+// ============================================================
+function fmt(n, decimals = 0) {
+  if (!isFinite(n)) return '—';
+  return n.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+}
+function fmtPct(n, decimals = 1) {
+  if (!isFinite(n)) return '—';
+  const sign = n > 0 ? '+' : '';
+  return sign + n.toFixed(decimals) + '%';
+}
+function fmtSign(n, decimals = 0) {
+  if (!isFinite(n)) return '—';
+  const sign = n > 0 ? '+' : n < 0 ? '' : '';
+  return sign + fmt(n, decimals);
+}
+function colorClass(n) {
+  if (n > 0) return 'positive-text';
+  if (n < 0) return 'negative-text';
+  return '';
+}
+function badgeClass(n) {
+  if (n > 0) return 'ci-badge--positive';
+  if (n < 0) return 'ci-badge--negative';
+  return 'ci-badge--neutral';
+}
+
+// ============================================================
+// RENDER
+// ============================================================
+function renderSummary(r) {
+  const { S, C, dS, newS, newC, baseConv, newConv, totalDelta, totalDeltaPct, dominant } = r;
+
+  el('out-base-conv').textContent = fmt(Math.round(baseConv));
+  el('out-base-detail').textContent = fmt(S) + ' sessions × ' + (C * 100).toFixed(2) + '%';
+
+  el('out-new-conv').textContent = fmt(Math.round(newConv));
+  el('out-new-detail').textContent = fmt(Math.round(newS)) + ' sessions × ' + (newC * 100).toFixed(2) + '%';
+
+  const deltaAbsEl = el('out-delta-abs');
+  deltaAbsEl.textContent = fmtSign(Math.round(totalDelta));
+  deltaAbsEl.className = 'ci-metric-card__value ' + colorClass(totalDelta);
+
+  const pctBadge = el('out-delta-pct-badge');
+  pctBadge.textContent = fmtPct(totalDeltaPct);
+  pctBadge.className = 'ci-badge ' + badgeClass(totalDelta);
+
+  const dominantLabels = {
+    sessions: 'Sessions',
+    cvr: 'CVR',
+    both: 'Both',
+    none: 'None'
+  };
+  const dominantBadges = {
+    sessions: ['Sessions-driven', 'ci-badge--sessions'],
+    cvr: ['CVR-driven', 'ci-badge--cvr'],
+    both: ['Both levers', 'ci-badge--both'],
+    none: ['No change', 'ci-badge--neutral']
+  };
+  el('out-dominant-label').textContent = dominantLabels[dominant] || '—';
+  const [badgeText, badgeClsName] = dominantBadges[dominant] || ['—', 'ci-badge--neutral'];
+  const domBadge = el('out-dominant-badge');
+  domBadge.textContent = badgeText;
+  domBadge.className = 'ci-badge ' + badgeClsName;
+}
+
+function renderWaterfall(r) {
+  const { sessionsEffect, cvrEffect, interactionEffect, totalDelta } = r;
+
+  const effects = [
+    { id: 'wf-sessions', legId: 'leg-sessions', val: sessionsEffect },
+    { id: 'wf-cvr',      legId: 'leg-cvr',      val: cvrEffect },
+    { id: 'wf-interaction', legId: 'leg-interaction', val: interactionEffect }
+  ];
+
+  // For waterfall bar: use absolute sum to size segments proportionally
+  const absSum = Math.abs(sessionsEffect) + Math.abs(cvrEffect) + Math.abs(interactionEffect);
+
+  effects.forEach(({ id, legId, val }) => {
+    const seg = el(id);
+    const pct = absSum > 0 ? (Math.abs(val) / absSum) * 100 : 0;
+    seg.style.width = pct.toFixed(1) + '%';
+
+    // Label inside bar (only if wide enough)
+    seg.textContent = pct > 10 ? fmtSign(Math.round(val)) : '';
+
+    // Legend
+    const pctOfTotal = totalDelta !== 0 ? (val / totalDelta) * 100 : 0;
+    el(legId).textContent = fmtSign(Math.round(val)) + ' (' + pctOfTotal.toFixed(0) + '% of Δ)';
+    el(legId).className = 'ci-legend-item__value ' + colorClass(val);
+  });
+}
+
+function renderDecompTable(r) {
+  const { baseConv, sessionsEffect, cvrEffect, interactionEffect, totalDelta } = r;
+
+  const rows = [
+    { label: 'Sessions effect', color: 'var(--color-sessions)', val: sessionsEffect },
+    { label: 'CVR effect',      color: 'var(--color-cvr)',      val: cvrEffect },
+    { label: 'Interaction',     color: 'var(--color-interaction)', val: interactionEffect },
+  ];
+
+  const tbody = el('decomp-tbody');
+  tbody.innerHTML = '';
+
+  rows.forEach(({ label, color, val }) => {
+    const pctOfTotal = totalDelta !== 0 ? (val / totalDelta) * 100 : 0;
+    const pctOfBase  = baseConv !== 0   ? (val / baseConv)   * 100 : 0;
+    const barPct     = totalDelta !== 0 ? Math.min(100, Math.abs(pctOfTotal)) : 0;
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>
+        <span class="ci-component-dot" style="background:${color}"></span>
+        ${escHtml(label)}
+      </td>
+      <td class="${colorClass(val)}">${fmtSign(Math.round(val))}</td>
+      <td class="${colorClass(val)}">${isFinite(pctOfTotal) ? pctOfTotal.toFixed(1) + '%' : '—'}</td>
+      <td class="${colorClass(val)}">${isFinite(pctOfBase) ? fmtPct(pctOfBase, 2) : '—'}</td>
+      <td>
+        <div class="ci-progress-mini">
+          <div class="ci-progress-mini__fill" style="width:${barPct.toFixed(1)}%;background:${color}"></div>
+        </div>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  // Total row
+  const pctOfBase = baseConv !== 0 ? (totalDelta / baseConv) * 100 : 0;
+  const tr = document.createElement('tr');
+  tr.className = 'total-row';
+  tr.innerHTML = `
+    <td><strong>Total &Delta;</strong></td>
+    <td class="${colorClass(totalDelta)}"><strong>${fmtSign(Math.round(totalDelta))}</strong></td>
+    <td class="${colorClass(totalDelta)}"><strong>100%</strong></td>
+    <td class="${colorClass(totalDelta)}"><strong>${isFinite(pctOfBase) ? fmtPct(pctOfBase, 2) : '—'}</strong></td>
+    <td></td>
+  `;
+  tbody.appendChild(tr);
+}
+
+// ============================================================
+// SLIDER READOUTS
+// ============================================================
+function updateSliderReadouts() {
+  const sldSessions = el('sld-sessions');
+  const sldCvr = el('sld-cvr');
+  const dS = parseFloat(sldSessions.value) || 0;
+  const dC = parseFloat(sldCvr.value) || 0;
+
+  const sSuffix = state.sessionsDeltaMode === 'percent' ? '%' : '';
+  el('sld-sessions-readout').textContent = (dS >= 0 ? '+' : '') + fmt(dS) + sSuffix;
+
+  const cSuffix = state.cvrDeltaMode === 'pp' ? 'pp' : '%';
+  el('sld-cvr-readout').textContent = (dC >= 0 ? '+' : '') + dC.toFixed(2) + cSuffix;
+}
+
+// ============================================================
+// SOURCES TABLE
+// ============================================================
+function addDefaultSources() {
+  const defaultSources = [
+    { name: 'Facebook', sessions: 6000, cvr: 3.20, dSessions: 400, dCvr: 0.3 },
+    { name: 'Google',   sessions: 2500, cvr: 2.80, dSessions: 100, dCvr: 0.2 },
+    { name: 'Direct',   sessions: 1500, cvr: 4.10, dSessions: 0,   dCvr: 0.0 },
+  ];
+  defaultSources.forEach(s => {
+    state.sources.push({ id: state.nextSourceId++, ...s });
+  });
+  renderSourcesTable();
+}
+
+function renderSourcesTable() {
+  const tbody = el('sources-tbody');
+  tbody.innerHTML = '';
+
+  let totSessions = 0, totDSessions = 0, totBase = 0, totNew = 0, totDelta = 0;
+
+  state.sources.forEach(src => {
+    const r = calculate(src.sessions, src.cvr, src.dSessions, src.dCvr,
+                        state.sessionsDeltaMode, state.cvrDeltaMode);
+    totSessions  += r.S;
+    totDSessions += r.dS;
+    totBase      += r.baseConv;
+    totNew       += r.newConv;
+    totDelta     += r.totalDelta;
+
+    const tr = document.createElement('tr');
+    tr.dataset.srcId = src.id;
+    tr.innerHTML = `
+      <td><input type="text" class="src-name" value="${escHtml(src.name)}" placeholder="Source name" style="min-width:80px"></td>
+      <td><input type="number" class="src-sessions" value="${src.sessions}" min="0" step="100" style="min-width:80px"></td>
+      <td><input type="number" class="src-cvr" value="${src.cvr}" min="0" max="100" step="0.01" style="min-width:60px"></td>
+      <td><input type="number" class="src-d-sessions" value="${src.dSessions}" step="100" style="min-width:80px"></td>
+      <td><input type="number" class="src-d-cvr" value="${src.dCvr}" step="0.01" style="min-width:60px"></td>
+      <td>${fmt(Math.round(r.baseConv))}</td>
+      <td>${fmt(Math.round(r.newConv))}</td>
+      <td class="${colorClass(r.totalDelta)}">${fmtSign(Math.round(r.totalDelta))}</td>
+      <td class="${colorClass(r.totalDeltaPct)}">${fmtPct(r.totalDeltaPct)}</td>
+      <td><button class="btn-sm btn-danger src-remove" title="Remove">&#10005;</button></td>
+    `;
+
+    // Wire up input changes
+    tr.querySelectorAll('input').forEach(inp => {
+      inp.addEventListener('input', () => {
+        syncSourceRow(tr, src.id);
+        renderSourcesTable();
+      });
+    });
+
+    tr.querySelector('.src-remove').addEventListener('click', () => {
+      state.sources = state.sources.filter(s => s.id !== src.id);
+      renderSourcesTable();
+    });
+
+    tbody.appendChild(tr);
+  });
+
+  // Totals
+  const totPct = totBase !== 0 ? (totDelta / totBase) * 100 : 0;
+  el('src-tot-sessions').textContent = fmt(Math.round(totSessions));
+  el('src-tot-d-sessions').textContent = fmtSign(Math.round(totDSessions));
+  el('src-tot-base').textContent = fmt(Math.round(totBase));
+  el('src-tot-new').textContent = fmt(Math.round(totNew));
+  const totDeltaEl = el('src-tot-delta');
+  totDeltaEl.textContent = fmtSign(Math.round(totDelta));
+  totDeltaEl.className = colorClass(totDelta);
+  const totPctEl = el('src-tot-pct');
+  totPctEl.textContent = fmtPct(totPct);
+  totPctEl.className = colorClass(totDelta);
+}
+
+function syncSourceRow(tr, srcId) {
+  const src = state.sources.find(s => s.id === srcId);
+  if (!src) return;
+  src.name      = tr.querySelector('.src-name').value;
+  src.sessions  = parseFloat(tr.querySelector('.src-sessions').value) || 0;
+  src.cvr       = parseFloat(tr.querySelector('.src-cvr').value) || 0;
+  src.dSessions = parseFloat(tr.querySelector('.src-d-sessions').value) || 0;
+  src.dCvr      = parseFloat(tr.querySelector('.src-d-cvr').value) || 0;
+}
+
+// ============================================================
+// MAIN UPDATE LOOP
+// ============================================================
+function update() {
+  const sessions  = parseFloat(el('inp-sessions').value) || 0;
+  const cvr       = parseFloat(el('inp-cvr').value) || 0;
+  const dSessions = parseFloat(el('inp-d-sessions').value) || 0;
+  const dCvr      = parseFloat(el('inp-d-cvr').value) || 0;
+
+  state.sessions  = sessions;
+  state.cvr       = cvr;
+  state.dSessions = dSessions;
+  state.dCvr      = dCvr;
+
+  const r = calculate(sessions, cvr, dSessions, dCvr, state.sessionsDeltaMode, state.cvrDeltaMode);
+
+  renderSummary(r);
+  renderWaterfall(r);
+  renderDecompTable(r);
+
+  updateSliderReadouts();
+
+  if (state.sourcesVisible) renderSourcesTable();
+}
+
+// ============================================================
+// EVENT WIRING
+// ============================================================
+function wireToggleGroup(groupId, stateKey, callback) {
+  const group = el(groupId);
+  group.querySelectorAll('button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      group.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state[stateKey] = btn.dataset.value;
+      if (callback) callback();
+      update();
+    });
+  });
+}
+
+function updateDeltaLabels() {
+  const sm = state.sessionsDeltaMode;
+  el('hint-d-sessions').textContent = sm === 'absolute'
+    ? '(e.g. +500 or −200)'
+    : '(e.g. +5 means +5% of baseline sessions)';
+  el('sfx-d-sessions').textContent = sm === 'percent' ? '%' : '';
+
+  const cm = state.cvrDeltaMode;
+  el('hint-d-cvr').textContent = cm === 'pp'
+    ? '(e.g. +0.5pp means 3% → 3.5%)'
+    : '(e.g. +10 means 3% → 3.3% ≈ +10% of CVR)';
+  el('sfx-d-cvr').textContent = cm === 'pp' ? 'pp' : '%';
+
+  // Update slider ranges and labels based on mode
+  const sld = el('sld-sessions');
+  if (sm === 'percent') {
+    sld.min = -50; sld.max = 150; sld.step = 1;
+    sld.value = state.dSessions;
+  } else {
+    sld.min = -Math.round(state.sessions * 0.5);
+    sld.max = Math.round(state.sessions * 2);
+    sld.step = 100;
+    sld.value = state.dSessions;
+  }
+
+  const sldC = el('sld-cvr');
+  if (cm === 'pp') {
+    sldC.min = -3; sldC.max = 5; sldC.step = 0.05;
+  } else {
+    sldC.min = -50; sldC.max = 100; sldC.step = 1;
+  }
+  sldC.value = state.dCvr;
+}
+
+function init() {
+  // Wire number inputs
+  ['inp-sessions', 'inp-cvr', 'inp-d-sessions', 'inp-d-cvr'].forEach(id => {
+    el(id).addEventListener('input', () => {
+      // Sync sliders when number input changes
+      if (id === 'inp-d-sessions') {
+        el('sld-sessions').value = el('inp-d-sessions').value;
+      }
+      if (id === 'inp-d-cvr') {
+        el('sld-cvr').value = el('inp-d-cvr').value;
+      }
+      // Update slider ranges when baseline sessions changes
+      if (id === 'inp-sessions') {
+        updateDeltaLabels();
+      }
+      update();
+    });
+  });
+
+  // Wire sliders → number inputs
+  el('sld-sessions').addEventListener('input', () => {
+    el('inp-d-sessions').value = el('sld-sessions').value;
+    update();
+  });
+  el('sld-cvr').addEventListener('input', () => {
+    el('inp-d-cvr').value = el('sld-cvr').value;
+    update();
+  });
+
+  // Toggle groups
+  wireToggleGroup('tgl-sessions-mode', 'sessionsDeltaMode', updateDeltaLabels);
+  wireToggleGroup('tgl-cvr-mode', 'cvrDeltaMode', updateDeltaLabels);
+
+  // Toggle sources panel
+  el('btn-toggle-sources').addEventListener('click', () => {
+    state.sourcesVisible = !state.sourcesVisible;
+    const body = el('sources-body');
+    if (state.sourcesVisible) {
+      body.classList.remove('hidden');
+      el('btn-toggle-sources').textContent = '− Hide Sources';
+      if (state.sources.length === 0) addDefaultSources();
+      else renderSourcesTable();
+    } else {
+      body.classList.add('hidden');
+      el('btn-toggle-sources').textContent = '+ Add Sources';
+    }
+  });
+
+  // Add source row
+  el('btn-add-source').addEventListener('click', () => {
+    state.sources.push({
+      id: state.nextSourceId++,
+      name: 'New source',
+      sessions: 1000,
+      cvr: 3.0,
+      dSessions: 0,
+      dCvr: 0
+    });
+    renderSourcesTable();
+  });
+
+  // Initial render
+  update();
+}
+
+// ============================================================
+// UTILS
+// ============================================================
+function el(id) { return document.getElementById(id); }
+function escHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>

@@ -94,7 +94,7 @@ app.get('/auth/facebook', (req, res) => {
   const authUrl = `https://www.facebook.com/${META_API_VERSION}/dialog/oauth`
     + `?client_id=${META_APP_ID}`
     + `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}`
-    + `&scope=ads_read`
+    + `&scope=ads_read,pages_read_engagement`
     + `&response_type=code`;
   res.redirect(authUrl);
 });
@@ -212,9 +212,9 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
     const adsWithCreatives = await Promise.all(
       ads.map(async (ad) => {
         try {
-          // Fetch creative with object_story_spec and link_url
+          // Fetch creative with multiple URL-related fields
           const creativeUrl = `${META_BASE_URL}/${ad.ad_id}`
-            + `?fields=creative{id,name,thumbnail_url,image_url,object_story_spec,link_url}`
+            + `?fields=creative{id,name,thumbnail_url,image_url,object_story_spec,link_url,effective_object_story_id}`
             + `&${metaParams(req.accessToken)}`;
 
           const creativeResponse = await fetch(creativeUrl);
@@ -231,22 +231,23 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
             || creative.link_url
             || null;
 
-          // If still no URL, try fetching from creative endpoint directly
-          if (!destinationUrl && creative.id) {
+          // If no URL found, try fetching the page post via effective_object_story_id
+          if (!destinationUrl && creative.effective_object_story_id) {
             try {
-              const creativeDirectUrl = `${META_BASE_URL}/${creative.id}`
-                + `?fields=link_url,object_story_spec,asset_feed_spec`
+              const postUrl = `${META_BASE_URL}/${creative.effective_object_story_id}`
+                + `?fields=link,attachments{unshimmed_url,url}`
                 + `&${metaParams(req.accessToken)}`;
-              const directResponse = await fetch(creativeDirectUrl);
-              const directData = await directResponse.json();
+              const postResponse = await fetch(postUrl);
+              const postData = await postResponse.json();
 
-              if (!directData.error) {
-                destinationUrl = directData.link_url
-                  || extractDestinationUrl(directData.object_story_spec || {})
-                  || extractAssetFeedUrl(directData.asset_feed_spec || {});
+              if (!postData.error) {
+                destinationUrl = postData.link
+                  || postData.attachments?.data?.[0]?.unshimmed_url
+                  || postData.attachments?.data?.[0]?.url
+                  || null;
               }
             } catch (e) {
-              console.error(`Failed to fetch creative ${creative.id} directly:`, e);
+              console.error(`Failed to fetch post for creative ${creative.id}:`, e);
             }
           }
 
