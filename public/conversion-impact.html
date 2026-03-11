@@ -1486,23 +1486,61 @@ function aggregateChannels(rows) {
 // ============================================================
 function renderChannelsTable() {
   const channels = aggregateChannels(state.rawRows);
-  const tbody = el('channels-tbody');
+  const hasPrev  = channels._hasPrevPeriod === true;
+  const tbody    = el('channels-tbody');
   tbody.innerHTML = '';
 
-  let totSessions = 0, totBase = 0, totNew = 0, totDelta = 0, totDSessions = 0;
+  // Show/hide prev period badge
+  const badge = el('prev-period-badge');
+  if (hasPrev) badge.classList.remove('hidden');
+  else badge.classList.add('hidden');
+
+  let totSessions = 0, totPrevSessions = 0, totBase = 0, totNew = 0, totDelta = 0, totDSessions = 0;
+  let totWeightedCvr = 0, totPrevWeightedCvr = 0;
 
   channels.forEach(ch => {
-    const delta = state.channelDeltas[ch.key] || { dSessions: 0, dCvr: 0 };
-    // Channel group deltas always use absolute + pp modes for simplicity
-    const r = calculate(ch.sessions, ch.cvrPct, delta.dSessions, delta.dCvr, 'absolute', 'pp');
+    // Auto-populate delta from period comparison on first load (if not overridden)
+    if (hasPrev && !(ch.key in state.channelDeltas)) {
+      state.channelDeltas[ch.key] = {
+        dSessions: ch.autoDSessions != null ? Math.round(ch.autoDSessions) : 0,
+        dCvr:      ch.autoDCvr      != null ? parseFloat(ch.autoDCvr.toFixed(4)) : 0,
+        fromAuto:  true
+      };
+    }
 
-    totSessions  += r.S;
-    totBase      += r.baseConv;
-    totNew       += r.newConv;
-    totDelta     += r.totalDelta;
-    totDSessions += r.dS;
+    const delta = state.channelDeltas[ch.key] || { dSessions: 0, dCvr: 0 };
+
+    // "baseline" for decomp = previous period (if available), otherwise current
+    const baseSessions = (hasPrev && ch.prevSessions != null) ? ch.prevSessions : ch.sessions;
+    const baseCvrPct   = (hasPrev && ch.prevCvrPct   != null) ? ch.prevCvrPct   : ch.cvrPct;
+
+    const r = calculate(baseSessions, baseCvrPct, delta.dSessions, delta.dCvr, 'absolute', 'pp');
+
+    totSessions     += ch.sessions;
+    totPrevSessions += (ch.prevSessions || 0);
+    totWeightedCvr  += ch.sessions * (ch.cvrPct / 100);
+    totPrevWeightedCvr += (ch.prevSessions || 0) * ((ch.prevCvrPct || 0) / 100);
+    totBase         += r.baseConv;
+    totNew          += r.newConv;
+    totDelta        += r.totalDelta;
+    totDSessions    += r.dS;
 
     const srcList = ch.sourceNames.slice(0, 4).join(', ') + (ch.sourceNames.length > 4 ? ` +${ch.sourceNames.length - 4}` : '');
+
+    // Badge on delta cells to indicate auto-filled vs manually overridden
+    const autoTag = delta.fromAuto
+      ? `<span style="font-size:0.65rem;color:var(--text-secondary);display:block;margin-top:2px">auto</span>`
+      : `<span style="font-size:0.65rem;color:var(--fb-blue);display:block;margin-top:2px">edited</span>`;
+
+    const prevSessionsTxt = hasPrev
+      ? (ch.prevSessions != null ? fmt(ch.prevSessions) : '—')
+      : '—';
+    const prevCvrTxt = hasPrev
+      ? (ch.prevCvrPct != null ? ch.prevCvrPct.toFixed(2) + '%' : '—')
+      : '—';
+
+    // Prev sessions delta vs current (for context color)
+    const sessionsWoW = (hasPrev && ch.prevSessions != null) ? ch.sessions - ch.prevSessions : null;
 
     const tr = document.createElement('tr');
     tr.dataset.chKey = ch.key;
@@ -1511,14 +1549,24 @@ function renderChannelsTable() {
         <span class="ch-dot" style="background:${escHtml(ch.color)}"></span>
         <strong>${escHtml(ch.label)}</strong>
       </td>
-      <td style="color:var(--text-secondary);font-size:0.75rem;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(ch.sourceNames.join(', '))}">${escHtml(srcList)}</td>
-      <td>${fmt(r.S)}</td>
-      <td>${(ch.cvrPct).toFixed(2)}%</td>
+      <td style="color:var(--text-secondary);font-size:0.75rem;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(ch.sourceNames.join(', '))}">${escHtml(srcList)}</td>
+      <td>
+        ${fmt(ch.sessions)}
+        ${sessionsWoW != null ? `<span style="font-size:0.72rem;display:block" class="${colorClass(sessionsWoW)}">${fmtSign(Math.round(sessionsWoW))}</span>` : ''}
+      </td>
+      <td style="color:var(--text-secondary)">${prevSessionsTxt}</td>
+      <td>
+        ${ch.cvrPct.toFixed(2)}%
+        ${(hasPrev && ch.prevCvrPct != null) ? `<span style="font-size:0.72rem;display:block" class="${colorClass(ch.cvrPct - ch.prevCvrPct)}">${fmtSign(ch.cvrPct - ch.prevCvrPct, 2)}pp</span>` : ''}
+      </td>
+      <td style="color:var(--text-secondary)">${prevCvrTxt}</td>
       <td>
         <input type="number" class="ch-d-sessions" data-key="${escHtml(ch.key)}" value="${delta.dSessions}" step="100" placeholder="0">
+        ${autoTag}
       </td>
       <td>
-        <input type="number" class="ch-d-cvr" data-key="${escHtml(ch.key)}" value="${delta.dCvr}" step="0.01" placeholder="0">
+        <input type="number" class="ch-d-cvr" data-key="${escHtml(ch.key)}" value="${delta.dCvr.toFixed(4)}" step="0.0001" placeholder="0">
+        ${autoTag}
       </td>
       <td>${fmt(Math.round(r.baseConv))}</td>
       <td>${fmt(Math.round(r.newConv))}</td>
@@ -1526,18 +1574,18 @@ function renderChannelsTable() {
       <td class="${colorClass(r.totalDeltaPct)}">${fmtPct(r.totalDeltaPct)}</td>
     `;
 
-    // Wire delta inputs
+    // Wire delta inputs — mark as manually overridden when user edits
     tr.querySelectorAll('input[type="number"]').forEach(inp => {
       inp.addEventListener('input', () => {
         const key = inp.dataset.key;
         if (!state.channelDeltas[key]) state.channelDeltas[key] = { dSessions: 0, dCvr: 0 };
+        state.channelDeltas[key].fromAuto = false; // user override
         if (inp.classList.contains('ch-d-sessions')) {
           state.channelDeltas[key].dSessions = parseFloat(inp.value) || 0;
         } else {
           state.channelDeltas[key].dCvr = parseFloat(inp.value) || 0;
         }
         renderChannelsTable();
-        // Also update the top-level summary with channel totals
         syncChannelTotalsToMain(channels);
       });
     });
@@ -1546,47 +1594,56 @@ function renderChannelsTable() {
   });
 
   // Totals row
-  const totPct  = totBase !== 0 ? (totDelta / totBase) * 100 : 0;
-  const totCvr  = totSessions > 0
-    ? (state.rawRows.reduce((s, r) => s + r.sessions * r.cvrDecimal, 0) / totSessions * 100)
-    : 0;
+  const totPct    = totBase  !== 0 ? (totDelta / totBase) * 100 : 0;
+  const totCvr    = totSessions     > 0 ? (totWeightedCvr     / totSessions)     * 100 : 0;
+  const totPrevCvr= totPrevSessions > 0 ? (totPrevWeightedCvr / totPrevSessions) * 100 : null;
 
-  el('ch-tot-sources').textContent = state.rawRows.length + ' rows';
-  el('ch-tot-sessions').textContent = fmt(totSessions);
-  el('ch-tot-cvr').textContent = totCvr.toFixed(2) + '%';
-  el('ch-tot-d-sessions').textContent = fmtSign(Math.round(totDSessions));
-  el('ch-tot-base').textContent = fmt(Math.round(totBase));
-  el('ch-tot-new').textContent = fmt(Math.round(totNew));
+  el('ch-tot-sources').textContent      = state.rawRows.length + ' rows';
+  el('ch-tot-sessions').textContent     = fmt(totSessions);
+  el('ch-tot-prev-sessions').textContent= hasPrev ? fmt(totPrevSessions) : '—';
+  el('ch-tot-cvr').textContent          = totCvr.toFixed(2) + '%';
+  el('ch-tot-prev-cvr').textContent     = (hasPrev && totPrevCvr != null) ? totPrevCvr.toFixed(2) + '%' : '—';
+  el('ch-tot-d-sessions').textContent   = fmtSign(Math.round(totDSessions));
+  el('ch-tot-base').textContent         = fmt(Math.round(totBase));
+  el('ch-tot-new').textContent          = fmt(Math.round(totNew));
   const totDeltaEl = el('ch-tot-delta');
   totDeltaEl.textContent = fmtSign(Math.round(totDelta));
-  totDeltaEl.className = colorClass(totDelta);
+  totDeltaEl.className   = colorClass(totDelta);
   const totPctEl = el('ch-tot-pct');
-  totPctEl.textContent = fmtPct(totPct);
-  totPctEl.className = colorClass(totDelta);
+  totPctEl.textContent   = fmtPct(totPct);
+  totPctEl.className     = colorClass(totDelta);
 }
 
 function syncChannelTotalsToMain(channels) {
-  // Update main baseline inputs with channel CSV totals so decomp stays in sync
-  let totS = 0, totWeightedCvr = 0;
+  const hasPrev = channels._hasPrevPeriod === true;
+
+  // Baseline = previous period (if available), otherwise current
+  let totBaseS = 0, totBaseWeightedCvr = 0;
   channels.forEach(ch => {
-    totS += ch.sessions;
-    totWeightedCvr += ch.sessions * (ch.cvrPct / 100);
+    const s   = (hasPrev && ch.prevSessions != null) ? ch.prevSessions : ch.sessions;
+    const cvr = (hasPrev && ch.prevCvrPct   != null) ? ch.prevCvrPct   : ch.cvrPct;
+    totBaseS           += s;
+    totBaseWeightedCvr += s * (cvr / 100);
   });
-  const blendedCvrPct = totS > 0 ? (totWeightedCvr / totS) * 100 : 0;
-  el('inp-sessions').value = totS;
-  el('inp-cvr').value = blendedCvrPct.toFixed(4);
+  const blendedBaseCvrPct = totBaseS > 0 ? (totBaseWeightedCvr / totBaseS) * 100 : 0;
+
+  el('inp-sessions').value = totBaseS;
+  el('inp-cvr').value      = blendedBaseCvrPct.toFixed(4);
+
   // Aggregate channel deltas into main delta inputs
   let totDSessions = 0, totDCvr = 0;
   channels.forEach(ch => {
     const delta = state.channelDeltas[ch.key] || { dSessions: 0, dCvr: 0 };
     totDSessions += delta.dSessions;
-    // Weight CVR delta by sessions share
-    totDCvr += (ch.sessions / (totS || 1)) * delta.dCvr;
+    // Weight CVR delta by base sessions share
+    const s = (hasPrev && ch.prevSessions != null) ? ch.prevSessions : ch.sessions;
+    totDCvr += (s / (totBaseS || 1)) * delta.dCvr;
   });
+
   el('inp-d-sessions').value = Math.round(totDSessions);
-  el('inp-d-cvr').value = totDCvr.toFixed(4);
-  el('sld-sessions').value = Math.round(totDSessions);
-  el('sld-cvr').value = totDCvr.toFixed(4);
+  el('inp-d-cvr').value      = totDCvr.toFixed(4);
+  el('sld-sessions').value   = Math.round(totDSessions);
+  el('sld-cvr').value        = totDCvr.toFixed(4);
   update();
 }
 
@@ -1798,7 +1855,7 @@ function handleCSVFile(file) {
       const rows = parseCSV(e.target.result);
       state.rawRows = rows;
       state.csvLoaded = true;
-      state.channelDeltas = {};
+      state.channelDeltas = {}; // reset so auto-populate fires fresh
 
       // Show channel section, hide manual section
       el('channels-section').classList.remove('hidden');
