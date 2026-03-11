@@ -212,9 +212,9 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
     const adsWithCreatives = await Promise.all(
       ads.map(async (ad) => {
         try {
-          // First fetch: get creative with object_story_spec
+          // Fetch creative with object_story_spec and link_url
           const creativeUrl = `${META_BASE_URL}/${ad.ad_id}`
-            + `?fields=creative{id,name,thumbnail_url,image_url,object_story_spec}`
+            + `?fields=creative{id,name,thumbnail_url,image_url,object_story_spec,link_url}`
             + `&${metaParams(req.accessToken)}`;
 
           const creativeResponse = await fetch(creativeUrl);
@@ -227,25 +227,26 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
           const creative = creativeData.creative || {};
           const storySpec = creative.object_story_spec || {};
 
-          let destinationUrl = extractDestinationUrl(storySpec);
+          let destinationUrl = extractDestinationUrl(storySpec)
+            || creative.link_url
+            || null;
 
-          // If no URL found and we have a creative ID, try fetching effective_object_story_spec separately
+          // If still no URL, try fetching from creative endpoint directly
           if (!destinationUrl && creative.id) {
             try {
-              const effectiveUrl = `${META_BASE_URL}/${creative.id}`
-                + `?fields=effective_object_story_spec,asset_feed_spec`
+              const creativeDirectUrl = `${META_BASE_URL}/${creative.id}`
+                + `?fields=link_url,object_story_spec,asset_feed_spec`
                 + `&${metaParams(req.accessToken)}`;
-              const effectiveResponse = await fetch(effectiveUrl);
-              const effectiveData = await effectiveResponse.json();
+              const directResponse = await fetch(creativeDirectUrl);
+              const directData = await directResponse.json();
 
-              if (!effectiveData.error) {
-                const effectiveStorySpec = effectiveData.effective_object_story_spec || {};
-                const assetFeedSpec = effectiveData.asset_feed_spec || {};
-                destinationUrl = extractDestinationUrl(effectiveStorySpec)
-                  || extractAssetFeedUrl(assetFeedSpec);
+              if (!directData.error) {
+                destinationUrl = directData.link_url
+                  || extractDestinationUrl(directData.object_story_spec || {})
+                  || extractAssetFeedUrl(directData.asset_feed_spec || {});
               }
             } catch (e) {
-              console.error(`Failed to fetch effective spec for creative ${creative.id}:`, e);
+              console.error(`Failed to fetch creative ${creative.id} directly:`, e);
             }
           }
 
@@ -320,7 +321,7 @@ app.get('/api/debug-ad', requireAuth, async (req, res) => {
 
     if (creative.id) {
       const effectiveUrl = `${META_BASE_URL}/${creative.id}`
-        + `?fields=effective_object_story_spec,asset_feed_spec,object_story_spec`
+        + `?fields=link_url,object_story_spec,asset_feed_spec`
         + `&${metaParams(req.accessToken)}`;
       const effectiveResponse = await fetch(effectiveUrl);
       effectiveData = await effectiveResponse.json();
