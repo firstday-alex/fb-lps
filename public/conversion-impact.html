@@ -465,14 +465,14 @@
     <!-- Ranked contributors -->
     <div class="card breakdown-card">
       <h3>Top Contributors to Conversion Change</h3>
-      <p class="card__sub">Each row is one utm_source, ranked by absolute impact on transactions. Dot color = channel group.</p>
+      <p class="card__sub">Each row is one utm_source, ranked by absolute impact on transactions. <strong>Txns</strong> = this source's actual current-period transactions. <strong>Conv. Δ</strong> = how much this source's changes contributed to the <em>overall</em> conversion delta (can differ significantly from Txns). Dot = channel group.</p>
       <div class="contrib-header">
         <div>Source</div>
         <div class="r">Sessions</div>
         <div class="r">CVR</div>
         <div class="r">Txns</div>
         <div>Impact</div>
-        <div class="r">Net Txns</div>
+        <div class="r" title="Contribution to overall change in conversions (sessions effect + CVR effect + mix-shift). Not the same as current Txns.">Conv. Δ ⓘ</div>
         <div class="r">% of Δ</div>
         <div></div>
       </div>
@@ -884,7 +884,7 @@ function render(rawRows, filename) {
   const direction = tDelta >= 0 ? 'increased' : 'decreased';
   headlineCard.className = 'card headline-card ' + (tDelta >= 0 ? 'up' : 'down');
   const topDesc = topGroup
-    ? `Largest driver: ${topGroup.primaryEffect.typeLabel} from ${topGroup.source} — net ${fmtS(Math.round(topGroup.netValue))} transactions.`
+    ? `Largest driver: ${topGroup.primaryEffect.typeLabel} from ${topGroup.source} (Conv. Δ: ${fmtS(Math.round(topGroup.netValue))}).`
     : '';
   headlineCard.innerHTML = `
     <h3>Overall transactions ${direction} by ${fmtS(Math.round(tDelta))} (${fmtP(txnPct, 1)})</h3>
@@ -929,7 +929,7 @@ function render(rawRows, filename) {
           <div class="contrib-bar" style="width:${barPct}%;background:${netColor}"></div>
         </div>
       </div>
-      <div class="contrib-val ${cls(g.netValue)}">${fmtS(Math.round(g.netValue))}</div>
+      <div class="contrib-val ${cls(g.netValue)}" title="Conv. Δ: this source's net contribution to the overall change in conversions (≠ current Txns)">${fmtS(Math.round(g.netValue))}</div>
       <div class="contrib-pct ${cls(g.netValue)}">${fmtP(pctOfDelta, 1)} of Δ</div>
       <div class="contrib-chevron">▶</div>
     `;
