@@ -576,85 +576,165 @@ app.get('/api/test-permissions', requireAuth, async (req, res) => {
   }
 });
 
-// --- Debug endpoint (temporary) ---
+// --- Debug endpoint ---
+// Usage: GET /api/debug-ad?ad_id=<id>
+// Returns every raw API payload + a resolved chain showing which step found the URL.
 
 app.get('/api/debug-ad', requireAuth, async (req, res) => {
   const { ad_id } = req.query;
   if (!ad_id) return res.status(400).json({ error: 'ad_id required' });
 
+  const chain = []; // tracks which step resolved (or missed) the URL
+  const log = (step, url) => chain.push({ step, resolved: url || null });
+
   try {
-    // Fetch ad with creative - try many fields including effective_link_url
+    // Step 1: Ad → creative (same fields as /api/top-ads)
     const adUrl = `${META_BASE_URL}/${ad_id}`
-      + `?fields=creative{id,name,thumbnail_url,image_url,object_story_spec,link_url,object_url,object_story_id,effective_object_story_id}`
+      + `?fields=name,creative{id,name,thumbnail_url,image_url,object_story_spec,asset_feed_spec,link_url,effective_object_story_id,url_tags,call_to_action}`
       + `&${metaParams(req.accessToken)}`;
-    const adResponse = await fetch(adUrl);
-    const adData = await adResponse.json();
+    const adData = await (await fetch(adUrl)).json();
 
+    const adName = adData.name || null;
     const creative = adData.creative || {};
-    let creativeDirectData = null;
-    let postData = null;
+    const storySpec = creative.object_story_spec || {};
+    const assetFeed = creative.asset_feed_spec || {};
 
+    log('1a. storySpec link_data / video_data / photo_data', extractDestinationUrl(storySpec));
+    log('1b. asset_feed_spec link_urls', extractAssetFeedUrl(assetFeed));
+    log('1c. creative.link_url', creative.link_url || null);
+    log('1d. creative.call_to_action?.value?.link', creative.call_to_action?.value?.link || null);
+    log('1e. url_tags parsed URL', extractUrlTagsUrl(creative.url_tags));
+
+    // Step 2: Direct creative fetch (same fields as /api/top-ads)
+    let creativeDirectData = null;
     if (creative.id) {
       const directUrl = `${META_BASE_URL}/${creative.id}`
-        + `?fields=link_url,object_story_spec,asset_feed_spec,object_url,object_story_id,effective_object_story_id`
+        + `?fields=link_url,object_url,object_story_spec,call_to_action`
         + `&${metaParams(req.accessToken)}`;
-      const directResponse = await fetch(directUrl);
-      creativeDirectData = await directResponse.json();
+      creativeDirectData = await (await fetch(directUrl)).json();
+      log('2a. direct creative link_url', creativeDirectData.link_url || null);
+      log('2b. direct creative object_url', creativeDirectData.object_url || null);
+      log('2c. direct creative storySpec', extractDestinationUrl(creativeDirectData.object_story_spec || {}));
+      log('2d. direct creative call_to_action', creativeDirectData.call_to_action?.value?.link || null);
     }
 
-    // If we have an object_story_id, try fetching the post
-    const storyId = creative.effective_object_story_id
-      || creative.object_story_id
-      || creativeDirectData?.effective_object_story_id
-      || creativeDirectData?.object_story_id;
+    // Step 3: Ad name url: slug
+    let adNameUrl = null;
+    if (adName) {
+      const urlSlugMatch = adName.match(/(?:^|[_:-])url[:_]([a-zA-Z0-9-]+)/i);
+      if (urlSlugMatch) {
+        const slug = urlSlugMatch[1];
+        adNameUrl = slug.toUpperCase() === 'HOMEPAGE'
+          ? 'https://firstday.com/'
+          : `https://firstday.com/pages/${slug}`;
+      }
+    }
+    log('3. ad name url: slug', adNameUrl);
 
+    // Step 4: Attachment fetch
+    let attachmentData = null;
+    let attachmentUrl = null;
+    const storyId = creative.effective_object_story_id;
     if (storyId) {
-      const postUrl = `${META_BASE_URL}/${storyId}`
-        + `?fields=link`
-        + `&${metaParams(req.accessToken)}`;
-      const postResponse = await fetch(postUrl);
-      postData = await postResponse.json();
-    }
+      const pagesUrl = `${META_BASE_URL}/me/accounts?fields=id,access_token&limit=100&${metaParams(req.accessToken)}`;
+      const pagesData = await (await fetch(pagesUrl)).json();
+      const pageId = storyId.split('_')[0];
+      const pageToken = pagesData.data?.find(p => p.id === pageId)?.access_token;
 
-    // Try ad preview to extract URL from rendered HTML
-    let previewData = null;
-    let extractedUrl = null;
-    try {
-      const previewUrl = `${META_BASE_URL}/${ad_id}/previews`
-        + `?ad_format=DESKTOP_FEED_STANDARD`
-        + `&${metaParams(req.accessToken)}`;
-      const previewResponse = await fetch(previewUrl);
-      previewData = await previewResponse.json();
+      if (pageToken) {
+        const attachUrl = `${META_BASE_URL}/${storyId}/attachments`
+          + `?fields=url,unshimmed_url,url_unshimmed,target,type,subattachments{url,unshimmed_url,url_unshimmed,target}`
+          + `&access_token=${encodeURIComponent(pageToken)}&appsecret_proof=${generateAppSecretProof(pageToken)}`;
+        attachmentData = await (await fetch(attachUrl)).json();
 
-      // Try to fetch the iframe content and extract destination URL
-      if (previewData.data?.[0]?.body) {
-        const iframeSrcMatch = previewData.data[0].body.match(/src="([^"]+)"/);
-        if (iframeSrcMatch) {
-          const iframeUrl = iframeSrcMatch[1].replace(/&amp;/g, '&');
-          const iframeResponse = await fetch(iframeUrl);
-          const iframeHtml = await iframeResponse.text();
-
-          // Extract external URLs from the iframe HTML (exclude facebook.com URLs)
-          const urlMatches = iframeHtml.match(/href="(https?:\/\/[^"]+)"/g) || [];
-          const externalUrls = urlMatches
-            .map(m => m.match(/href="([^"]+)"/)[1])
-            .map(u => { try { return decodeURIComponent(u); } catch { return u; } })
-            .filter(u => !u.includes('facebook.com') && !u.includes('fbcdn.net') && !u.includes('fb.com'));
-
-          // Also try to find URLs in l.facebook.com redirect links
-          const redirectMatches = iframeHtml.match(/l\.facebook\.com\/l\.php\?u=([^&"]+)/g) || [];
-          const redirectUrls = redirectMatches
-            .map(m => { try { return decodeURIComponent(m.split('u=')[1]); } catch { return null; } })
-            .filter(Boolean);
-
-          extractedUrl = redirectUrls[0] || externalUrls[0] || null;
+        const att = attachmentData.data?.[0];
+        if (att) {
+          attachmentUrl = att.unshimmed_url || att.url_unshimmed || att.url || att.target?.url || null;
+          if (!attachmentUrl && att.subattachments?.data?.[0]) {
+            const sub = att.subattachments.data[0];
+            attachmentUrl = sub.unshimmed_url || sub.url_unshimmed || sub.url || sub.target?.url || null;
+          }
         }
       }
-    } catch (e) {
-      console.error('Preview fetch error:', e.message);
     }
+    log('4. attachment url (unshimmed_url / url_unshimmed / url)', attachmentUrl);
 
-    res.json({ adData, creativeDirectData, storyId, postData, extractedUrl });
+    // Step 5: Preview HTML scraping (same logic as /api/top-ads)
+    let previewExtractedUrl = null;
+    let previewRaw = null;
+    if (!chain.find(s => s.resolved)) {
+      const formats = ['DESKTOP_FEED_STANDARD', 'MOBILE_FEED_STANDARD'];
+      for (const format of formats) {
+        if (previewExtractedUrl) break;
+        try {
+          const previewApiUrl = `${META_BASE_URL}/${ad_id}/previews`
+            + `?ad_format=${format}`
+            + `&${metaParams(req.accessToken)}`;
+          const previewResp = await fetch(previewApiUrl);
+          previewRaw = await previewResp.json();
+
+          if (previewRaw.data?.[0]?.body) {
+            const body = previewRaw.data[0].body.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+
+            // Direct external hrefs in preview HTML
+            const allHrefs = body.match(/href="(https?:\/\/[^"]+)"/g) || [];
+            const externalHrefs = allHrefs
+              .map(m => m.match(/href="([^"]+)"/)[1])
+              .map(u => { try { return decodeURIComponent(u); } catch { return u; } })
+              .filter(u => !u.includes('facebook.com') && !u.includes('fbcdn.net') && !u.includes('fb.com') && !u.includes('fbsbx.com'));
+
+            if (externalHrefs[0]) {
+              previewExtractedUrl = externalHrefs[0];
+              break;
+            }
+
+            // Iframe scrape
+            const iframeSrcMatch = body.match(/src="(https?:\/\/[^"]+)"/);
+            if (iframeSrcMatch) {
+              const iframeUrl = iframeSrcMatch[1];
+              try {
+                const iframeResp = await fetch(iframeUrl);
+                const iframeHtml = await iframeResp.text();
+
+                const redirectMatches = iframeHtml.match(/l\.facebook\.com\/l\.php\?u=([^&"]+)/g) || [];
+                const redirectUrls = redirectMatches
+                  .map(m => { try { return decodeURIComponent(m.split('u=')[1]); } catch { return null; } })
+                  .filter(Boolean);
+
+                if (redirectUrls[0]) {
+                  previewExtractedUrl = redirectUrls[0];
+                } else {
+                  const iframeHrefs = (iframeHtml.match(/href="(https?:\/\/[^"]+)"/g) || [])
+                    .map(m => m.match(/href="([^"]+)"/)[1])
+                    .map(u => { try { return decodeURIComponent(u); } catch { return u; } })
+                    .filter(u => !u.includes('facebook.com') && !u.includes('fbcdn.net') && !u.includes('fb.com'));
+                  previewExtractedUrl = iframeHrefs[0] || null;
+                }
+              } catch (e) {}
+            }
+          }
+        } catch (e) {}
+      }
+    }
+    log('5. preview HTML scrape', previewExtractedUrl);
+
+    // Summarise: first non-null step wins (partnership ads prefer step 3 over 1/2)
+    const nameLower = (adName || '').toLowerCase();
+    const isPartnership = nameLower.includes(':ext-') || nameLower.includes('creator_wl:ext') || /\bext[-_]creator\b/.test(nameLower);
+    const firstResolved = chain.find(s => s.resolved)?.resolved || null;
+    const finalUrl = isPartnership && adNameUrl ? adNameUrl : (adNameUrl || firstResolved);
+
+    res.json({
+      ad_id,
+      ad_name: adName,
+      is_partnership: isPartnership,
+      effective_object_story_id: storyId || null,
+      url_tags: creative.url_tags || null,
+      call_to_action: creative.call_to_action || null,
+      resolution_chain: chain,
+      final_url: finalUrl,
+      raw: { adData, creativeDirectData, attachmentData, previewRaw }
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
