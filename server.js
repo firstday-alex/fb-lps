@@ -398,29 +398,30 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
             destinationUrl = attachmentFallbackUrl;
           }
 
-          // Get the best quality image
-          let imageUrl = creative.image_url
-            || storySpec?.link_data?.picture
-            || storySpec?.video_data?.image_url
-            || creative.thumbnail_url
-            || null;
-
-          // If still low-res, try fetching the creative directly for full-res image
-          if (imageUrl && imageUrl.includes('p64x64') && creative.id) {
+          // Get the best quality image - try creative directly first for full-res
+          let imageUrl = null;
+          if (creative.id) {
             try {
               const hiResUrl = `${META_BASE_URL}/${creative.id}`
                 + `?fields=image_url,thumbnail_url`
                 + `&${metaParams(req.accessToken)}`;
               const hiResResponse = await fetch(hiResUrl);
               const hiResData = await hiResResponse.json();
-              if (hiResData.image_url) imageUrl = hiResData.image_url;
-              else if (hiResData.thumbnail_url) imageUrl = hiResData.thumbnail_url;
+              if (hiResData.image_url && !hiResData.image_url.includes('p64x64')) {
+                imageUrl = hiResData.image_url;
+              } else if (hiResData.thumbnail_url && !hiResData.thumbnail_url.includes('p64x64')) {
+                imageUrl = hiResData.thumbnail_url;
+              }
             } catch (e) {}
           }
 
-          // Upgrade low-res size params in FB CDN URLs (p64x64 -> p960x960)
-          if (imageUrl) {
-            imageUrl = imageUrl.replace(/p\d+x\d+/g, 'p960x960');
+          // Fallback to nested creative fields
+          if (!imageUrl) {
+            imageUrl = creative.image_url
+              || storySpec?.link_data?.picture
+              || storySpec?.video_data?.image_url
+              || creative.thumbnail_url
+              || null;
           }
 
           const isVideo = !!storySpec.video_data;
