@@ -367,9 +367,13 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
               const brandMatch = ad.ad_name.match(/batch:(\w+)/);
               const brand = brandMatch ? brandMatch[1].toLowerCase() : '';
               if (brand === 'tdk') {
-                destinationUrl = `https://firstday.com/pages/${slug}`;
+                destinationUrl = slug.toUpperCase() === 'HOMEPAGE'
+                  ? 'https://firstday.com/'
+                  : `https://firstday.com/pages/${slug}`;
               } else if (brand === 'trmv') {
-                destinationUrl = `https://therearemanyversions.com/pages/${slug}`;
+                destinationUrl = slug.toUpperCase() === 'HOMEPAGE'
+                  ? 'https://therearemanyversions.com/'
+                  : `https://therearemanyversions.com/pages/${slug}`;
               }
             }
           }
