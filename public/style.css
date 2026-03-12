@@ -171,7 +171,8 @@ header h1 { font-size: 1.25rem; }
 }
 .ad-card__stats {
   display: flex;
-  gap: 16px;
+  flex-wrap: wrap;
+  gap: 4px 16px;
   font-size: 0.85rem;
   color: #65676b;
 }
