@@ -367,18 +367,13 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
             const urlSlugMatch = ad.ad_name.match(/(?:^|[_:-])url[:_]([a-zA-Z0-9-]+)/i);
             if (urlSlugMatch) {
               const slug = urlSlugMatch[1];
-              // Map known domains based on ad name brand prefix
+              // Map domain based on brand prefix (trmv -> therearemanyversions.com, everything else -> firstday.com)
               const brandMatch = ad.ad_name.match(/batch:(\w+)/);
               const brand = brandMatch ? brandMatch[1].toLowerCase() : '';
-              if (brand === 'tdk') {
-                destinationUrl = slug.toUpperCase() === 'HOMEPAGE'
-                  ? 'https://firstday.com/'
-                  : `https://firstday.com/pages/${slug}`;
-              } else if (brand === 'trmv') {
-                destinationUrl = slug.toUpperCase() === 'HOMEPAGE'
-                  ? 'https://therearemanyversions.com/'
-                  : `https://therearemanyversions.com/pages/${slug}`;
-              }
+              const domain = brand === 'trmv' ? 'therearemanyversions.com' : 'firstday.com';
+              destinationUrl = slug.toUpperCase() === 'HOMEPAGE'
+                ? `https://${domain}/`
+                : `https://${domain}/pages/${slug}`;
             }
           }
 
