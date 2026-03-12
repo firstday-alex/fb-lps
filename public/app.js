@@ -75,12 +75,8 @@ async function loadTopAds() {
   document.getElementById('empty-state').classList.add('hidden');
 
   try {
-    // Fetch ads and Shopify metrics in parallel
-    const [adsRes, metricsRes] = await Promise.all([
-      fetch(`/api/top-ads?account_id=${encodeURIComponent(accountId)}`),
-      fetch('/api/shopify-metrics?days=1').catch(() => null),
-    ]);
-
+    // Fetch ads first
+    const adsRes = await fetch(`/api/top-ads?account_id=${encodeURIComponent(accountId)}`);
     if (adsRes.status === 401) { checkAuthStatus(); return; }
 
     const adsData = await adsRes.json();
@@ -91,18 +87,15 @@ async function loadTopAds() {
       return;
     }
 
-    // Build metrics lookup by landing page path
-    let metricsMap = {};
-    if (metricsRes && metricsRes.ok) {
-      const metricsData = await metricsRes.json();
-      if (metricsData.metrics) {
-        metricsData.metrics.forEach(m => {
-          metricsMap[m.landing_page_path] = m;
-        });
-      }
-    }
+    // Now fetch Shopify metrics with ad info for matching
+    const adList = adsData.ads.map(a => ({ ad_name: a.ad_name, destination_url: a.destination_url }));
+    let metricsData = null;
+    try {
+      const metricsRes = await fetch('/api/shopify-metrics?days=1&ads=' + encodeURIComponent(JSON.stringify(adList)));
+      if (metricsRes.ok) metricsData = await metricsRes.json();
+    } catch {}
 
-    renderAds(adsData.ads, metricsMap);
+    renderAds(adsData.ads, metricsData);
   } catch {
     showError('Failed to fetch ads. Please try again.');
   } finally {
@@ -112,25 +105,29 @@ async function loadTopAds() {
 
 // --- Rendering ---
 
-function matchMetrics(destinationUrl, metricsMap) {
-  if (!destinationUrl || !Object.keys(metricsMap).length) return null;
+function matchMetrics(ad, metricsData) {
+  if (!metricsData) return null;
 
-  try {
-    const parsed = new URL(destinationUrl);
-    const path = parsed.pathname;
+  // First try: match by ad name (most specific)
+  if (metricsData.by_ad && ad.ad_name && metricsData.by_ad[ad.ad_name]) {
+    return metricsData.by_ad[ad.ad_name];
+  }
 
-    // Exact match
-    if (metricsMap[path]) return metricsMap[path];
+  // Fallback: match by landing page path
+  if (metricsData.by_path && ad.destination_url) {
+    try {
+      const path = new URL(ad.destination_url).pathname;
+      if (metricsData.by_path[path]) return metricsData.by_path[path];
 
-    // Try with/without trailing slash
-    const alt = path.endsWith('/') ? path.slice(0, -1) : path + '/';
-    if (metricsMap[alt]) return metricsMap[alt];
+      const alt = path.endsWith('/') ? path.slice(0, -1) : path + '/';
+      if (metricsData.by_path[alt]) return metricsData.by_path[alt];
 
-    // Partial match: find paths that contain the destination slug
-    for (const [key, val] of Object.entries(metricsMap)) {
-      if (key.includes(path) || path.includes(key)) return val;
-    }
-  } catch {}
+      // Partial match
+      for (const [key, val] of Object.entries(metricsData.by_path)) {
+        if (key.includes(path) || path.includes(key)) return val;
+      }
+    } catch {}
+  }
 
   return null;
 }
@@ -140,7 +137,7 @@ function formatPct(val) {
   return (val * 100).toFixed(1) + '%';
 }
 
-function renderAds(ads, metricsMap) {
+function renderAds(ads, metricsData) {
   const grid = document.getElementById('ads-grid');
   grid.innerHTML = '';
 
@@ -163,8 +160,8 @@ function renderAds(ads, metricsMap) {
       ? `<a href="${escapeHtml(ad.destination_url)}" target="_blank" rel="noopener noreferrer">${truncateUrl(ad.destination_url)}</a>`
       : '<span class="no-url">No destination URL</span>';
 
-    // Match Shopify funnel metrics to this ad's destination URL
-    const metrics = matchMetrics(ad.destination_url, metricsMap);
+    // Match Shopify funnel metrics to this ad
+    const metrics = matchMetrics(ad, metricsData);
     const funnelHtml = metrics ? `
       <div class="ad-card__funnel">
         <div class="funnel-title">Shopify Funnel (Yesterday)</div>
