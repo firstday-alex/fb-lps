@@ -62,10 +62,21 @@
     .header__back:hover { background: rgba(255,255,255,0.15); color: white; }
     header h1 { font-size: 1.2rem; font-weight: 700; }
     header p { font-size: 0.8rem; opacity: 0.75; }
+    .header__report-link {
+      margin-left: auto;
+      color: rgba(255,255,255,0.85);
+      text-decoration: none;
+      font-size: 0.875rem;
+      border: 1px solid rgba(255,255,255,0.3);
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+    }
+    .header__report-link:hover { background: rgba(255,255,255,0.15); color: white; }
 
     /* Upload screen */
     #upload-screen {
-      max-width: 480px;
+      max-width: 560px;
       margin: 60px auto;
       padding: 0 24px;
     }
@@ -74,58 +85,28 @@
       border-radius: var(--radius);
       box-shadow: var(--shadow);
       padding: 32px;
+      text-align: center;
     }
     .upload-card h2 { font-size: 1.1rem; margin-bottom: 8px; }
-    .upload-card p { font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 20px; }
-    .date-row {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px;
-      margin-bottom: 8px;
-    }
-    .date-row label {
-      display: flex;
-      flex-direction: column;
-      gap: 5px;
-      font-size: 0.78rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: var(--text-secondary);
-    }
-    .date-row input[type="date"] {
-      padding: 8px 10px;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      font-size: 0.9rem;
-      font-family: inherit;
-      color: var(--text-primary);
-      background: var(--surface);
-    }
-    .date-row input[type="date"]:focus {
-      outline: none;
-      border-color: var(--fb-blue);
-      box-shadow: 0 0 0 2px rgba(24,119,242,0.15);
-    }
-    .compare-note {
-      font-size: 0.75rem;
-      color: var(--text-secondary);
-      margin-bottom: 20px !important;
-    }
-    .btn-run {
-      width: 100%;
-      padding: 11px;
-      background: var(--fb-blue);
-      color: white;
-      border: none;
-      border-radius: 6px;
-      font-size: 0.95rem;
-      font-weight: 700;
+    .upload-card p { font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 24px; }
+    .upload-zone {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 32px 20px;
       cursor: pointer;
-      font-family: inherit;
+      position: relative;
+      transition: border-color 0.15s, background 0.15s;
     }
-    .btn-run:hover { background: var(--fb-blue-dark); }
-    .btn-run:disabled { opacity: 0.6; cursor: not-allowed; }
+    .upload-zone:hover, .upload-zone.drag-over {
+      border-color: var(--fb-blue);
+      background: #f0f5ff;
+    }
+    .upload-zone input[type="file"] {
+      position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+    }
+    .upload-zone__icon { font-size: 2rem; margin-bottom: 10px; }
+    .upload-zone__label { font-size: 0.9rem; font-weight: 600; color: var(--fb-blue); }
+    .upload-zone__hint { font-size: 0.78rem; color: var(--text-secondary); margin-top: 4px; }
     .upload-error {
       margin-top: 12px;
       padding: 10px 14px;
@@ -459,19 +440,20 @@
     <h1>Conversion Impact Analysis</h1>
     <p>Upload a period-comparison CSV to see what drove conversion changes</p>
   </div>
+  <a class="header__report-link" href="https://admin.shopify.com/store/first-day-inc/analytics/reports/275054690?ql=FROM+sessions%0A++SHOW+sessions%2C+conversion_rate%0A++GROUP+BY+ONLY+TOP+20+utm_source%2C+ONLY+TOP+20+landing_page_path+WITH%0A++++GROUP_TOTALS%2C+TOTALS%2C+PERCENT_CHANGE%0A++SINCE+startOfDay%28-2d%29+UNTIL+endOfDay%28-1d%29%0A++COMPARE+TO+previous_period%0A++ORDER+BY+conversion_rate__utm_source_totals+DESC%2C+conversion_rate+DESC%2C%0A++++utm_source+ASC%2C+landing_page_path+ASC%0AVISUALIZE+conversion_rate" target="_blank" rel="noopener">Open Shopify Report ↗</a>
 </header>
 
 <!-- ===== UPLOAD SCREEN ===== -->
 <div id="upload-screen">
   <div class="upload-card">
-    <h2>Conversion Impact Analysis</h2>
-    <p>Select a date range to analyze what drove changes in conversions across all channels and landing pages.</p>
-    <div class="date-row">
-      <label>From <input type="date" id="date-since"></label>
-      <label>To <input type="date" id="date-until"></label>
+    <h2>Upload your CVR by Channel CSV</h2>
+    <p>Export from Shopify Analytics with a date range and "previous period" comparison enabled. The tool will automatically calculate what drove the change in overall conversions.</p>
+    <div class="upload-zone" id="upload-zone">
+      <input type="file" id="csv-input" accept=".csv,text/csv">
+      <div class="upload-zone__icon">&#128196;</div>
+      <div class="upload-zone__label">Click or drag CSV here</div>
+      <div class="upload-zone__hint">Needs columns: UTM source · Sessions · Conversion rate · Sessions (previous_period) · Conversion rate (previous_period)</div>
     </div>
-    <p class="compare-note">Automatically compared to the equal-length prior period.</p>
-    <button class="btn-run" id="btn-run">Run Analysis</button>
     <div class="upload-error" id="upload-error"></div>
   </div>
 </div>
@@ -483,7 +465,7 @@
     <!-- Top bar -->
     <div class="top-bar">
       <div class="top-bar__info" id="top-bar-info"></div>
-      <button class="btn-reset" id="btn-reset">&#8592; Change dates</button>
+      <button class="btn-reset" id="btn-reset">&#8592; Upload new file</button>
     </div>
 
     <!-- Overall summary -->
@@ -583,54 +565,76 @@ function chLabel(key) { return key === 'other' ? 'Other' : CHANNELS[key].label; 
 function chColor(key) { return key === 'other' ? '#9ca3af' : CHANNELS[key].color; }
 
 // ─────────────────────────────────────────────
-// SHOPIFY API RESPONSE PARSING
+// CSV PARSING
 // ─────────────────────────────────────────────
+function splitLine(line) {
+  const out = []; let cur = ''; let q = false;
+  for (const c of line) {
+    if (c === '"') { q = !q; }
+    else if (c === ',' && !q) { out.push(cur); cur = ''; }
+    else cur += c;
+  }
+  out.push(cur);
+  return out;
+}
+function cleanVal(v) { return (v || '').replace(/^"|"$/g,'').replace(/,/g,'').trim(); }
+function toNum(v) { const n = parseFloat(cleanVal(v)); return isFinite(n) ? n : null; }
+function toInt(v) { const n = parseInt(cleanVal(v), 10); return isFinite(n) ? n : null; }
 function normCvr(v) { if (v == null) return null; return v > 1 ? v / 100 : v; }
 
-function parseAPIResponse(data) {
-  const colNames = (data.columns || []).map(c => c.name);
-  const rawRows  = data.rows || [];
+function parseCSV(text) {
+  const lines = text.trim().split(/\r?\n/);
+  if (lines.length < 2) throw new Error('File has no data rows.');
 
-  if (!colNames.length) throw new Error('No columns in Shopify response.');
+  const rawH = splitLine(lines[0].replace(/^\uFEFF/,''));
+  const h = rawH.map(s => cleanVal(s).toLowerCase());
 
-  // Shopify API column names with COMPARE TO previous_period:
-  //   sessions, conversion_rate (current period)
-  //   comparison_sessions__previous_period, comparison_conversion_rate__previous_period
-  //   *__totals columns (totals embedded per-row, not a separate row)
-  const iSrc     = colNames.indexOf('utm_source');
-  const iLp      = colNames.indexOf('landing_page_path');
-  const iSess    = colNames.indexOf('sessions');
-  const iCvr     = colNames.indexOf('conversion_rate');
-  const iPrevS   = colNames.indexOf('comparison_sessions__previous_period');
-  const iPrevCvr = colNames.indexOf('comparison_conversion_rate__previous_period');
+  // Column indices
+  const iSrc     = h.findIndex(s => s.includes('utm') || s === 'source');
+  const iLp      = h.findIndex(s => s.includes('landing') || s.includes('page path'));
+  const iSess    = h.findIndex(s => s.includes('session') && !s.includes('previous'));
+  const iCvr     = h.findIndex(s => (s.includes('conversion') || s === 'cvr') && !s.includes('previous'));
+  const iPrevS   = h.findIndex(s => s.includes('session') && s.includes('previous'));
+  const iPrevCvr = h.findIndex(s => (s.includes('conversion') || s === 'cvr') && s.includes('previous'));
 
-  if (iSess < 0)    throw new Error('Shopify response missing "sessions" column.');
-  if (iCvr < 0)     throw new Error('Shopify response missing "conversion_rate" column.');
-  if (iPrevS < 0)   throw new Error('Shopify response missing "comparison_sessions__previous_period". Ensure COMPARE TO previous_period is in the query.');
-  if (iPrevCvr < 0) throw new Error('Shopify response missing "comparison_conversion_rate__previous_period".');
+  if (iSess    < 0) throw new Error('Missing "Sessions" column.');
+  if (iCvr     < 0) throw new Error('Missing "Conversion rate" column.');
+  if (iPrevS   < 0) throw new Error('Missing "Sessions (previous_period)" column. Please export with previous period comparison enabled.');
+  if (iPrevCvr < 0) throw new Error('Missing "Conversion rate (previous_period)" column. Please export with previous period comparison enabled.');
 
+  const hasLp = iLp >= 0;
   const rows = [];
+  let lastSource = '';
 
-  for (const row of rawRows) {
-    // utm_source is null for direct/no-source traffic — treat as empty string (Direct)
-    const source = row[colNames[iSrc]] || '';
-    const lp     = row[colNames[iLp]]  || '';
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    const cols = splitLine(line);
 
-    // Skip rows with no landing page (shouldn't happen without GROUP_TOTALS, but guard anyway)
-    if (!lp) continue;
+    // Forward-fill sparse utm_source
+    const rawSrc = iSrc >= 0 ? cleanVal(cols[iSrc]) : '';
+    if (rawSrc) lastSource = rawSrc;
+    const source = lastSource;
+
+    const lp = hasLp ? cleanVal(cols[iLp]) : '';
 
     // Skip post-conversion pages — CVR is ~100% and they pollute the analysis
     if (/^\/(checkout|checkouts|orders|payment-methods|gift_cards)(\/|$)/i.test(lp)) continue;
 
-    const currS   = parseInt(row[colNames[iSess]], 10) || 0;
-    const currC   = normCvr(parseFloat(row[colNames[iCvr]]))    || 0;
-    const prevSess = Math.round(parseFloat(row[colNames[iPrevS]])  || 0);
-    const prevCvr  = normCvr(parseFloat(row[colNames[iPrevCvr]])) || 0;
+    const sessions = toInt(cols[iSess]);
+    const cvrRaw   = toNum(cols[iCvr]);
+    const prevS    = toNum(cols[iPrevS]);
+    const prevCvrR = toNum(cols[iPrevCvr]);
+
+    const currS    = sessions != null ? sessions : 0;
+    const currC    = normCvr(cvrRaw) ?? 0;
+    const prevSess = prevS != null ? Math.round(prevS) : 0;
+    const prevCvr  = normCvr(prevCvrR) ?? 0;
 
     rows.push({ source, lp, channel: classifySource(source), currS, currC, prevSess, prevCvr });
   }
 
-  if (rows.length === 0) throw new Error('No session data returned for this date range.');
+  if (rows.length === 0) throw new Error('No valid rows found.');
   return rows;
 }
 
@@ -1123,53 +1127,40 @@ function renderDrillDown(container, source, tDelta, tPrevConv) {
 // ─────────────────────────────────────────────
 // EVENT WIRING
 // ─────────────────────────────────────────────
-async function runAnalysis(since, until) {
+function handleFile(file) {
   const errEl = document.getElementById('upload-error');
-  const btn   = document.getElementById('btn-run');
   errEl.className = 'upload-error';
-  btn.disabled = true;
-  btn.textContent = 'Loading…';
-
-  try {
-    const resp = await fetch(`/api/conversion-analysis?since=${encodeURIComponent(since)}&until=${encodeURIComponent(until)}`);
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || `Server error ${resp.status}`);
-    const rows = parseAPIResponse(data);
-    render(rows, `${since} → ${until}`);
-  } catch (err) {
-    errEl.textContent = err.message;
-    errEl.className = 'upload-error show';
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Run Analysis';
-  }
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const rows = parseCSV(e.target.result);
+      render(rows, file.name);
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.className = 'upload-error show';
+    }
+  };
+  reader.readAsText(file);
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  // Default dates: last 7 complete days (8 days ago → yesterday)
-  const today = new Date();
-  const fmt = d => d.toISOString().slice(0, 10);
-  const yesterday  = new Date(today); yesterday.setDate(today.getDate() - 1);
-  const weekAgo    = new Date(today); weekAgo.setDate(today.getDate() - 8);
+  const input = document.getElementById('csv-input');
+  const zone  = document.getElementById('upload-zone');
 
-  const sinceEl = document.getElementById('date-since');
-  const untilEl = document.getElementById('date-until');
-  sinceEl.value = fmt(weekAgo);
-  untilEl.value = fmt(yesterday);
-  // Don't allow future dates
-  sinceEl.max = untilEl.max = fmt(yesterday);
+  input.addEventListener('change', e => { if (e.target.files[0]) handleFile(e.target.files[0]); });
 
-  document.getElementById('btn-run').addEventListener('click', () => {
-    const since = sinceEl.value;
-    const until = untilEl.value;
-    if (!since || !until) { document.getElementById('upload-error').textContent = 'Please select both dates.'; document.getElementById('upload-error').className = 'upload-error show'; return; }
-    if (since > until) { document.getElementById('upload-error').textContent = '"From" date must be before "To" date.'; document.getElementById('upload-error').className = 'upload-error show'; return; }
-    runAnalysis(since, until);
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault();
+    zone.classList.remove('drag-over');
+    if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
   });
 
   document.getElementById('btn-reset').addEventListener('click', () => {
     document.getElementById('results-screen').style.display = 'none';
     document.getElementById('upload-screen').style.display = 'block';
+    input.value = '';
   });
 
   document.getElementById('btn-raw-toggle').addEventListener('click', function() {
