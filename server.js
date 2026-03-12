@@ -227,9 +227,9 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
     const adsWithCreatives = await Promise.all(
       ads.map(async (ad) => {
         try {
-          // Fetch creative and ad-level fields for partnership detection
+          // Fetch creative with multiple URL-related fields
           const creativeUrl = `${META_BASE_URL}/${ad.ad_id}`
-            + `?fields=creative{id,name,thumbnail_url,image_url,object_story_spec,asset_feed_spec,link_url,effective_object_story_id},is_adset_using_partnership_ad`
+            + `?fields=creative{id,name,thumbnail_url,image_url,object_story_spec,asset_feed_spec,link_url,effective_object_story_id}`
             + `&${metaParams(req.accessToken)}`;
 
           const creativeResponse = await fetch(creativeUrl);
@@ -321,8 +321,7 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
 
           // Detect partnership/branded content ads
           const isPartnershipAd = !!(
-            creativeData.is_adset_using_partnership_ad
-            || storySpec.link_data?.branded_content_sponsor_page_id
+            storySpec.link_data?.branded_content_sponsor_page_id
             || storySpec.video_data?.branded_content_sponsor_page_id
             || storySpec.photo_data?.branded_content_sponsor_page_id
           );
