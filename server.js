@@ -270,17 +270,26 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
             } catch (e) {}
           }
 
-          // Fallback 1: Extract destination from ad name URL slug (most reliable for partnership ads)
-          if (!destinationUrl && ad.ad_name) {
+          // Extract destination from ad name URL slug — always override for partnership ads
+          if (ad.ad_name) {
             const urlSlugMatch = ad.ad_name.match(/(?:^|[_:-])url[:_]([a-zA-Z0-9-]+)/i);
             if (urlSlugMatch) {
               const slug = urlSlugMatch[1];
-              const brandMatch = ad.ad_name.match(/batch:(\w+)/);
-              const brand = brandMatch ? brandMatch[1].toLowerCase() : '';
-              const domain = brand === 'trmv' ? 'therearemanyversions.com' : 'firstday.com';
-              destinationUrl = slug.toUpperCase() === 'HOMEPAGE'
-                ? `https://${domain}/`
-                : `https://${domain}/pages/${slug}`;
+              const adNameUrl = slug.toUpperCase() === 'HOMEPAGE'
+                ? 'https://firstday.com/'
+                : `https://firstday.com/pages/${slug}`;
+
+              // Always use ad name URL for partnership ads; otherwise only if no URL yet
+              const nameLower = ad.ad_name.toLowerCase();
+              const isPartnership = nameLower.includes('creator_wl:ext')
+                || nameLower.includes('notes:ext-')
+                || nameLower.includes('editor:ext-')
+                || nameLower.includes(':ext-')
+                || /\bext[-_]creator\b/.test(nameLower);
+
+              if (isPartnership || !destinationUrl) {
+                destinationUrl = adNameUrl;
+              }
             }
           }
 
