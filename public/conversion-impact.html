@@ -65,7 +65,7 @@
 
     /* Upload screen */
     #upload-screen {
-      max-width: 560px;
+      max-width: 480px;
       margin: 60px auto;
       padding: 0 24px;
     }
@@ -74,28 +74,58 @@
       border-radius: var(--radius);
       box-shadow: var(--shadow);
       padding: 32px;
-      text-align: center;
     }
     .upload-card h2 { font-size: 1.1rem; margin-bottom: 8px; }
-    .upload-card p { font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 24px; }
-    .upload-zone {
-      border: 2px dashed var(--border);
-      border-radius: var(--radius);
-      padding: 32px 20px;
-      cursor: pointer;
-      position: relative;
-      transition: border-color 0.15s, background 0.15s;
+    .upload-card p { font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 20px; }
+    .date-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 8px;
     }
-    .upload-zone:hover, .upload-zone.drag-over {
+    .date-row label {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-secondary);
+    }
+    .date-row input[type="date"] {
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 0.9rem;
+      font-family: inherit;
+      color: var(--text-primary);
+      background: var(--surface);
+    }
+    .date-row input[type="date"]:focus {
+      outline: none;
       border-color: var(--fb-blue);
-      background: #f0f5ff;
+      box-shadow: 0 0 0 2px rgba(24,119,242,0.15);
     }
-    .upload-zone input[type="file"] {
-      position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+    .compare-note {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      margin-bottom: 20px !important;
     }
-    .upload-zone__icon { font-size: 2rem; margin-bottom: 10px; }
-    .upload-zone__label { font-size: 0.9rem; font-weight: 600; color: var(--fb-blue); }
-    .upload-zone__hint { font-size: 0.78rem; color: var(--text-secondary); margin-top: 4px; }
+    .btn-run {
+      width: 100%;
+      padding: 11px;
+      background: var(--fb-blue);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 0.95rem;
+      font-weight: 700;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .btn-run:hover { background: var(--fb-blue-dark); }
+    .btn-run:disabled { opacity: 0.6; cursor: not-allowed; }
     .upload-error {
       margin-top: 12px;
       padding: 10px 14px;
@@ -434,14 +464,14 @@
 <!-- ===== UPLOAD SCREEN ===== -->
 <div id="upload-screen">
   <div class="upload-card">
-    <h2>Upload your CVR by Channel CSV</h2>
-    <p>Export from Shopify Analytics with a date range and "previous period" comparison enabled. The tool will automatically calculate what drove the change in overall conversions.</p>
-    <div class="upload-zone" id="upload-zone">
-      <input type="file" id="csv-input" accept=".csv,text/csv">
-      <div class="upload-zone__icon">&#128196;</div>
-      <div class="upload-zone__label">Click or drag CSV here</div>
-      <div class="upload-zone__hint">Needs columns: UTM source · Sessions · Conversion rate · Sessions (previous_period) · Conversion rate (previous_period)</div>
+    <h2>Conversion Impact Analysis</h2>
+    <p>Select a date range to analyze what drove changes in conversions across all channels and landing pages.</p>
+    <div class="date-row">
+      <label>From <input type="date" id="date-since"></label>
+      <label>To <input type="date" id="date-until"></label>
     </div>
+    <p class="compare-note">Automatically compared to the equal-length prior period.</p>
+    <button class="btn-run" id="btn-run">Run Analysis</button>
     <div class="upload-error" id="upload-error"></div>
   </div>
 </div>
@@ -453,7 +483,7 @@
     <!-- Top bar -->
     <div class="top-bar">
       <div class="top-bar__info" id="top-bar-info"></div>
-      <button class="btn-reset" id="btn-reset">&#8592; Upload new file</button>
+      <button class="btn-reset" id="btn-reset">&#8592; Change dates</button>
     </div>
 
     <!-- Overall summary -->
@@ -553,77 +583,62 @@ function chLabel(key) { return key === 'other' ? 'Other' : CHANNELS[key].label; 
 function chColor(key) { return key === 'other' ? '#9ca3af' : CHANNELS[key].color; }
 
 // ─────────────────────────────────────────────
-// CSV PARSING
+// SHOPIFY API RESPONSE PARSING
 // ─────────────────────────────────────────────
-function splitLine(line) {
-  const out = []; let cur = ''; let q = false;
-  for (const c of line) {
-    if (c === '"') { q = !q; }
-    else if (c === ',' && !q) { out.push(cur); cur = ''; }
-    else cur += c;
-  }
-  out.push(cur);
-  return out;
-}
-function cleanVal(v) { return (v || '').replace(/^"|"$/g,'').replace(/,/g,'').trim(); }
-function toNum(v) { const n = parseFloat(cleanVal(v)); return isFinite(n) ? n : null; }
-function toInt(v) { const n = parseInt(cleanVal(v), 10); return isFinite(n) ? n : null; }
 function normCvr(v) { if (v == null) return null; return v > 1 ? v / 100 : v; }
 
-function parseCSV(text) {
-  const lines = text.trim().split(/\r?\n/);
-  if (lines.length < 2) throw new Error('File has no data rows.');
+function parseAPIResponse(data) {
+  const colNames = (data.columns || []).map(c => c.name);
+  const rawRows  = data.rows || [];
 
-  const rawH = splitLine(lines[0].replace(/^\uFEFF/,''));
-  const h = rawH.map(s => cleanVal(s).toLowerCase());
+  if (!colNames.length) throw new Error('No columns in Shopify response.');
 
-  // Column indices
-  const iSrc     = h.findIndex(s => s.includes('utm') || s === 'source');
-  const iLp      = h.findIndex(s => s.includes('landing') || s.includes('page path'));
-  const iSess    = h.findIndex(s => s.includes('session') && !s.includes('previous'));
-  const iCvr     = h.findIndex(s => (s.includes('conversion') || s === 'cvr') && !s.includes('previous'));
-  const iPrevS   = h.findIndex(s => s.includes('session') && s.includes('previous'));
-  const iPrevCvr = h.findIndex(s => (s.includes('conversion') || s === 'cvr') && s.includes('previous'));
+  // Locate columns — Shopify names them like sessions, conversion_rate,
+  // sessions__previous_period, conversion_rate__previous_period
+  const find = (fn) => colNames.findIndex(fn);
+  const iSrc     = find(n => n === 'utm_source');
+  const iLp      = find(n => n === 'landing_page_path');
+  const iSess    = find(n => n === 'sessions' && !n.includes('__'));
+  const iCvr     = find(n => n === 'conversion_rate' && !n.includes('__'));
+  const iPrevS   = find(n => n === 'sessions__previous_period');
+  const iPrevCvr = find(n => n === 'conversion_rate__previous_period');
 
-  if (iSess    < 0) throw new Error('Missing "Sessions" column.');
-  if (iCvr     < 0) throw new Error('Missing "Conversion rate" column.');
-  if (iPrevS   < 0) throw new Error('Missing "Sessions (previous_period)" column. Please export with previous period comparison enabled.');
-  if (iPrevCvr < 0) throw new Error('Missing "Conversion rate (previous_period)" column. Please export with previous period comparison enabled.');
+  if (iSess < 0)   throw new Error('Shopify response missing "sessions" column.');
+  if (iCvr < 0)    throw new Error('Shopify response missing "conversion_rate" column.');
+  if (iPrevS < 0)  throw new Error('Shopify response missing "sessions__previous_period". Check that COMPARE TO previous_period is working.');
+  if (iPrevCvr < 0) throw new Error('Shopify response missing "conversion_rate__previous_period".');
 
-  const hasLp = iLp >= 0;
+  const col = (row, i) => i >= 0 ? row[colNames[i]] : null;
+
   const rows = [];
   let lastSource = '';
 
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line) continue;
-    const cols = splitLine(line);
+  for (const row of rawRows) {
+    const rawSrc = col(row, iSrc);
+    const lp     = col(row, iLp) || '';
 
-    // Forward-fill sparse utm_source
-    const rawSrc = iSrc >= 0 ? cleanVal(cols[iSrc]) : '';
-    if (rawSrc) lastSource = rawSrc;
+    // Skip TOTALS row (both utm_source and landing_page_path are null) — overall aggregate
+    if ((rawSrc == null || rawSrc === '') && lp === '') continue;
+
+    // Skip GROUP_TOTALS rows where lp is null but source is set — we aggregate ourselves
+    if (lp === '' || lp == null) continue;
+
+    // Forward-fill utm_source for sparse rows (lp-level rows may have null source)
+    if (rawSrc != null && rawSrc !== '') lastSource = rawSrc;
     const source = lastSource;
 
-    const lp       = hasLp ? cleanVal(cols[iLp]) : '';
-
-    // Skip post-conversion pages — Shopify includes these as "landing pages" but they
-    // are visited after checkout, not before. CVR is always ~100% and they are noise.
+    // Skip post-conversion pages — CVR is ~100% and they pollute the analysis
     if (/^\/(checkout|checkouts|orders|payment-methods|gift_cards)(\/|$)/i.test(lp)) continue;
 
-    const sessions = toInt(cols[iSess]);
-    const cvrRaw   = toNum(cols[iCvr]);
-    const prevS    = toNum(cols[iPrevS]);
-    const prevCvrR = toNum(cols[iPrevCvr]);
-
-    const currS    = sessions != null ? sessions : 0;
-    const currC    = normCvr(cvrRaw) ?? 0;
-    const prevSess = prevS != null ? Math.round(prevS) : 0;
-    const prevCvr  = normCvr(prevCvrR) ?? 0;
+    const currS   = parseInt(col(row, iSess), 10) || 0;
+    const currC   = normCvr(parseFloat(col(row, iCvr)))   ?? 0;
+    const prevSess = Math.round(parseFloat(col(row, iPrevS))  || 0);
+    const prevCvr  = normCvr(parseFloat(col(row, iPrevCvr))) ?? 0;
 
     rows.push({ source, lp, channel: classifySource(source), currS, currC, prevSess, prevCvr });
   }
 
-  if (rows.length === 0) throw new Error('No valid rows found.');
+  if (rows.length === 0) throw new Error('No session data returned for this date range.');
   return rows;
 }
 
@@ -772,7 +787,7 @@ function render(rawRows, filename) {
 
   // Top bar
   document.getElementById('top-bar-info').innerHTML =
-    `<strong>${esc(filename)}</strong> &nbsp;·&nbsp; ${rows.length} utm_source rows &nbsp;·&nbsp; ${channels.length} channel groups`;
+    `<strong>${esc(filename)}</strong> &nbsp;·&nbsp; ${rows.length} utm_source / landing page rows &nbsp;·&nbsp; ${channels.length} channel groups`;
 
   // Overall Summary KPIs
   const sessDelta = tCurrS - tPrevS;
@@ -1116,40 +1131,53 @@ function renderDrillDown(container, source, tDelta, tPrevConv) {
 // ─────────────────────────────────────────────
 // EVENT WIRING
 // ─────────────────────────────────────────────
-function handleFile(file) {
+async function runAnalysis(since, until) {
   const errEl = document.getElementById('upload-error');
+  const btn   = document.getElementById('btn-run');
   errEl.className = 'upload-error';
-  const reader = new FileReader();
-  reader.onload = e => {
-    try {
-      const rows = parseCSV(e.target.result);
-      render(rows, file.name);
-    } catch (err) {
-      errEl.textContent = err.message;
-      errEl.className = 'upload-error show';
-    }
-  };
-  reader.readAsText(file);
+  btn.disabled = true;
+  btn.textContent = 'Loading…';
+
+  try {
+    const resp = await fetch(`/api/conversion-analysis?since=${encodeURIComponent(since)}&until=${encodeURIComponent(until)}`);
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || `Server error ${resp.status}`);
+    const rows = parseAPIResponse(data);
+    render(rows, `${since} → ${until}`);
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.className = 'upload-error show';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Run Analysis';
+  }
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  const input  = document.getElementById('csv-input');
-  const zone   = document.getElementById('upload-zone');
+  // Default dates: last 7 complete days (8 days ago → yesterday)
+  const today = new Date();
+  const fmt = d => d.toISOString().slice(0, 10);
+  const yesterday  = new Date(today); yesterday.setDate(today.getDate() - 1);
+  const weekAgo    = new Date(today); weekAgo.setDate(today.getDate() - 8);
 
-  input.addEventListener('change', e => { if (e.target.files[0]) handleFile(e.target.files[0]); });
+  const sinceEl = document.getElementById('date-since');
+  const untilEl = document.getElementById('date-until');
+  sinceEl.value = fmt(weekAgo);
+  untilEl.value = fmt(yesterday);
+  // Don't allow future dates
+  sinceEl.max = untilEl.max = fmt(yesterday);
 
-  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
-  zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
-  zone.addEventListener('drop', e => {
-    e.preventDefault();
-    zone.classList.remove('drag-over');
-    if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+  document.getElementById('btn-run').addEventListener('click', () => {
+    const since = sinceEl.value;
+    const until = untilEl.value;
+    if (!since || !until) { document.getElementById('upload-error').textContent = 'Please select both dates.'; document.getElementById('upload-error').className = 'upload-error show'; return; }
+    if (since > until) { document.getElementById('upload-error').textContent = '"From" date must be before "To" date.'; document.getElementById('upload-error').className = 'upload-error show'; return; }
+    runAnalysis(since, until);
   });
 
   document.getElementById('btn-reset').addEventListener('click', () => {
     document.getElementById('results-screen').style.display = 'none';
     document.getElementById('upload-screen').style.display = 'block';
-    input.value = '';
   });
 
   document.getElementById('btn-raw-toggle').addEventListener('click', function() {
