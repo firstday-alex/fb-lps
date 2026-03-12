@@ -320,11 +320,20 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
           const isVideo = !!storySpec.video_data;
 
           // Detect partnership/branded content ads
-          const isPartnershipAd = !!(
+          // Check object_story_spec fields
+          let isPartnershipAd = !!(
             storySpec.link_data?.branded_content_sponsor_page_id
             || storySpec.video_data?.branded_content_sponsor_page_id
             || storySpec.photo_data?.branded_content_sponsor_page_id
           );
+
+          // Also check ad name conventions for partnership indicators
+          if (!isPartnershipAd && ad.ad_name) {
+            const nameLower = ad.ad_name.toLowerCase();
+            isPartnershipAd = nameLower.includes('ext-creator')
+              || nameLower.includes('creator_wl:external')
+              || nameLower.includes('notes:ext-');
+          }
 
           // Log raw data for ads missing destination URL
           if (!destinationUrl) {
