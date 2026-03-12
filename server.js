@@ -263,11 +263,15 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
 
                 if (attachData.data?.[0]) {
                   const att = attachData.data[0];
-                  destinationUrl = att.unshimmed_url || att.url || att.target?.url || null;
+                  let candidateUrl = att.unshimmed_url || att.url || att.target?.url || null;
                   // Check subattachments if main has no URL
-                  if (!destinationUrl && att.subattachments?.data?.[0]) {
+                  if (!candidateUrl && att.subattachments?.data?.[0]) {
                     const sub = att.subattachments.data[0];
-                    destinationUrl = sub.unshimmed_url || sub.url || sub.target?.url || null;
+                    candidateUrl = sub.unshimmed_url || sub.url || sub.target?.url || null;
+                  }
+                  // Only use if it's an external URL (not a facebook.com post/reel link)
+                  if (candidateUrl && !candidateUrl.includes('facebook.com/') && !candidateUrl.includes('fb.com/')) {
+                    destinationUrl = candidateUrl;
                   }
                 }
               } catch (e) {}
@@ -330,9 +334,11 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
           // Also check ad name conventions for partnership indicators
           if (!isPartnershipAd && ad.ad_name) {
             const nameLower = ad.ad_name.toLowerCase();
-            isPartnershipAd = nameLower.includes('ext-creator')
-              || nameLower.includes('creator_wl:external')
-              || nameLower.includes('notes:ext-');
+            isPartnershipAd = nameLower.includes('creator_wl:ext')
+              || nameLower.includes('notes:ext-')
+              || nameLower.includes('editor:ext-')
+              || nameLower.includes(':ext-')
+              || /\bext[-_]creator\b/.test(nameLower);
           }
 
           // Log raw data for ads missing destination URL
