@@ -326,7 +326,7 @@
     /* Contributors sticky header */
     .contrib-header {
       display: grid;
-      grid-template-columns: 210px 52px 52px 1fr 90px 80px 20px;
+      grid-template-columns: 210px 52px 52px 52px 1fr 90px 80px 20px;
       gap: 10px;
       padding: 6px 4px;
       font-size: 0.68rem;
@@ -347,7 +347,7 @@
     .source-wrap:last-child { border-bottom: none; }
     .source-row {
       display: grid;
-      grid-template-columns: 210px 52px 52px 1fr 90px 80px 20px;
+      grid-template-columns: 210px 52px 52px 52px 1fr 90px 80px 20px;
       align-items: center;
       gap: 10px;
       padding: 11px 4px;
@@ -470,6 +470,7 @@
         <div>Source</div>
         <div class="r">Sessions</div>
         <div class="r">CVR</div>
+        <div class="r">Txns</div>
         <div>Impact</div>
         <div class="r">Net Txns</div>
         <div class="r">% of Δ</div>
@@ -604,6 +605,11 @@ function parseCSV(text) {
     const source = lastSource;
 
     const lp       = hasLp ? cleanVal(cols[iLp]) : '';
+
+    // Skip post-conversion pages — Shopify includes these as "landing pages" but they
+    // are visited after checkout, not before. CVR is always ~100% and they are noise.
+    if (/^\/(checkout|checkouts|orders|payment-methods|gift_cards)(\/|$)/i.test(lp)) continue;
+
     const sessions = toInt(cols[iSess]);
     const cvrRaw   = toNum(cols[iCvr]);
     const prevS    = toNum(cols[iPrevS]);
@@ -917,6 +923,7 @@ function render(rawRows, filename) {
       </div>
       <div class="contrib-stat"><strong>${esc(fmtK(g.currS))}</strong>sess</div>
       <div class="contrib-stat"><strong>${(g.currC*100).toFixed(2)}%</strong>CVR</div>
+      <div class="contrib-stat"><strong>${esc(fmtK(Math.round(g.currS * g.currC)))}</strong>txns</div>
       <div>
         <div class="contrib-bar-wrap">
           <div class="contrib-bar" style="width:${barPct}%;background:${netColor}"></div>
