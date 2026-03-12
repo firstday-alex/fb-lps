@@ -52,12 +52,18 @@ header h1 { font-size: 1.25rem; }
   gap: 12px;
   align-items: center;
 }
-#account-select {
+#account-select, #date-range {
   padding: 8px 12px;
   border: 1px solid #ccc;
   border-radius: 6px;
   font-size: 0.9rem;
-  min-width: 300px;
+}
+#account-select { min-width: 300px; }
+#date-start, #date-end {
+  padding: 8px 12px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 0.9rem;
 }
 
 /* Ads Grid */

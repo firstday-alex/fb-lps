@@ -2,6 +2,24 @@ document.addEventListener('DOMContentLoaded', () => {
   checkAuthStatus();
   checkForErrors();
   document.getElementById('load-ads-btn').addEventListener('click', loadTopAds);
+
+  // Toggle custom date inputs
+  const dateRange = document.getElementById('date-range');
+  const dateStart = document.getElementById('date-start');
+  const dateEnd = document.getElementById('date-end');
+
+  // Default custom dates to last 7 days
+  const today = new Date();
+  const weekAgo = new Date(today);
+  weekAgo.setDate(weekAgo.getDate() - 7);
+  dateEnd.value = today.toISOString().split('T')[0];
+  dateStart.value = weekAgo.toISOString().split('T')[0];
+
+  dateRange.addEventListener('change', () => {
+    const isCustom = dateRange.value === 'custom';
+    dateStart.classList.toggle('hidden', !isCustom);
+    dateEnd.classList.toggle('hidden', !isCustom);
+  });
 });
 
 // --- Auth ---
@@ -75,8 +93,25 @@ async function loadTopAds() {
   document.getElementById('empty-state').classList.add('hidden');
 
   try {
+    // Build date range params
+    const dateRange = document.getElementById('date-range').value;
+    let adsDateParam = '';
+    let shopifyDays = 1;
+
+    if (dateRange === 'custom') {
+      const since = document.getElementById('date-start').value;
+      const until = document.getElementById('date-end').value;
+      if (!since || !until) { showError('Please select start and end dates.'); return; }
+      adsDateParam = `&since=${since}&until=${until}`;
+      shopifyDays = Math.ceil((new Date(until) - new Date(since)) / (1000 * 60 * 60 * 24)) + 1;
+    } else {
+      adsDateParam = `&date_preset=${dateRange}`;
+      const daysMap = { yesterday: 1, last_3d: 3, last_7d: 7, last_14d: 14, last_30d: 30 };
+      shopifyDays = daysMap[dateRange] || 1;
+    }
+
     // Fetch ads first
-    const adsRes = await fetch(`/api/top-ads?account_id=${encodeURIComponent(accountId)}`);
+    const adsRes = await fetch(`/api/top-ads?account_id=${encodeURIComponent(accountId)}${adsDateParam}`);
     if (adsRes.status === 401) { checkAuthStatus(); return; }
 
     const adsData = await adsRes.json();
@@ -91,7 +126,7 @@ async function loadTopAds() {
     const adList = adsData.ads.map(a => ({ ad_name: a.ad_name, destination_url: a.destination_url }));
     let metricsData = null;
     try {
-      const metricsRes = await fetch('/api/shopify-metrics?days=1&ads=' + encodeURIComponent(JSON.stringify(adList)));
+      const metricsRes = await fetch(`/api/shopify-metrics?days=${shopifyDays}&ads=` + encodeURIComponent(JSON.stringify(adList)));
       if (metricsRes.ok) metricsData = await metricsRes.json();
     } catch {}
 
@@ -113,6 +148,15 @@ function matchMetrics(ad, metricsData) {
 function formatPct(val) {
   if (val === null || val === undefined) return '-';
   return (val * 100).toFixed(1) + '%';
+}
+
+function getDateRangeLabel() {
+  const dateRange = document.getElementById('date-range').value;
+  const labels = { yesterday: 'Yesterday', last_3d: 'Last 3 Days', last_7d: 'Last 7 Days', last_14d: 'Last 14 Days', last_30d: 'Last 30 Days' };
+  if (dateRange === 'custom') {
+    return `${document.getElementById('date-start').value} to ${document.getElementById('date-end').value}`;
+  }
+  return labels[dateRange] || dateRange;
 }
 
 function renderAds(ads, metricsData) {
@@ -142,7 +186,7 @@ function renderAds(ads, metricsData) {
     const metrics = matchMetrics(ad, metricsData);
     const funnelHtml = metrics ? `
       <div class="ad-card__funnel">
-        <div class="funnel-title">Shopify Funnel (Yesterday)</div>
+        <div class="funnel-title">Shopify Funnel (${getDateRangeLabel()})</div>
         <div class="funnel-metrics">
           <div class="funnel-metric">
             <span class="funnel-value">${formatNumber(metrics.sessions)}</span>

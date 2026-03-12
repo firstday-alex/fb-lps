@@ -180,17 +180,26 @@ app.get('/api/ad-accounts', requireAuth, async (req, res) => {
 });
 
 app.get('/api/top-ads', requireAuth, async (req, res) => {
-  const { account_id } = req.query;
+  const { account_id, date_preset, since, until } = req.query;
 
   if (!account_id) {
     return res.status(400).json({ error: 'account_id is required' });
   }
 
   try {
-    // Step 1: Get top 10 ads by spend yesterday
+    // Step 1: Get top 10 ads by spend for the given date range
+    let dateParams;
+    if (since && until) {
+      // Custom date range
+      dateParams = `&time_range={"since":"${since}","until":"${until}"}`;
+    } else {
+      // Preset (yesterday, last_3d, last_7d, last_14d, last_30d)
+      dateParams = `&date_preset=${date_preset || 'yesterday'}`;
+    }
+
     const insightsUrl = `${META_BASE_URL}/${account_id}/insights`
       + `?fields=ad_id,ad_name,spend,impressions,clicks`
-      + `&date_preset=yesterday`
+      + dateParams
       + `&level=ad`
       + `&sort=spend_descending`
       + `&limit=10`
