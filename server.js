@@ -360,7 +360,7 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
           // Fallback 3: Try extracting destination from ad name URL slug
           // Ad names often contain url:slug-name or _url:slug-name patterns
           if (!destinationUrl && ad.ad_name) {
-            const urlSlugMatch = ad.ad_name.match(/[_-]url[:_]([a-zA-Z0-9-]+(?:-lp)?)/i);
+            const urlSlugMatch = ad.ad_name.match(/(?:^|[_:-])url[:_]([a-zA-Z0-9-]+)/i);
             if (urlSlugMatch) {
               const slug = urlSlugMatch[1];
               // Map known domains based on ad name brand prefix
