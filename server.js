@@ -14,6 +14,10 @@ const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
 const REDIRECT_URI = `${BASE_URL}/auth/facebook/callback`;
 const COOKIE_SECRET = process.env.SESSION_SECRET || 'fallback-secret-change-me-32chars!';
 
+const SHOPIFY_URL = (process.env.SHOPIFY_URL || '').replace('https://', '').replace(/\/$/, '');
+const SHOPIFY_TOKEN = process.env.SHOPIFY_TOKEN;
+const SHOPIFY_API_VERSION = '2025-10';
+
 // --- Token encryption (for storing in cookie) ---
 
 const ALGORITHM = 'aes-256-gcm';
@@ -608,6 +612,138 @@ app.get('/api/debug-ad', requireAuth, async (req, res) => {
     res.json({ adData, creativeDirectData, storyId, postData, extractedUrl });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Shopify Metrics endpoint ---
+
+app.get('/api/shopify-metrics', requireAuth, async (req, res) => {
+  if (!SHOPIFY_URL || !SHOPIFY_TOKEN) {
+    return res.status(500).json({ error: 'Shopify credentials not configured' });
+  }
+
+  const { days = '1' } = req.query;
+  const numDays = Math.min(Math.max(parseInt(days) || 1, 1), 90);
+
+  const shopifyql = `
+    FROM sessions
+      SHOW sessions, conversion_rate, bounce_rate, added_to_cart_rate,
+        reached_checkout_rate, completed_checkout_rate, sessions_that_completed_checkout
+      WHERE (utm_source CONTAINS 'facebook'
+        AND landing_page_path NOT CONTAINS 'checkout'
+        AND landing_page_path NOT CONTAINS 'retextion'
+        AND landing_page_path NOT CONTAINS 'account'
+        AND landing_page_path NOT CONTAINS 'order')
+      GROUP BY day, landing_page_path
+      TIMESERIES day
+      SINCE startOfDay(-${numDays}d) UNTIL endOfDay(-1d)
+      ORDER BY day ASC, sessions DESC
+  `;
+
+  try {
+    const endpoint = `https://${SHOPIFY_URL}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
+    const gqlQuery = `query RunShopifyQL($q: String!) {
+      shopifyqlQuery(query: $q) {
+        tableData { columns { name } rows }
+        parseErrors
+      }
+    }`;
+
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Shopify-Access-Token': SHOPIFY_TOKEN,
+      },
+      body: JSON.stringify({ query: gqlQuery, variables: { q: shopifyql } }),
+    });
+
+    const json = await response.json();
+
+    if (json.errors?.length) {
+      return res.status(400).json({ error: 'GraphQL errors', details: json.errors });
+    }
+
+    const payload = json.data?.shopifyqlQuery;
+    if (!payload) {
+      return res.status(500).json({ error: 'Missing shopifyqlQuery in response' });
+    }
+
+    if (payload.parseErrors?.length) {
+      return res.status(400).json({ error: 'ShopifyQL parse errors', details: payload.parseErrors });
+    }
+
+    const columns = payload.tableData?.columns?.map(c => c.name) || [];
+    const rows = payload.tableData?.rows || [];
+
+    // Transform rows into objects
+    const data = rows.map(row => {
+      const obj = {};
+      columns.forEach(col => { obj[col] = row[col] ?? null; });
+      return obj;
+    });
+
+    // Group by landing_page_path, aggregate across days
+    const byPath = {};
+    for (const row of data) {
+      const path = row.landing_page_path || '(unknown)';
+      if (!byPath[path]) {
+        byPath[path] = {
+          landing_page_path: path,
+          sessions: 0,
+          sessions_that_completed_checkout: 0,
+          // weighted averages - accumulate for later calc
+          _bounce_sum: 0,
+          _atc_sum: 0,
+          _checkout_sum: 0,
+          _completed_sum: 0,
+          _cvr_sum: 0,
+          days: [],
+        };
+      }
+      const s = parseFloat(row.sessions) || 0;
+      byPath[path].sessions += s;
+      byPath[path].sessions_that_completed_checkout += parseFloat(row.sessions_that_completed_checkout) || 0;
+      byPath[path]._bounce_sum += (parseFloat(row.bounce_rate) || 0) * s;
+      byPath[path]._atc_sum += (parseFloat(row.added_to_cart_rate) || 0) * s;
+      byPath[path]._checkout_sum += (parseFloat(row.reached_checkout_rate) || 0) * s;
+      byPath[path]._completed_sum += (parseFloat(row.completed_checkout_rate) || 0) * s;
+      byPath[path]._cvr_sum += (parseFloat(row.conversion_rate) || 0) * s;
+      byPath[path].days.push({
+        day: row.day,
+        sessions: s,
+        conversion_rate: parseFloat(row.conversion_rate) || 0,
+        bounce_rate: parseFloat(row.bounce_rate) || 0,
+        added_to_cart_rate: parseFloat(row.added_to_cart_rate) || 0,
+        reached_checkout_rate: parseFloat(row.reached_checkout_rate) || 0,
+        completed_checkout_rate: parseFloat(row.completed_checkout_rate) || 0,
+        sessions_that_completed_checkout: parseFloat(row.sessions_that_completed_checkout) || 0,
+      });
+    }
+
+    // Compute weighted averages
+    const metrics = Object.values(byPath).map(p => {
+      const s = p.sessions || 1;
+      return {
+        landing_page_path: p.landing_page_path,
+        sessions: p.sessions,
+        sessions_that_completed_checkout: p.sessions_that_completed_checkout,
+        bounce_rate: +(p._bounce_sum / s).toFixed(4),
+        added_to_cart_rate: +(p._atc_sum / s).toFixed(4),
+        reached_checkout_rate: +(p._checkout_sum / s).toFixed(4),
+        completed_checkout_rate: +(p._completed_sum / s).toFixed(4),
+        conversion_rate: +(p._cvr_sum / s).toFixed(4),
+        days: p.days,
+      };
+    });
+
+    // Sort by sessions descending
+    metrics.sort((a, b) => b.sessions - a.sessions);
+
+    res.json({ metrics, days: numDays, raw_row_count: data.length });
+  } catch (err) {
+    console.error('Shopify metrics error:', err);
+    res.status(500).json({ error: 'Failed to fetch Shopify metrics' });
   }
 });
 

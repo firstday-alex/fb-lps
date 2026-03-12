@@ -173,6 +173,45 @@ header h1 { font-size: 1.25rem; }
   font-size: 0.85rem;
 }
 
+/* Funnel Metrics */
+.ad-card__funnel {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #eee;
+}
+.funnel-title {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #65676b;
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+.funnel-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+.funnel-metric {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4px;
+  background: #f8f9fa;
+  border-radius: 4px;
+}
+.funnel-value {
+  font-weight: 700;
+  font-size: 0.85rem;
+  color: #1c1e21;
+}
+.funnel-label {
+  font-size: 0.65rem;
+  color: #65676b;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
 /* Utility */
 .hidden { display: none !important; }
 

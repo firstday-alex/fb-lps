@@ -75,18 +75,34 @@ async function loadTopAds() {
   document.getElementById('empty-state').classList.add('hidden');
 
   try {
-    const res = await fetch(`/api/top-ads?account_id=${encodeURIComponent(accountId)}`);
-    if (res.status === 401) { checkAuthStatus(); return; }
+    // Fetch ads and Shopify metrics in parallel
+    const [adsRes, metricsRes] = await Promise.all([
+      fetch(`/api/top-ads?account_id=${encodeURIComponent(accountId)}`),
+      fetch('/api/shopify-metrics?days=1').catch(() => null),
+    ]);
 
-    const data = await res.json();
-    if (data.error) { showError(data.error); return; }
+    if (adsRes.status === 401) { checkAuthStatus(); return; }
 
-    if (!data.ads || data.ads.length === 0) {
+    const adsData = await adsRes.json();
+    if (adsData.error) { showError(adsData.error); return; }
+
+    if (!adsData.ads || adsData.ads.length === 0) {
       document.getElementById('empty-state').classList.remove('hidden');
       return;
     }
 
-    renderAds(data.ads);
+    // Build metrics lookup by landing page path
+    let metricsMap = {};
+    if (metricsRes && metricsRes.ok) {
+      const metricsData = await metricsRes.json();
+      if (metricsData.metrics) {
+        metricsData.metrics.forEach(m => {
+          metricsMap[m.landing_page_path] = m;
+        });
+      }
+    }
+
+    renderAds(adsData.ads, metricsMap);
   } catch {
     showError('Failed to fetch ads. Please try again.');
   } finally {
@@ -96,7 +112,35 @@ async function loadTopAds() {
 
 // --- Rendering ---
 
-function renderAds(ads) {
+function matchMetrics(destinationUrl, metricsMap) {
+  if (!destinationUrl || !Object.keys(metricsMap).length) return null;
+
+  try {
+    const parsed = new URL(destinationUrl);
+    const path = parsed.pathname;
+
+    // Exact match
+    if (metricsMap[path]) return metricsMap[path];
+
+    // Try with/without trailing slash
+    const alt = path.endsWith('/') ? path.slice(0, -1) : path + '/';
+    if (metricsMap[alt]) return metricsMap[alt];
+
+    // Partial match: find paths that contain the destination slug
+    for (const [key, val] of Object.entries(metricsMap)) {
+      if (key.includes(path) || path.includes(key)) return val;
+    }
+  } catch {}
+
+  return null;
+}
+
+function formatPct(val) {
+  if (val === null || val === undefined) return '-';
+  return (val * 100).toFixed(1) + '%';
+}
+
+function renderAds(ads, metricsMap) {
   const grid = document.getElementById('ads-grid');
   grid.innerHTML = '';
 
@@ -119,6 +163,40 @@ function renderAds(ads) {
       ? `<a href="${escapeHtml(ad.destination_url)}" target="_blank" rel="noopener noreferrer">${truncateUrl(ad.destination_url)}</a>`
       : '<span class="no-url">No destination URL</span>';
 
+    // Match Shopify funnel metrics to this ad's destination URL
+    const metrics = matchMetrics(ad.destination_url, metricsMap);
+    const funnelHtml = metrics ? `
+      <div class="ad-card__funnel">
+        <div class="funnel-title">Shopify Funnel (Yesterday)</div>
+        <div class="funnel-metrics">
+          <div class="funnel-metric">
+            <span class="funnel-value">${formatNumber(metrics.sessions)}</span>
+            <span class="funnel-label">Sessions</span>
+          </div>
+          <div class="funnel-metric">
+            <span class="funnel-value">${formatPct(metrics.bounce_rate)}</span>
+            <span class="funnel-label">Bounce</span>
+          </div>
+          <div class="funnel-metric">
+            <span class="funnel-value">${formatPct(metrics.added_to_cart_rate)}</span>
+            <span class="funnel-label">ATC</span>
+          </div>
+          <div class="funnel-metric">
+            <span class="funnel-value">${formatPct(metrics.reached_checkout_rate)}</span>
+            <span class="funnel-label">Checkout</span>
+          </div>
+          <div class="funnel-metric">
+            <span class="funnel-value">${formatPct(metrics.conversion_rate)}</span>
+            <span class="funnel-label">CVR</span>
+          </div>
+          <div class="funnel-metric">
+            <span class="funnel-value">${metrics.sessions_that_completed_checkout}</span>
+            <span class="funnel-label">Orders</span>
+          </div>
+        </div>
+      </div>
+    ` : '';
+
     card.innerHTML = `
       <div class="ad-card__image-container">
         ${imageHtml}
@@ -134,6 +212,7 @@ function renderAds(ads) {
           Clicks: <span>${formatNumber(ad.clicks)}</span>
         </div>
         <div class="ad-card__url">${destinationHtml}</div>
+        ${funnelHtml}
       </div>
     `;
 
