@@ -625,7 +625,6 @@ app.get('/api/shopify-metrics', requireAuth, async (req, res) => {
   const { days = '1', ads } = req.query;
   const numDays = Math.min(Math.max(parseInt(days) || 1, 1), 90);
 
-  // Parse ads JSON: array of { ad_name, landing_page_path }
   let adList = [];
   try {
     if (ads) adList = JSON.parse(ads);
@@ -633,191 +632,99 @@ app.get('/api/shopify-metrics', requireAuth, async (req, res) => {
     return res.status(400).json({ error: 'Invalid ads JSON' });
   }
 
+  if (!adList.length) {
+    return res.json({ by_ad: {}, days: numDays });
+  }
+
+  const endpoint = `https://${SHOPIFY_URL}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
+  const gqlQuery = `query RunShopifyQL($q: String!) {
+    shopifyqlQuery(query: $q) {
+      tableData { columns { name } rows }
+      parseErrors
+    }
+  }`;
+
   try {
-    const endpoint = `https://${SHOPIFY_URL}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
-    const gqlQuery = `query RunShopifyQL($q: String!) {
-      shopifyqlQuery(query: $q) {
-        tableData { columns { name } rows }
-        parseErrors
-      }
-    }`;
-
-    // Query Shopify grouped by utm_content (ad name) and landing_page_path
-    const shopifyql = `
-      FROM sessions
-        SHOW sessions, conversion_rate, bounce_rate, added_to_cart_rate,
-          reached_checkout_rate, completed_checkout_rate, sessions_that_completed_checkout
-        WHERE (utm_source CONTAINS 'facebook'
-          AND landing_page_path NOT CONTAINS 'checkout'
-          AND landing_page_path NOT CONTAINS 'retextion'
-          AND landing_page_path NOT CONTAINS 'account'
-          AND landing_page_path NOT CONTAINS 'order')
-        GROUP BY day, landing_page_path, utm_campaign_content
-        TIMESERIES day
-        SINCE startOfDay(-${numDays}d) UNTIL endOfDay(-1d)
-        ORDER BY day ASC, sessions DESC
-    `;
-
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Shopify-Access-Token': SHOPIFY_TOKEN,
-      },
-      body: JSON.stringify({ query: gqlQuery, variables: { q: shopifyql } }),
-    });
-
-    const json = await response.json();
-
-    if (json.errors?.length) {
-      return res.status(400).json({ error: 'GraphQL errors', details: json.errors });
-    }
-
-    const payload = json.data?.shopifyqlQuery;
-    if (!payload) {
-      return res.status(500).json({ error: 'Missing shopifyqlQuery in response' });
-    }
-
-    if (payload.parseErrors?.length) {
-      return res.status(400).json({ error: 'ShopifyQL parse errors', details: payload.parseErrors });
-    }
-
-    const columns = payload.tableData?.columns?.map(c => c.name) || [];
-    const rows = payload.tableData?.rows || [];
-
-    // Transform rows into objects
-    const data = rows.map(row => {
-      const obj = {};
-      columns.forEach(col => { obj[col] = row[col] ?? null; });
-      return obj;
-    });
-
-    // Group by ad_name (utm_campaign_content) + landing_page_path
-    const byAdAndPath = {};
-    for (const row of data) {
-      const utmContent = row.utm_campaign_content || '';
-      const path = row.landing_page_path || '(unknown)';
-      const key = `${utmContent}|||${path}`;
-
-      if (!byAdAndPath[key]) {
-        byAdAndPath[key] = {
-          utm_content: utmContent,
-          landing_page_path: path,
-          sessions: 0,
-          sessions_that_completed_checkout: 0,
-          _bounce_sum: 0,
-          _atc_sum: 0,
-          _checkout_sum: 0,
-          _completed_sum: 0,
-          _cvr_sum: 0,
-        };
-      }
-      const s = parseFloat(row.sessions) || 0;
-      const entry = byAdAndPath[key];
-      entry.sessions += s;
-      entry.sessions_that_completed_checkout += parseFloat(row.sessions_that_completed_checkout) || 0;
-      entry._bounce_sum += (parseFloat(row.bounce_rate) || 0) * s;
-      entry._atc_sum += (parseFloat(row.added_to_cart_rate) || 0) * s;
-      entry._checkout_sum += (parseFloat(row.reached_checkout_rate) || 0) * s;
-      entry._completed_sum += (parseFloat(row.completed_checkout_rate) || 0) * s;
-      entry._cvr_sum += (parseFloat(row.conversion_rate) || 0) * s;
-    }
-
-    // Build metrics for each ad by matching utm_content to ad_name and landing_page_path
+    // Run one ShopifyQL query per ad, filtered by utm_content = ad_name
     const results = {};
 
-    for (const ad of adList) {
+    await Promise.all(adList.map(async (ad) => {
       const adName = ad.ad_name || '';
-      let lpPath = '';
-      if (ad.destination_url) {
-        try { lpPath = new URL(ad.destination_url).pathname; } catch {}
-      }
+      if (!adName) return;
 
-      // Find best match: exact ad name + landing page path
-      let bestMatch = null;
-      let bestSessions = 0;
+      // Escape single quotes in ad name for ShopifyQL
+      const escapedName = adName.replace(/'/g, "\\'");
 
-      for (const entry of Object.values(byAdAndPath)) {
-        // Match by utm_content containing the ad name (or ad name containing utm_content)
-        const contentMatch = entry.utm_content && adName &&
-          (entry.utm_content === adName || adName.includes(entry.utm_content) || entry.utm_content.includes(adName));
+      const shopifyql = `
+        FROM sessions
+          SHOW sessions, conversion_rate, bounce_rate, added_to_cart_rate,
+            reached_checkout_rate, completed_checkout_rate, sessions_that_completed_checkout
+          WHERE (utm_source CONTAINS 'facebook'
+            AND utm_content = '${escapedName}'
+            AND landing_page_path NOT CONTAINS 'checkout'
+            AND landing_page_path NOT CONTAINS 'retextion'
+            AND landing_page_path NOT CONTAINS 'account'
+            AND landing_page_path NOT CONTAINS 'order')
+          GROUP BY landing_page_path
+          SINCE startOfDay(-${numDays}d) UNTIL endOfDay(-1d)
+          ORDER BY sessions DESC
+      `;
 
-        // Match by landing page path
-        const pathMatch = lpPath && entry.landing_page_path &&
-          (entry.landing_page_path === lpPath
-            || entry.landing_page_path === lpPath.replace(/\/$/, '')
-            || entry.landing_page_path + '/' === lpPath);
+      try {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Shopify-Access-Token': SHOPIFY_TOKEN,
+          },
+          body: JSON.stringify({ query: gqlQuery, variables: { q: shopifyql } }),
+        });
 
-        if (contentMatch && pathMatch && entry.sessions > bestSessions) {
-          bestMatch = entry;
-          bestSessions = entry.sessions;
+        const json = await response.json();
+        const payload = json.data?.shopifyqlQuery;
+        if (!payload?.tableData) return;
+
+        const columns = payload.tableData.columns?.map(c => c.name) || [];
+        const rows = payload.tableData.rows || [];
+        if (!rows.length) return;
+
+        // Aggregate all rows for this ad
+        let totalSessions = 0;
+        let totalOrders = 0;
+        let bounceSumW = 0, atcSumW = 0, checkoutSumW = 0, completedSumW = 0, cvrSumW = 0;
+        let topPath = '';
+
+        for (const row of rows) {
+          const s = parseFloat(row.sessions) || 0;
+          totalSessions += s;
+          totalOrders += parseFloat(row.sessions_that_completed_checkout) || 0;
+          bounceSumW += (parseFloat(row.bounce_rate) || 0) * s;
+          atcSumW += (parseFloat(row.added_to_cart_rate) || 0) * s;
+          checkoutSumW += (parseFloat(row.reached_checkout_rate) || 0) * s;
+          completedSumW += (parseFloat(row.completed_checkout_rate) || 0) * s;
+          cvrSumW += (parseFloat(row.conversion_rate) || 0) * s;
+          if (!topPath) topPath = row.landing_page_path || '';
         }
-      }
 
-      // Fallback: match by landing page path only if no ad name match
-      if (!bestMatch && lpPath) {
-        for (const entry of Object.values(byAdAndPath)) {
-          const pathMatch = entry.landing_page_path === lpPath
-            || entry.landing_page_path === lpPath.replace(/\/$/, '')
-            || entry.landing_page_path + '/' === lpPath;
-
-          if (pathMatch && entry.sessions > bestSessions) {
-            bestMatch = entry;
-            bestSessions = entry.sessions;
-          }
+        if (totalSessions > 0) {
+          results[adName] = {
+            ad_name: adName,
+            landing_page_path: topPath,
+            sessions: totalSessions,
+            sessions_that_completed_checkout: totalOrders,
+            bounce_rate: +(bounceSumW / totalSessions).toFixed(4),
+            added_to_cart_rate: +(atcSumW / totalSessions).toFixed(4),
+            reached_checkout_rate: +(checkoutSumW / totalSessions).toFixed(4),
+            completed_checkout_rate: +(completedSumW / totalSessions).toFixed(4),
+            conversion_rate: +(cvrSumW / totalSessions).toFixed(4),
+          };
         }
+      } catch (e) {
+        console.error(`Shopify query failed for ad "${adName}":`, e.message);
       }
+    }));
 
-      if (bestMatch) {
-        const s = bestMatch.sessions || 1;
-        results[adName] = {
-          ad_name: adName,
-          landing_page_path: bestMatch.landing_page_path,
-          utm_content: bestMatch.utm_content,
-          sessions: bestMatch.sessions,
-          sessions_that_completed_checkout: bestMatch.sessions_that_completed_checkout,
-          bounce_rate: +(bestMatch._bounce_sum / s).toFixed(4),
-          added_to_cart_rate: +(bestMatch._atc_sum / s).toFixed(4),
-          reached_checkout_rate: +(bestMatch._checkout_sum / s).toFixed(4),
-          completed_checkout_rate: +(bestMatch._completed_sum / s).toFixed(4),
-          conversion_rate: +(bestMatch._cvr_sum / s).toFixed(4),
-        };
-      }
-    }
-
-    // Also return aggregated by landing_page_path for fallback matching
-    const byPath = {};
-    for (const entry of Object.values(byAdAndPath)) {
-      const path = entry.landing_page_path;
-      if (!byPath[path]) {
-        byPath[path] = { landing_page_path: path, sessions: 0, sessions_that_completed_checkout: 0,
-          _bounce_sum: 0, _atc_sum: 0, _checkout_sum: 0, _completed_sum: 0, _cvr_sum: 0 };
-      }
-      const p = byPath[path];
-      p.sessions += entry.sessions;
-      p.sessions_that_completed_checkout += entry.sessions_that_completed_checkout;
-      p._bounce_sum += entry._bounce_sum;
-      p._atc_sum += entry._atc_sum;
-      p._checkout_sum += entry._checkout_sum;
-      p._completed_sum += entry._completed_sum;
-      p._cvr_sum += entry._cvr_sum;
-    }
-    const pathMetrics = {};
-    for (const [path, p] of Object.entries(byPath)) {
-      const s = p.sessions || 1;
-      pathMetrics[path] = {
-        landing_page_path: path,
-        sessions: p.sessions,
-        sessions_that_completed_checkout: p.sessions_that_completed_checkout,
-        bounce_rate: +(p._bounce_sum / s).toFixed(4),
-        added_to_cart_rate: +(p._atc_sum / s).toFixed(4),
-        reached_checkout_rate: +(p._checkout_sum / s).toFixed(4),
-        completed_checkout_rate: +(p._completed_sum / s).toFixed(4),
-        conversion_rate: +(p._cvr_sum / s).toFixed(4),
-      };
-    }
-
-    res.json({ by_ad: results, by_path: pathMetrics, days: numDays, raw_row_count: data.length });
+    res.json({ by_ad: results, days: numDays });
   } catch (err) {
     console.error('Shopify metrics error:', err);
     res.status(500).json({ error: 'Failed to fetch Shopify metrics' });

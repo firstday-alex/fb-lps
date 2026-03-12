@@ -106,30 +106,8 @@ async function loadTopAds() {
 // --- Rendering ---
 
 function matchMetrics(ad, metricsData) {
-  if (!metricsData) return null;
-
-  // First try: match by ad name (most specific)
-  if (metricsData.by_ad && ad.ad_name && metricsData.by_ad[ad.ad_name]) {
-    return metricsData.by_ad[ad.ad_name];
-  }
-
-  // Fallback: match by landing page path
-  if (metricsData.by_path && ad.destination_url) {
-    try {
-      const path = new URL(ad.destination_url).pathname;
-      if (metricsData.by_path[path]) return metricsData.by_path[path];
-
-      const alt = path.endsWith('/') ? path.slice(0, -1) : path + '/';
-      if (metricsData.by_path[alt]) return metricsData.by_path[alt];
-
-      // Partial match
-      for (const [key, val] of Object.entries(metricsData.by_path)) {
-        if (key.includes(path) || path.includes(key)) return val;
-      }
-    } catch {}
-  }
-
-  return null;
+  if (!metricsData?.by_ad || !ad.ad_name) return null;
+  return metricsData.by_ad[ad.ad_name] || null;
 }
 
 function formatPct(val) {
