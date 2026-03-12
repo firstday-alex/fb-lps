@@ -848,10 +848,11 @@ function render(rawRows, filename) {
         : cls(c.value);
     const pctOfDelta = tDelta !== 0 ? (c.value / tDelta * 100) : 0;
 
-    // CVR vs average badge
-    const cvrVsAvg = c.prevCvr - c.blendedCvr;
+    // CVR vs average badge — compares current period source CVR vs current period blended avg
+    // (consistent with the CVR stat box which also shows current period)
+    const cvrVsAvg = c.currC - tCurrCvr;
     const cvrBadge = isFinite(cvrVsAvg) && Math.abs(cvrVsAvg) > 0.0001
-      ? `<span class="cvr-badge ${cvrVsAvg > 0 ? 'cvr-badge--hi' : 'cvr-badge--lo'}" title="Source CVR vs blended average">${cvrVsAvg > 0 ? '↑' : '↓'} ${Math.abs(cvrVsAvg*100).toFixed(2)}pp vs avg</span>`
+      ? `<span class="cvr-badge ${cvrVsAvg > 0 ? 'cvr-badge--hi' : 'cvr-badge--lo'}" title="Current CVR vs current blended average (${(tCurrCvr*100).toFixed(2)}%)">${cvrVsAvg > 0 ? '↑' : '↓'} ${Math.abs(cvrVsAvg*100).toFixed(2)}pp vs avg</span>`
       : '';
 
     const wrap = document.createElement('div');
