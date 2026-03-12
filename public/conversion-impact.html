@@ -621,12 +621,19 @@ function parseCSV(text) {
   return rows;
 }
 
+// Normalize blank/none/null sources to a canonical empty string so they merge into one Direct group
+function normSource(s) {
+  const t = (s || '').trim().toLowerCase();
+  return (t === '' || t === 'none' || t === 'null') ? '' : s;
+}
+
 // Aggregate raw rows by utm_source (summing sessions, weighted CVR)
 function aggregateBySource(rows) {
   const map = new Map();
   rows.forEach(r => {
-    let g = map.get(r.source);
-    if (!g) { g = { source: r.source, channel: r.channel, prevS: 0, currS: 0, prevWC: 0, currWC: 0 }; map.set(r.source, g); }
+    const key = normSource(r.source);
+    let g = map.get(key);
+    if (!g) { g = { source: key, channel: classifySource(key), prevS: 0, currS: 0, prevWC: 0, currWC: 0 }; map.set(key, g); }
     g.prevS  += r.prevSess;
     g.currS  += r.currS;
     g.prevWC += r.prevSess * r.prevCvr;
@@ -647,7 +654,7 @@ function aggregateBySource(rows) {
 function aggregateByLp(rows, source) {
   const map = new Map();
   rows.forEach(r => {
-    if (r.source !== source) return;
+    if (normSource(r.source) !== normSource(source)) return;
     const key = r.lp || '(no path)';
     let g = map.get(key);
     if (!g) { g = { lp: key, prevS: 0, currS: 0, prevWC: 0, currWC: 0 }; map.set(key, g); }
