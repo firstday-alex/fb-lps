@@ -227,9 +227,9 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
     const adsWithCreatives = await Promise.all(
       ads.map(async (ad) => {
         try {
-          // Fetch creative with multiple URL-related fields
+          // Fetch creative and ad-level fields for partnership detection
           const creativeUrl = `${META_BASE_URL}/${ad.ad_id}`
-            + `?fields=creative{id,name,thumbnail_url,image_url,object_story_spec,asset_feed_spec,link_url,effective_object_story_id}`
+            + `?fields=creative{id,name,thumbnail_url,image_url,object_story_spec,asset_feed_spec,link_url,effective_object_story_id},is_adset_using_partnership_ad`
             + `&${metaParams(req.accessToken)}`;
 
           const creativeResponse = await fetch(creativeUrl);
@@ -319,6 +319,14 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
 
           const isVideo = !!storySpec.video_data;
 
+          // Detect partnership/branded content ads
+          const isPartnershipAd = !!(
+            creativeData.is_adset_using_partnership_ad
+            || storySpec.link_data?.branded_content_sponsor_page_id
+            || storySpec.video_data?.branded_content_sponsor_page_id
+            || storySpec.photo_data?.branded_content_sponsor_page_id
+          );
+
           // Log raw data for ads missing destination URL
           if (!destinationUrl) {
             console.log(`\n=== Missing destination URL for ad ${ad.ad_id} ===`);
@@ -338,7 +346,8 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
             destination_url: destinationUrl,
             image_url: imageUrl,
             thumbnail_url: creative.thumbnail_url || null,
-            is_video: isVideo
+            is_video: isVideo,
+            is_partnership_ad: isPartnershipAd
           };
         } catch (creativeErr) {
           console.error(`Failed to fetch creative for ad ${ad.ad_id}:`, creativeErr);
@@ -351,11 +360,15 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
             destination_url: null,
             image_url: null,
             thumbnail_url: null,
-            is_video: false
+            is_video: false,
+            is_partnership_ad: false
           };
         }
       })
     );
+
+    // Sort by spend descending
+    adsWithCreatives.sort((a, b) => parseFloat(b.spend || 0) - parseFloat(a.spend || 0));
 
     res.json({ ads: adsWithCreatives });
   } catch (err) {

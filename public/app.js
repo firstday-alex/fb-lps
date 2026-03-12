@@ -113,6 +113,7 @@ function renderAds(ads) {
       : '<div class="ad-card__no-image">No image available</div>';
 
     const videoBadge = ad.is_video ? '<div class="ad-card__video-badge">VIDEO</div>' : '';
+    const partnershipBadge = ad.is_partnership_ad ? '<div class="ad-card__partnership-badge">PARTNERSHIP</div>' : '';
 
     const destinationHtml = ad.destination_url
       ? `<a href="${escapeHtml(ad.destination_url)}" target="_blank" rel="noopener noreferrer">${truncateUrl(ad.destination_url)}</a>`
@@ -122,6 +123,7 @@ function renderAds(ads) {
       <div class="ad-card__image-container">
         ${imageHtml}
         ${videoBadge}
+        ${partnershipBadge}
         <div class="ad-card__rank">${index + 1}</div>
       </div>
       <div class="ad-card__body">

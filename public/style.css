@@ -109,6 +109,19 @@ header h1 { font-size: 1.25rem; }
   font-size: 0.75rem;
   font-weight: 600;
 }
+.ad-card__partnership-badge {
+  position: absolute;
+  top: 8px; left: 8px;
+  background: rgba(106, 27, 154, 0.85);
+  color: white;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.ad-card__video-badge + .ad-card__partnership-badge {
+  top: 34px;
+}
 .ad-card__rank {
   position: absolute;
   top: 8px; right: 8px;
