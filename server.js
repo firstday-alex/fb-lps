@@ -398,18 +398,30 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
             destinationUrl = attachmentFallbackUrl;
           }
 
-          // Get the best quality image - strip Facebook's size parameters for full res
-          const rawImageUrl = creative.image_url
+          // Get the best quality image
+          let imageUrl = creative.image_url
             || storySpec?.link_data?.picture
-            || storySpec?.link_data?.image_hash
             || storySpec?.video_data?.image_url
             || creative.thumbnail_url
             || null;
 
-          // Strip low-res size params (p64x64, p100x100, etc.) from FB CDN URLs
-          const imageUrl = rawImageUrl
-            ? rawImageUrl.replace(/&stp=[^&]+/g, '').replace(/\?stp=[^&]+&/, '?')
-            : null;
+          // If still low-res, try fetching the creative directly for full-res image
+          if (imageUrl && imageUrl.includes('p64x64') && creative.id) {
+            try {
+              const hiResUrl = `${META_BASE_URL}/${creative.id}`
+                + `?fields=image_url,thumbnail_url`
+                + `&${metaParams(req.accessToken)}`;
+              const hiResResponse = await fetch(hiResUrl);
+              const hiResData = await hiResResponse.json();
+              if (hiResData.image_url) imageUrl = hiResData.image_url;
+              else if (hiResData.thumbnail_url) imageUrl = hiResData.thumbnail_url;
+            } catch (e) {}
+          }
+
+          // Upgrade low-res size params in FB CDN URLs (p64x64 -> p960x960)
+          if (imageUrl) {
+            imageUrl = imageUrl.replace(/p\d+x\d+/g, 'p960x960');
+          }
 
           const isVideo = !!storySpec.video_data;
 
@@ -804,6 +816,78 @@ function extractAssetFeedUrl(assetFeedSpec) {
   }
   return null;
 }
+
+// --- Conversion Impact Analysis (ShopifyQL) ---
+
+app.get('/api/conversion-analysis', async (req, res) => {
+  if (!SHOPIFY_URL || !SHOPIFY_TOKEN) {
+    return res.status(503).json({ error: 'Shopify credentials not configured on server.' });
+  }
+
+  const { since, until } = req.query;
+  if (!since || !until) {
+    return res.status(400).json({ error: 'Missing required params: since, until (YYYY-MM-DD).' });
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(since) || !/^\d{4}-\d{2}-\d{2}$/.test(until)) {
+    return res.status(400).json({ error: 'Dates must be YYYY-MM-DD format.' });
+  }
+  if (since > until) {
+    return res.status(400).json({ error: '"since" must be on or before "until".' });
+  }
+
+  const shopifyql = `
+    FROM sessions
+      SHOW sessions, conversion_rate
+      GROUP BY utm_source, landing_page_path WITH TOTALS
+      SINCE '${since}' UNTIL '${until}'
+      COMPARE TO previous_period
+      ORDER BY sessions__utm_source_totals DESC, sessions DESC,
+        utm_source ASC, landing_page_path ASC
+  `;
+
+  const endpoint = `https://${SHOPIFY_URL}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
+  const gqlQuery = `query RunShopifyQL($q: String!) {
+    shopifyqlQuery(query: $q) {
+      tableData { columns { name } rows }
+      parseErrors
+    }
+  }`;
+
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Shopify-Access-Token': SHOPIFY_TOKEN,
+      },
+      body: JSON.stringify({ query: gqlQuery, variables: { q: shopifyql } }),
+    });
+
+    if (!response.ok) {
+      return res.status(502).json({ error: `Shopify API returned ${response.status}` });
+    }
+
+    const json = await response.json();
+    const payload = json.data?.shopifyqlQuery;
+
+    if (payload?.parseErrors?.length) {
+      return res.status(400).json({ error: `ShopifyQL parse error: ${payload.parseErrors.join('; ')}` });
+    }
+    if (!payload?.tableData) {
+      return res.status(502).json({ error: 'No data returned from Shopify.' });
+    }
+
+    res.json({
+      columns: payload.tableData.columns,
+      rows: payload.tableData.rows,
+      since,
+      until,
+    });
+  } catch (err) {
+    console.error('Conversion analysis error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // --- Start server ---
 
