@@ -249,6 +249,7 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
             || null;
 
           // Fallback 1: Read the page post attachments using page access token
+          let attachmentFallbackUrl = null;
           if (!destinationUrl && creative.effective_object_story_id) {
             const pageId = creative.effective_object_story_id.split('_')[0];
             const pageToken = pageTokenMap[pageId];
@@ -264,21 +265,24 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
                 if (attachData.data?.[0]) {
                   const att = attachData.data[0];
                   let candidateUrl = att.unshimmed_url || att.url || att.target?.url || null;
-                  // Check subattachments if main has no URL
                   if (!candidateUrl && att.subattachments?.data?.[0]) {
                     const sub = att.subattachments.data[0];
                     candidateUrl = sub.unshimmed_url || sub.url || sub.target?.url || null;
                   }
-                  // Only use if it's an external URL (not a facebook.com post/reel link)
-                  if (candidateUrl && !candidateUrl.includes('facebook.com/') && !candidateUrl.includes('fb.com/')) {
-                    destinationUrl = candidateUrl;
+                  if (candidateUrl) {
+                    // Use external URLs directly, save facebook.com URLs as last resort
+                    if (!candidateUrl.includes('facebook.com/') && !candidateUrl.includes('fb.com/')) {
+                      destinationUrl = candidateUrl;
+                    } else {
+                      attachmentFallbackUrl = candidateUrl;
+                    }
                   }
                 }
               } catch (e) {}
             }
           }
 
-          // Fallback 2: Extract URL from ad preview iframe
+          // Fallback 2: Extract CTA URL from ad preview iframe
           if (!destinationUrl) {
             try {
               const previewUrl = `${META_BASE_URL}/${ad.ad_id}/previews`
@@ -303,7 +307,6 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
                   if (redirectUrls[0]) {
                     destinationUrl = redirectUrls[0];
                   } else {
-                    // Fall back to any external URL in the iframe
                     const urlMatches = iframeHtml.match(/href="(https?:\/\/[^"]+)"/g) || [];
                     const externalUrls = urlMatches
                       .map(m => m.match(/href="([^"]+)"/)[1])
@@ -314,6 +317,11 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
                 }
               }
             } catch (e) {}
+          }
+
+          // Fallback 3: Use the facebook.com attachment URL if nothing else worked
+          if (!destinationUrl && attachmentFallbackUrl) {
+            destinationUrl = attachmentFallbackUrl;
           }
 
           const imageUrl = creative.image_url
