@@ -242,7 +242,7 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
         try {
           // Fetch creative with multiple URL-related fields
           const creativeUrl = `${META_BASE_URL}/${ad.ad_id}`
-            + `?fields=creative{id,name,thumbnail_url,image_url,object_story_spec,asset_feed_spec,link_url,effective_object_story_id}`
+            + `?fields=creative{id,name,thumbnail_url,image_url,object_story_spec,asset_feed_spec,link_url,effective_object_story_id,url_tags,call_to_action}`
             + `&${metaParams(req.accessToken)}`;
 
           const creativeResponse = await fetch(creativeUrl);
@@ -259,13 +259,15 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
           let destinationUrl = extractDestinationUrl(storySpec)
             || extractAssetFeedUrl(assetFeed)
             || creative.link_url
+            || creative.call_to_action?.value?.link
+            || extractUrlTagsUrl(creative.url_tags)
             || null;
 
           // For partnership/post-based ads, fetch the creative directly for more fields
           if (!destinationUrl && creative.id) {
             try {
               const directCreativeUrl = `${META_BASE_URL}/${creative.id}`
-                + `?fields=link_url,object_url,object_story_spec`
+                + `?fields=link_url,object_url,object_story_spec,call_to_action`
                 + `&${metaParams(req.accessToken)}`;
               const directCreativeResponse = await fetch(directCreativeUrl);
               const directCreativeData = await directCreativeResponse.json();
@@ -274,6 +276,7 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
                 destinationUrl = directCreativeData.link_url
                   || directCreativeData.object_url
                   || extractDestinationUrl(directCreativeData.object_story_spec || {})
+                  || directCreativeData.call_to_action?.value?.link
                   || null;
               }
             } catch (e) {}
@@ -311,17 +314,17 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
             if (pageToken) {
               try {
                 const attachUrl = `${META_BASE_URL}/${creative.effective_object_story_id}/attachments`
-                  + `?fields=url,unshimmed_url,target,type,subattachments`
+                  + `?fields=url,unshimmed_url,url_unshimmed,target,type,subattachments{url,unshimmed_url,url_unshimmed,target}`
                   + `&access_token=${encodeURIComponent(pageToken)}&appsecret_proof=${generateAppSecretProof(pageToken)}`;
                 const attachResponse = await fetch(attachUrl);
                 const attachData = await attachResponse.json();
 
                 if (attachData.data?.[0]) {
                   const att = attachData.data[0];
-                  let candidateUrl = att.unshimmed_url || att.url || att.target?.url || null;
+                  let candidateUrl = att.unshimmed_url || att.url_unshimmed || att.url || att.target?.url || null;
                   if (!candidateUrl && att.subattachments?.data?.[0]) {
                     const sub = att.subattachments.data[0];
-                    candidateUrl = sub.unshimmed_url || sub.url || sub.target?.url || null;
+                    candidateUrl = sub.unshimmed_url || sub.url_unshimmed || sub.url || sub.target?.url || null;
                   }
                   if (candidateUrl) {
                     // Use external URLs directly, save facebook.com URLs as last resort
@@ -805,6 +808,21 @@ function extractDestinationUrl(storySpec) {
   if (storySpec.photo_data?.call_to_action?.value?.link) {
     return storySpec.photo_data.call_to_action.value.link;
   }
+  return null;
+}
+
+// Parse url_tags (UTM param string) for any parameter value that is a full URL.
+// e.g. url_tags = "utm_source=facebook&utm_content=https%3A%2F%2Ffirstday.com%2Fpages%2Ffoo"
+function extractUrlTagsUrl(urlTags) {
+  if (!urlTags) return null;
+  try {
+    const params = new URLSearchParams(urlTags);
+    for (const [, value] of params) {
+      if (value.startsWith('http://') || value.startsWith('https://')) {
+        try { new URL(value); return value; } catch {}
+      }
+    }
+  } catch (e) {}
   return null;
 }
 
