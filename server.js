@@ -270,7 +270,21 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
             } catch (e) {}
           }
 
-          // Fallback 1: Read the page post attachments using page access token
+          // Fallback 1: Extract destination from ad name URL slug (most reliable for partnership ads)
+          if (!destinationUrl && ad.ad_name) {
+            const urlSlugMatch = ad.ad_name.match(/(?:^|[_:-])url[:_]([a-zA-Z0-9-]+)/i);
+            if (urlSlugMatch) {
+              const slug = urlSlugMatch[1];
+              const brandMatch = ad.ad_name.match(/batch:(\w+)/);
+              const brand = brandMatch ? brandMatch[1].toLowerCase() : '';
+              const domain = brand === 'trmv' ? 'therearemanyversions.com' : 'firstday.com';
+              destinationUrl = slug.toUpperCase() === 'HOMEPAGE'
+                ? `https://${domain}/`
+                : `https://${domain}/pages/${slug}`;
+            }
+          }
+
+          // Fallback 2: Read the page post attachments using page access token
           let attachmentFallbackUrl = null;
           if (!destinationUrl && creative.effective_object_story_id) {
             const pageId = creative.effective_object_story_id.split('_')[0];
@@ -358,22 +372,6 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
                   }
                 }
               } catch (e) {}
-            }
-          }
-
-          // Fallback 3: Try extracting destination from ad name URL slug
-          // Ad names often contain url:slug-name or _url:slug-name patterns
-          if (!destinationUrl && ad.ad_name) {
-            const urlSlugMatch = ad.ad_name.match(/(?:^|[_:-])url[:_]([a-zA-Z0-9-]+)/i);
-            if (urlSlugMatch) {
-              const slug = urlSlugMatch[1];
-              // Map domain based on brand prefix (trmv -> therearemanyversions.com, everything else -> firstday.com)
-              const brandMatch = ad.ad_name.match(/batch:(\w+)/);
-              const brand = brandMatch ? brandMatch[1].toLowerCase() : '';
-              const domain = brand === 'trmv' ? 'therearemanyversions.com' : 'firstday.com';
-              destinationUrl = slug.toUpperCase() === 'HOMEPAGE'
-                ? `https://${domain}/`
-                : `https://${domain}/pages/${slug}`;
             }
           }
 
