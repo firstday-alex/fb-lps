@@ -623,9 +623,9 @@ function parseAPIResponse(data) {
     if (/^\/(checkout|checkouts|orders|payment-methods|gift_cards)(\/|$)/i.test(lp)) continue;
 
     const currS   = parseInt(row[colNames[iSess]], 10) || 0;
-    const currC   = normCvr(parseFloat(row[colNames[iCvr]]))    ?? 0;
+    const currC   = normCvr(parseFloat(row[colNames[iCvr]]))    || 0;
     const prevSess = Math.round(parseFloat(row[colNames[iPrevS]])  || 0);
-    const prevCvr  = normCvr(parseFloat(row[colNames[iPrevCvr]])) ?? 0;
+    const prevCvr  = normCvr(parseFloat(row[colNames[iPrevCvr]])) || 0;
 
     rows.push({ source, lp, channel: classifySource(source), currS, currC, prevSess, prevCvr });
   }
