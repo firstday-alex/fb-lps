@@ -172,7 +172,7 @@ function renderAds(ads, metricsData) {
       : (ad.image_url || ad.thumbnail_url);
 
     const imgTag = displayImage
-      ? `<img src="${escapeHtml(displayImage)}" alt="${escapeHtml(ad.ad_name)}" loading="lazy">`
+      ? `<img src="${escapeHtml(displayImage)}" alt="" loading="lazy" onerror="this.parentElement.innerHTML='<div class=ad-card__no-image>No image available</div>'">`
       : '<div class="ad-card__no-image">No image available</div>';
 
     const imageHtml = ad.preview_url && displayImage
