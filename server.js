@@ -839,10 +839,9 @@ app.get('/api/conversion-analysis', async (req, res) => {
     FROM sessions
       SHOW sessions, conversion_rate
       GROUP BY utm_source, landing_page_path WITH TOTALS
-      SINCE '${since}' UNTIL '${until}'
+      SINCE ${since} UNTIL ${until}
       COMPARE TO previous_period
-      ORDER BY sessions__utm_source_totals DESC, sessions DESC,
-        utm_source ASC, landing_page_path ASC
+      ORDER BY sessions DESC, utm_source ASC, landing_page_path ASC
   `;
 
   const endpoint = `https://${SHOPIFY_URL}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;

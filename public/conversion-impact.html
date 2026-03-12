@@ -593,47 +593,39 @@ function parseAPIResponse(data) {
 
   if (!colNames.length) throw new Error('No columns in Shopify response.');
 
-  // Locate columns — Shopify names them like sessions, conversion_rate,
-  // sessions__previous_period, conversion_rate__previous_period
-  const find = (fn) => colNames.findIndex(fn);
-  const iSrc     = find(n => n === 'utm_source');
-  const iLp      = find(n => n === 'landing_page_path');
-  const iSess    = find(n => n === 'sessions' && !n.includes('__'));
-  const iCvr     = find(n => n === 'conversion_rate' && !n.includes('__'));
-  const iPrevS   = find(n => n === 'sessions__previous_period');
-  const iPrevCvr = find(n => n === 'conversion_rate__previous_period');
+  // Shopify API column names with COMPARE TO previous_period:
+  //   sessions, conversion_rate (current period)
+  //   comparison_sessions__previous_period, comparison_conversion_rate__previous_period
+  //   *__totals columns (totals embedded per-row, not a separate row)
+  const iSrc     = colNames.indexOf('utm_source');
+  const iLp      = colNames.indexOf('landing_page_path');
+  const iSess    = colNames.indexOf('sessions');
+  const iCvr     = colNames.indexOf('conversion_rate');
+  const iPrevS   = colNames.indexOf('comparison_sessions__previous_period');
+  const iPrevCvr = colNames.indexOf('comparison_conversion_rate__previous_period');
 
-  if (iSess < 0)   throw new Error('Shopify response missing "sessions" column.');
-  if (iCvr < 0)    throw new Error('Shopify response missing "conversion_rate" column.');
-  if (iPrevS < 0)  throw new Error('Shopify response missing "sessions__previous_period". Check that COMPARE TO previous_period is working.');
-  if (iPrevCvr < 0) throw new Error('Shopify response missing "conversion_rate__previous_period".');
-
-  const col = (row, i) => i >= 0 ? row[colNames[i]] : null;
+  if (iSess < 0)    throw new Error('Shopify response missing "sessions" column.');
+  if (iCvr < 0)     throw new Error('Shopify response missing "conversion_rate" column.');
+  if (iPrevS < 0)   throw new Error('Shopify response missing "comparison_sessions__previous_period". Ensure COMPARE TO previous_period is in the query.');
+  if (iPrevCvr < 0) throw new Error('Shopify response missing "comparison_conversion_rate__previous_period".');
 
   const rows = [];
-  let lastSource = '';
 
   for (const row of rawRows) {
-    const rawSrc = col(row, iSrc);
-    const lp     = col(row, iLp) || '';
+    // utm_source is null for direct/no-source traffic — treat as empty string (Direct)
+    const source = row[colNames[iSrc]] || '';
+    const lp     = row[colNames[iLp]]  || '';
 
-    // Skip TOTALS row (both utm_source and landing_page_path are null) — overall aggregate
-    if ((rawSrc == null || rawSrc === '') && lp === '') continue;
-
-    // Skip GROUP_TOTALS rows where lp is null but source is set — we aggregate ourselves
-    if (lp === '' || lp == null) continue;
-
-    // Forward-fill utm_source for sparse rows (lp-level rows may have null source)
-    if (rawSrc != null && rawSrc !== '') lastSource = rawSrc;
-    const source = lastSource;
+    // Skip rows with no landing page (shouldn't happen without GROUP_TOTALS, but guard anyway)
+    if (!lp) continue;
 
     // Skip post-conversion pages — CVR is ~100% and they pollute the analysis
     if (/^\/(checkout|checkouts|orders|payment-methods|gift_cards)(\/|$)/i.test(lp)) continue;
 
-    const currS   = parseInt(col(row, iSess), 10) || 0;
-    const currC   = normCvr(parseFloat(col(row, iCvr)))   ?? 0;
-    const prevSess = Math.round(parseFloat(col(row, iPrevS))  || 0);
-    const prevCvr  = normCvr(parseFloat(col(row, iPrevCvr))) ?? 0;
+    const currS   = parseInt(row[colNames[iSess]], 10) || 0;
+    const currC   = normCvr(parseFloat(row[colNames[iCvr]]))    ?? 0;
+    const prevSess = Math.round(parseFloat(row[colNames[iPrevS]])  || 0);
+    const prevCvr  = normCvr(parseFloat(row[colNames[iPrevCvr]])) ?? 0;
 
     rows.push({ source, lp, channel: classifySource(source), currS, currC, prevSess, prevCvr });
   }
