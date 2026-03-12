@@ -398,12 +398,28 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
             destinationUrl = attachmentFallbackUrl;
           }
 
-          const imageUrl = creative.image_url
+          // Get the best quality image - strip Facebook's size parameters for full res
+          const rawImageUrl = creative.image_url
             || storySpec?.link_data?.picture
+            || storySpec?.link_data?.image_hash
+            || storySpec?.video_data?.image_url
             || creative.thumbnail_url
             || null;
 
+          // Strip low-res size params (p64x64, p100x100, etc.) from FB CDN URLs
+          const imageUrl = rawImageUrl
+            ? rawImageUrl.replace(/&stp=[^&]+/g, '').replace(/\?stp=[^&]+&/, '?')
+            : null;
+
           const isVideo = !!storySpec.video_data;
+
+          // Build preview URL for viewing the creative
+          const storyId = creative.effective_object_story_id;
+          let previewUrl = null;
+          if (storyId) {
+            const [pageId, postId] = storyId.split('_');
+            previewUrl = `https://www.facebook.com/${pageId}/posts/${postId}`;
+          }
 
           // Detect partnership/branded content ads
           // Check object_story_spec fields
@@ -442,6 +458,7 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
             destination_url: destinationUrl,
             image_url: imageUrl,
             thumbnail_url: creative.thumbnail_url || null,
+            preview_url: previewUrl,
             is_video: isVideo,
             is_partnership_ad: isPartnershipAd
           };
@@ -456,6 +473,7 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
             destination_url: null,
             image_url: null,
             thumbnail_url: null,
+            preview_url: null,
             is_video: false,
             is_partnership_ad: false
           };

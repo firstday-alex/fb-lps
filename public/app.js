@@ -171,9 +171,13 @@ function renderAds(ads, metricsData) {
       ? (ad.thumbnail_url || ad.image_url)
       : (ad.image_url || ad.thumbnail_url);
 
-    const imageHtml = displayImage
+    const imgTag = displayImage
       ? `<img src="${escapeHtml(displayImage)}" alt="${escapeHtml(ad.ad_name)}" loading="lazy">`
       : '<div class="ad-card__no-image">No image available</div>';
+
+    const imageHtml = ad.preview_url && displayImage
+      ? `<a href="${escapeHtml(ad.preview_url)}" target="_blank" rel="noopener noreferrer" class="ad-card__image-link">${imgTag}</a>`
+      : imgTag;
 
     const videoBadge = ad.is_video ? '<div class="ad-card__video-badge">VIDEO</div>' : '';
     const partnershipBadge = ad.is_partnership_ad ? '<div class="ad-card__partnership-badge">PARTNERSHIP</div>' : '';
