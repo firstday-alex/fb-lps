@@ -248,6 +248,24 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
             || creative.link_url
             || null;
 
+          // For partnership/post-based ads, fetch the creative directly for more fields
+          if (!destinationUrl && creative.id) {
+            try {
+              const directCreativeUrl = `${META_BASE_URL}/${creative.id}`
+                + `?fields=link_url,object_url,object_story_spec`
+                + `&${metaParams(req.accessToken)}`;
+              const directCreativeResponse = await fetch(directCreativeUrl);
+              const directCreativeData = await directCreativeResponse.json();
+
+              if (!directCreativeData.error) {
+                destinationUrl = directCreativeData.link_url
+                  || directCreativeData.object_url
+                  || extractDestinationUrl(directCreativeData.object_story_spec || {})
+                  || null;
+              }
+            } catch (e) {}
+          }
+
           // Fallback 1: Read the page post attachments using page access token
           let attachmentFallbackUrl = null;
           if (!destinationUrl && creative.effective_object_story_id) {
@@ -284,42 +302,79 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
 
           // Fallback 2: Extract CTA URL from ad preview iframe
           if (!destinationUrl) {
-            try {
-              const previewUrl = `${META_BASE_URL}/${ad.ad_id}/previews`
-                + `?ad_format=DESKTOP_FEED_STANDARD`
-                + `&${metaParams(req.accessToken)}`;
-              const previewResponse = await fetch(previewUrl);
-              const previewData = await previewResponse.json();
+            const formats = ['DESKTOP_FEED_STANDARD', 'MOBILE_FEED_STANDARD'];
+            for (const format of formats) {
+              if (destinationUrl) break;
+              try {
+                const previewUrl = `${META_BASE_URL}/${ad.ad_id}/previews`
+                  + `?ad_format=${format}`
+                  + `&${metaParams(req.accessToken)}`;
+                const previewResponse = await fetch(previewUrl);
+                const previewData = await previewResponse.json();
 
-              if (previewData.data?.[0]?.body) {
-                const iframeSrcMatch = previewData.data[0].body.match(/src="([^"]+)"/);
-                if (iframeSrcMatch) {
-                  const iframeUrl = iframeSrcMatch[1].replace(/&amp;/g, '&');
-                  const iframeResponse = await fetch(iframeUrl);
-                  const iframeHtml = await iframeResponse.text();
+                if (previewData.data?.[0]?.body) {
+                  const body = previewData.data[0].body.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
 
-                  // Extract URLs from l.facebook.com redirect links
-                  const redirectMatches = iframeHtml.match(/l\.facebook\.com\/l\.php\?u=([^&"]+)/g) || [];
-                  const redirectUrls = redirectMatches
-                    .map(m => { try { return decodeURIComponent(m.split('u=')[1]); } catch { return null; } })
-                    .filter(Boolean);
+                  // Try to extract destination URL directly from the preview HTML/JSON
+                  // Look for external URLs in href attributes
+                  const allHrefs = body.match(/href="(https?:\/\/[^"]+)"/g) || [];
+                  const externalHrefs = allHrefs
+                    .map(m => m.match(/href="([^"]+)"/)[1])
+                    .map(u => { try { return decodeURIComponent(u); } catch { return u; } })
+                    .filter(u => !u.includes('facebook.com') && !u.includes('fbcdn.net') && !u.includes('fb.com') && !u.includes('fbsbx.com'));
 
-                  if (redirectUrls[0]) {
-                    destinationUrl = redirectUrls[0];
-                  } else {
-                    const urlMatches = iframeHtml.match(/href="(https?:\/\/[^"]+)"/g) || [];
-                    const externalUrls = urlMatches
-                      .map(m => m.match(/href="([^"]+)"/)[1])
-                      .map(u => { try { return decodeURIComponent(u); } catch { return u; } })
-                      .filter(u => !u.includes('facebook.com') && !u.includes('fbcdn.net') && !u.includes('fb.com'));
-                    destinationUrl = externalUrls[0] || null;
+                  if (externalHrefs[0]) {
+                    destinationUrl = externalHrefs[0];
+                    break;
+                  }
+
+                  // Try loading the iframe
+                  const iframeSrcMatch = body.match(/src="(https?:\/\/[^"]+)"/);
+                  if (iframeSrcMatch) {
+                    const iframeUrl = iframeSrcMatch[1];
+                    const iframeResponse = await fetch(iframeUrl);
+                    const iframeHtml = await iframeResponse.text();
+
+                    // Extract URLs from l.facebook.com redirect links
+                    const redirectMatches = iframeHtml.match(/l\.facebook\.com\/l\.php\?u=([^&"]+)/g) || [];
+                    const redirectUrls = redirectMatches
+                      .map(m => { try { return decodeURIComponent(m.split('u=')[1]); } catch { return null; } })
+                      .filter(Boolean);
+
+                    if (redirectUrls[0]) {
+                      destinationUrl = redirectUrls[0];
+                    } else {
+                      const urlMatches = iframeHtml.match(/href="(https?:\/\/[^"]+)"/g) || [];
+                      const extUrls = urlMatches
+                        .map(m => m.match(/href="([^"]+)"/)[1])
+                        .map(u => { try { return decodeURIComponent(u); } catch { return u; } })
+                        .filter(u => !u.includes('facebook.com') && !u.includes('fbcdn.net') && !u.includes('fb.com'));
+                      destinationUrl = extUrls[0] || null;
+                    }
                   }
                 }
-              }
-            } catch (e) {}
+              } catch (e) {}
+            }
           }
 
-          // Fallback 3: Use the facebook.com attachment URL if nothing else worked
+          // Fallback 3: Try extracting destination from ad name URL slug
+          // Ad names often contain url:slug-name or _url:slug-name patterns
+          if (!destinationUrl && ad.ad_name) {
+            const urlSlugMatch = ad.ad_name.match(/[_-]url[:_]([a-zA-Z0-9-]+(?:-lp)?)/i);
+            if (urlSlugMatch) {
+              const slug = urlSlugMatch[1];
+              // Map known domains based on ad name brand prefix
+              const brandMatch = ad.ad_name.match(/batch:(\w+)/);
+              const brand = brandMatch ? brandMatch[1].toLowerCase() : '';
+              if (brand === 'tdk') {
+                destinationUrl = `https://firstday.com/pages/${slug}`;
+              } else if (brand === 'trmv') {
+                destinationUrl = `https://therearemanyversions.com/pages/${slug}`;
+              }
+            }
+          }
+
+          // Fallback 4: Use the facebook.com attachment URL if nothing else worked
           if (!destinationUrl && attachmentFallbackUrl) {
             destinationUrl = attachmentFallbackUrl;
           }
