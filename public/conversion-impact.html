@@ -311,81 +311,86 @@
 
     /* Contributors list */
     .card__sub { font-size: 0.8rem; color: var(--text-secondary); margin: -6px 0 14px; }
-    .contrib-item {
-      display: grid;
-      grid-template-columns: 180px 52px 52px 1fr 80px 90px 20px;
-      align-items: center;
-      gap: 10px;
-      padding: 8px 0;
-      font-size: 0.82rem;
-    }
+
+    /* Shared bar primitives (reused everywhere) */
     .contrib-stat {
-      text-align: right;
-      font-size: 0.78rem;
-      color: var(--text-secondary);
-      white-space: nowrap;
+      text-align: right; font-size: 0.78rem; color: var(--text-secondary); white-space: nowrap;
     }
     .contrib-stat strong { display: block; font-size: 0.82rem; color: var(--text-primary); font-weight: 600; }
-    .contrib-item:last-child { border-bottom: none; }
-    .contrib-label {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      font-weight: 600;
-      white-space: nowrap;
-      overflow: hidden;
-    }
-    .contrib-type {
-      font-size: 0.75rem;
-      color: var(--text-secondary);
-      white-space: nowrap;
-    }
-    .contrib-bar-wrap {
-      height: 10px;
-      background: var(--neutral-bg);
-      border-radius: 5px;
-      overflow: hidden;
-    }
-    .contrib-bar {
-      height: 100%;
-      border-radius: 5px;
-      min-width: 2px;
-    }
-    .contrib-val { text-align: right; font-weight: 600; }
-    .contrib-pct { text-align: right; font-size: 0.75rem; color: var(--text-secondary); }
-    .contrib-base { text-align: right; font-size: 0.75rem; color: var(--text-secondary); }
-
-    /* Drill-down */
-    .contrib-wrap { border-bottom: 1px solid var(--border); }
-    .contrib-wrap:last-child { border-bottom: none; }
-    .contrib-item { border-bottom: none; } /* border now on wrap */
-    .contrib-item--clickable { cursor: pointer; user-select: none; }
-    .contrib-item--clickable:hover { background: #f7f9ff; }
-    .contrib-wrap.open .contrib-item--clickable { background: #eef3ff; }
+    .contrib-bar-wrap { height: 8px; background: var(--neutral-bg); border-radius: 4px; overflow: hidden; }
+    .contrib-bar { height: 100%; border-radius: 4px; min-width: 2px; }
+    .contrib-val { text-align: right; font-weight: 700; font-size: 0.9rem; }
+    .contrib-pct { text-align: right; font-size: 0.74rem; color: var(--text-secondary); }
     .contrib-chevron { font-size: 0.65rem; color: var(--text-secondary); text-align: right; }
 
-    .drill-panel { display: none; background: #f7f9ff; border-top: 1px solid #dde4f7; padding: 0 12px; }
-    .contrib-wrap.open .drill-panel { display: block; }
+    /* Source rows — one per utm_source */
+    .source-wrap { border-bottom: 1px solid var(--border); }
+    .source-wrap:last-child { border-bottom: none; }
+    .source-row {
+      display: grid;
+      grid-template-columns: 210px 52px 52px 1fr 90px 80px 20px;
+      align-items: center;
+      gap: 10px;
+      padding: 11px 4px;
+      cursor: pointer;
+      user-select: none;
+      font-size: 0.82rem;
+      border-radius: 6px;
+    }
+    .source-row:hover { background: #f7f9ff; }
+    .source-wrap.open .source-row { background: #eef3ff; }
+    .source-label { display: flex; align-items: flex-start; gap: 7px; font-weight: 600; }
+    .source-driver { font-size: 0.72rem; color: var(--text-secondary); font-weight: 400; margin-top: 2px; }
+
+    /* Effects panel — expands on click */
+    .effects-panel {
+      display: none;
+      background: #f4f6fb;
+      border-top: 1px solid #dde4f7;
+      padding: 6px 8px 10px 38px;
+    }
+    .source-wrap.open .effects-panel { display: block; }
+    .effect-row {
+      display: grid;
+      grid-template-columns: 150px 1fr 130px 65px 80px;
+      align-items: center;
+      gap: 10px;
+      padding: 5px 0;
+      border-top: 1px solid #e4e8f4;
+      font-size: 0.78rem;
+    }
+    .effect-row:first-child { border-top: none; }
+    .effect-type { font-weight: 600; white-space: nowrap; }
+    .effect-detail { font-size: 0.73rem; color: var(--text-secondary); }
+
+    /* Landing page button & drill-down */
+    .lp-btn {
+      margin-top: 8px;
+      font-size: 0.74rem;
+      color: var(--fb-blue);
+      background: none;
+      border: 1px solid #c5d4f5;
+      border-radius: 5px;
+      cursor: pointer;
+      padding: 3px 10px;
+    }
+    .lp-btn:hover { background: #eef3ff; }
+    .drill-panel { display: none; margin-top: 6px; }
+    .drill-panel.open { display: block; }
     .drill-header {
       font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
-      letter-spacing: 0.07em; color: var(--text-secondary);
-      padding: 8px 0 4px;
+      letter-spacing: 0.07em; color: var(--text-secondary); padding: 6px 0 3px;
     }
     .drill-row {
       display: grid;
-      grid-template-columns: 1fr 52px 52px 1fr 70px 90px;
+      grid-template-columns: 1fr 52px 52px 130px 65px 80px;
       align-items: center;
       gap: 10px;
-      padding: 6px 0;
-      border-top: 1px solid #e8ecf5;
-      font-size: 0.8rem;
+      padding: 5px 0;
+      border-top: 1px solid #e4e8f4;
+      font-size: 0.77rem;
     }
-    .drill-lp {
-      font-weight: 500;
-      font-size: 0.78rem;
-      color: var(--text-primary);
-      word-break: break-all;
-    }
+    .drill-lp { font-weight: 500; font-size: 0.76rem; color: var(--text-primary); word-break: break-all; }
 
     .hidden { display: none !important; }
     .section-label {
@@ -814,89 +819,93 @@ function render(rawRows, filename) {
   });
   contributors.sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
 
-  // Headline
-  const top = contributors[0];
+  // ── Group contributors by source ─────────────
+  const sourceGroups = [];
+  const sourceMap = new Map();
+  contributors.forEach(c => {
+    let g = sourceMap.get(c.source);
+    if (!g) {
+      g = { source: c.source, channel: c.channel, currS: c.currS, currC: c.currC, effects: [], netValue: 0 };
+      sourceMap.set(c.source, g);
+      sourceGroups.push(g);
+    }
+    g.effects.push(c);
+    g.netValue += c.value;
+  });
+  sourceGroups.sort((a, b) => Math.abs(b.netValue) - Math.abs(a.netValue));
+  sourceGroups.forEach(g => {
+    g.primaryEffect = g.effects.reduce((best, e) => Math.abs(e.value) > Math.abs(best.value) ? e : best);
+  });
+
+  // Headline — reference top source's net impact
+  const topGroup = sourceGroups[0];
   const headlineCard = document.getElementById('headline-card');
   const direction = tDelta >= 0 ? 'increased' : 'decreased';
   headlineCard.className = 'card headline-card ' + (tDelta >= 0 ? 'up' : 'down');
-  const topDesc = top ? `Largest driver: ${top.typeLabel} from ${top.source} — contributed ${fmtS(Math.round(top.value))} transactions.` : '';
+  const topDesc = topGroup
+    ? `Largest driver: ${topGroup.primaryEffect.typeLabel} from ${topGroup.source} — net ${fmtS(Math.round(topGroup.netValue))} transactions.`
+    : '';
   headlineCard.innerHTML = `
     <h3>Overall transactions ${direction} by ${fmtS(Math.round(tDelta))} (${fmtP(txnPct, 1)})</h3>
     <p>${esc(topDesc)}</p>
   `;
 
-  // Contributors list
-  const maxAbs = contributors.length > 0 ? Math.abs(contributors[0].value) : 1;
+  // Source rows — one per utm_source, expand to see effect breakdown
+  const maxNetAbs = sourceGroups.length > 0 ? Math.abs(sourceGroups[0].netValue) : 1;
   const contribList = document.getElementById('contributors-list');
   contribList.innerHTML = '';
-  contributors.forEach(c => {
-    const barPct = Math.round(Math.abs(c.value) / maxAbs * 100);
-    // Color logic:
-    // - mix-harmful sessions effect (high-CVR loses, low-CVR gains) → amber (misleading sign)
-    // - mix-shift positive (shed bad traffic / gained good traffic) → green
-    // - mix-shift negative (lost good traffic / gained bad traffic) → amber
-    // - everything else → normal green/red
-    const barColor = c.mixHarmful
-      ? 'var(--amber)'
-      : c.isMixShift
-        ? (c.value >= 0 ? 'var(--positive)' : 'var(--amber)')
-        : (c.value >= 0 ? 'var(--positive)' : 'var(--negative)');
-    const valCls = c.mixHarmful
-      ? 'amb'
-      : c.isMixShift
-        ? (c.value >= 0 ? 'pos' : 'amb')
-        : cls(c.value);
-    const pctOfDelta = tDelta !== 0 ? (c.value / tDelta * 100) : 0;
 
-    // CVR vs average badge — compares current period source CVR vs current period blended avg
-    // (consistent with the CVR stat box which also shows current period)
-    const cvrVsAvg = c.currC - tCurrCvr;
+  sourceGroups.forEach(g => {
+    const barPct = Math.round(Math.abs(g.netValue) / maxNetAbs * 100);
+    const netColor = g.netValue >= 0 ? 'var(--positive)' : 'var(--negative)';
+    const pctOfDelta = tDelta !== 0 ? (g.netValue / tDelta * 100) : 0;
+
+    const cvrVsAvg = g.currC - tCurrCvr;
     const cvrBadge = isFinite(cvrVsAvg) && Math.abs(cvrVsAvg) > 0.0001
-      ? `<span class="cvr-badge ${cvrVsAvg > 0 ? 'cvr-badge--hi' : 'cvr-badge--lo'}" title="Current CVR vs current blended average (${(tCurrCvr*100).toFixed(2)}%)">${cvrVsAvg > 0 ? '↑' : '↓'} ${Math.abs(cvrVsAvg*100).toFixed(2)}pp vs avg</span>`
+      ? `<span class="cvr-badge ${cvrVsAvg > 0 ? 'cvr-badge--hi' : 'cvr-badge--lo'}" title="CVR vs avg ${(tCurrCvr*100).toFixed(2)}%">${cvrVsAvg > 0 ? '↑' : '↓'} ${Math.abs(cvrVsAvg*100).toFixed(2)}pp vs avg</span>`
       : '';
 
+    const shortSrc = g.source.length > 26 ? g.source.slice(0, 24) + '…' : g.source;
     const wrap = document.createElement('div');
-    wrap.className = 'contrib-wrap';
+    wrap.className = 'source-wrap';
 
     const row = document.createElement('div');
-    row.className = 'contrib-item contrib-item--clickable';
-    row.setAttribute('title', 'Click to break down by landing page');
-    const shortSrc = c.source.length > 30 ? c.source.slice(0, 28) + '…' : c.source;
+    row.className = 'source-row';
+    row.title = 'Click to see effect breakdown';
     row.innerHTML = `
-      <div class="contrib-label" title="${esc(c.source)}">
-        <span class="ch-dot" style="background:${esc(chColor(c.channel))}"></span>
+      <div class="source-label" title="${esc(g.source)}">
+        <span class="ch-dot" style="background:${esc(chColor(g.channel))}"></span>
         <div>
           <div>${esc(shortSrc)}${cvrBadge}</div>
-          <div class="contrib-type">${esc(c.typeLabel)}</div>
+          <div class="source-driver">${esc(g.primaryEffect.typeLabel)}</div>
         </div>
       </div>
-      <div class="contrib-stat"><strong>${esc(fmtK(c.currS))}</strong>sess</div>
-      <div class="contrib-stat"><strong>${(c.currC*100).toFixed(2)}%</strong>CVR</div>
+      <div class="contrib-stat"><strong>${esc(fmtK(g.currS))}</strong>sess</div>
+      <div class="contrib-stat"><strong>${(g.currC*100).toFixed(2)}%</strong>CVR</div>
       <div>
         <div class="contrib-bar-wrap">
-          <div class="contrib-bar" style="width:${barPct}%;background:${barColor}"></div>
+          <div class="contrib-bar" style="width:${barPct}%;background:${netColor}"></div>
         </div>
-        <div style="font-size:0.72rem;color:var(--text-secondary);margin-top:2px">${esc(c.detail)}</div>
       </div>
-      <div class="contrib-val ${valCls}">${fmtS(Math.round(c.value))}</div>
-      <div class="contrib-pct ${valCls}">${fmtP(pctOfDelta, 1)} of Δ</div>
+      <div class="contrib-val ${cls(g.netValue)}">${fmtS(Math.round(g.netValue))}</div>
+      <div class="contrib-pct ${cls(g.netValue)}">${fmtP(pctOfDelta, 1)} of Δ</div>
       <div class="contrib-chevron">▶</div>
     `;
 
-    const drill = document.createElement('div');
-    drill.className = 'drill-panel';
+    const effectsPanel = document.createElement('div');
+    effectsPanel.className = 'effects-panel';
 
     row.addEventListener('click', () => {
       const open = wrap.classList.toggle('open');
       row.querySelector('.contrib-chevron').textContent = open ? '▼' : '▶';
-      if (open && !drill.dataset.loaded) {
-        drill.dataset.loaded = '1';
-        renderDrillDown(drill, c.source, tDelta, tPrevConv);
+      if (open && !effectsPanel.dataset.loaded) {
+        effectsPanel.dataset.loaded = '1';
+        renderEffects(effectsPanel, g, tDelta, tPrevConv);
       }
     });
 
     wrap.appendChild(row);
-    wrap.appendChild(drill);
+    wrap.appendChild(effectsPanel);
     contribList.appendChild(wrap);
   });
 
@@ -971,6 +980,51 @@ function render(rawRows, filename) {
   // Show results
   document.getElementById('upload-screen').style.display = 'none';
   document.getElementById('results-screen').style.display = 'block';
+}
+
+// ─────────────────────────────────────────────
+// EFFECTS PANEL: sessions / CVR / mix breakdown for one source
+// ─────────────────────────────────────────────
+function renderEffects(container, group, tDelta, tPrevConv) {
+  const maxEffAbs = group.effects.length > 0 ? Math.abs(group.effects[0].value) : 1;
+
+  group.effects.forEach(e => {
+    const barPct = Math.round(Math.abs(e.value) / maxEffAbs * 100);
+    const barColor = e.mixHarmful
+      ? 'var(--amber)'
+      : e.isMixShift
+        ? (e.value >= 0 ? 'var(--positive)' : 'var(--amber)')
+        : (e.value >= 0 ? 'var(--positive)' : 'var(--negative)');
+    const valCls = e.mixHarmful ? 'amb' : e.isMixShift ? (e.value >= 0 ? 'pos' : 'amb') : cls(e.value);
+    const pctOfDelta = tDelta !== 0 ? (e.value / tDelta * 100) : 0;
+    const row = document.createElement('div');
+    row.className = 'effect-row';
+    row.innerHTML = `
+      <div class="effect-type ${valCls}">${esc(e.typeLabel)}</div>
+      <div class="effect-detail">${esc(e.detail)}</div>
+      <div><div class="contrib-bar-wrap"><div class="contrib-bar" style="width:${barPct}%;background:${barColor}"></div></div></div>
+      <div class="contrib-val ${valCls}">${fmtS(Math.round(e.value))}</div>
+      <div class="contrib-pct">${fmtP(pctOfDelta, 1)} of total Δ</div>
+    `;
+    container.appendChild(row);
+  });
+
+  // Landing page drill-down button
+  const lpBtn = document.createElement('button');
+  lpBtn.className = 'lp-btn';
+  lpBtn.textContent = '↳ Break down by landing page';
+  const drillDiv = document.createElement('div');
+  drillDiv.className = 'drill-panel';
+  lpBtn.addEventListener('click', () => {
+    const open = drillDiv.classList.toggle('open');
+    lpBtn.textContent = open ? '↑ Hide landing pages' : '↳ Break down by landing page';
+    if (open && !drillDiv.dataset.loaded) {
+      drillDiv.dataset.loaded = '1';
+      renderDrillDown(drillDiv, group.source, tDelta, tPrevConv);
+    }
+  });
+  container.appendChild(lpBtn);
+  container.appendChild(drillDiv);
 }
 
 // ─────────────────────────────────────────────
