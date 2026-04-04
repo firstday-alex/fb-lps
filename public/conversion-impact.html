@@ -481,7 +481,7 @@
     /* Session volume chart */
     .sess-chart-row {
       display: grid;
-      grid-template-columns: 160px 70px 1fr 70px 90px 60px;
+      grid-template-columns: 160px 70px 1fr 70px 90px;
       align-items: center;
       gap: 8px;
       padding: 6px 0;
@@ -1376,47 +1376,57 @@ function renderSessionVolume(rows, tDelta) {
   const sorted = [...rows].sort((a, b) => b.currS - a.currS);
   const maxSess = Math.max(...sorted.map(r => Math.max(r.currS, r.prevSess)), 1);
 
-  // Compute CVR range across all sources for heat-map scaling
-  const cvrs = sorted.map(r => r.currC).filter(c => c > 0);
-  const minCvr = Math.min(...cvrs);
-  const maxCvr = Math.max(...cvrs);
-  const cvrRange = maxCvr - minCvr || 0.001;
-  const medianCvr = cvrs.length > 0 ? cvrs.sort((a,b) => a - b)[Math.floor(cvrs.length / 2)] : 0;
-
-  // Heat-map color: maps a CVR to a red↔green spectrum
-  // 0.0 = worst (bright red), 0.5 = neutral, 1.0 = best (bright green)
+  // Fixed CVR heat-map: 0.3% and below = bright red, 1% = white, 2% = pretty green, 3%+ = bright green
+  // Stops: 0.003 → 0.01 (red side, 7 steps), 0.01 → 0.03 (green side)
   function cvrHeatColor(cvr) {
-    // Normalize 0..1 within the range of CVRs in this dataset
-    const t = Math.max(0, Math.min(1, (cvr - minCvr) / cvrRange));
-    // Bright red → light red → white-ish → light green → bright green
-    if (t <= 0.5) {
-      // Red side: t=0 → bright red, t=0.5 → very light pink
-      const s = t / 0.5; // 0..1
-      const r = Math.round(220 - s * 50);   // 220→170
-      const g = Math.round(40 + s * 170);    // 40→210
-      const b = Math.round(40 + s * 170);    // 40→210
-      const bgA = 0.18 - s * 0.06;           // strong→subtle
+    const pct = cvr * 100; // convert to percentage
+    if (pct <= 0.3) {
+      // Bright red
+      return { bg: '#dc2626', text: '#fff' };
+    } else if (pct < 1.0) {
+      // 0.3% → 1.0%: bright red fading to white in 7 steps
+      const t = (pct - 0.3) / 0.7; // 0 at 0.3%, 1 at 1.0%
+      // Interpolate: rgb(220,38,38) → rgb(255,255,255)
+      const r = Math.round(220 + t * 35);
+      const g = Math.round(38 + t * 217);
+      const b = Math.round(38 + t * 217);
+      // Text: white when dark bg, dark red when light bg
+      const textT = Math.max(0, (t - 0.4) / 0.6); // switch around 0.55%
+      const tr = Math.round(255 - textT * 100);
+      const tg = Math.round(255 - textT * 217);
+      const tb = Math.round(255 - textT * 217);
       return {
-        bg: `rgba(${r}, ${g}, ${b}, ${bgA + 0.08})`,
-        text: `rgb(${Math.round(180 - s * 60)}, ${Math.round(30 + s * 80)}, ${Math.round(30 + s * 80)})`
+        bg: `rgb(${r},${g},${b})`,
+        text: t < 0.5 ? '#fff' : `rgb(${Math.round(180 - t * 60)},${Math.round(50 + t * 20)},${Math.round(50 + t * 20)})`
       };
+    } else if (pct <= 2.0) {
+      // 1.0% → 2.0%: white fading to pretty green
+      const t = (pct - 1.0) / 1.0; // 0 at 1%, 1 at 2%
+      // Interpolate: rgb(255,255,255) → rgb(34,160,74)
+      const r = Math.round(255 - t * 221);
+      const g = Math.round(255 - t * 95);
+      const b = Math.round(255 - t * 181);
+      return {
+        bg: `rgb(${r},${g},${b})`,
+        text: t < 0.4 ? '#555' : '#fff'
+      };
+    } else if (pct < 3.0) {
+      // 2.0% → 3.0%: pretty green to bright green
+      const t = (pct - 2.0) / 1.0; // 0 at 2%, 1 at 3%
+      // Interpolate: rgb(34,160,74) → rgb(21,128,61)
+      const r = Math.round(34 - t * 13);
+      const g = Math.round(160 - t * 32);
+      const b = Math.round(74 - t * 13);
+      return { bg: `rgb(${r},${g},${b})`, text: '#fff' };
     } else {
-      // Green side: t=0.5 → very light green, t=1 → bright green
-      const s = (t - 0.5) / 0.5; // 0..1
-      const r = Math.round(170 - s * 130);   // 170→40
-      const g = Math.round(210 - s * 70);    // 210→140
-      const b = Math.round(210 - s * 160);   // 210→50
-      const bgA = 0.12 + s * 0.08;           // subtle→strong
-      return {
-        bg: `rgba(${r}, ${g}, ${b}, ${bgA + 0.04})`,
-        text: `rgb(${Math.round(120 - s * 95)}, ${Math.round(110 + s * 20)}, ${Math.round(110 - s * 70)})`
-      };
+      // 3%+ = max bright green
+      return { bg: '#15803d', text: '#fff' };
     }
   }
 
   let html = `
     <h3>Session Volume by Source</h3>
-    <p class="card__sub">Sources ordered by current sessions (highest first). Gray = previous sessions, colored = current. CVR pill is heat-mapped: <span style="color:#b91c1c">bright red</span> = lowest converting, <span style="color:#15803d">bright green</span> = highest converting across all sources.</p>
+    <p class="card__sub">Sources ordered by current sessions (highest first). Gray = previous sessions, colored = current. CVR pill: <span style="color:#dc2626;font-weight:600">red</span> ≤0.3% → white at 1% → <span style="color:#15803d;font-weight:600">green</span> ≥3%.</p>
     <div class="cvr-chart">
       <div class="sess-chart-row sess-chart-row--header">
         <div>Source</div>
@@ -1424,13 +1434,11 @@ function renderSessionVolume(rows, tDelta) {
         <div>Prev vs Curr Sessions</div>
         <div class="r">Sess Δ</div>
         <div class="r">CVR</div>
-        <div class="r">Conv. Δ</div>
       </div>`;
 
   sorted.forEach(r => {
     const srcLabel = r.source || '(direct / none)';
     const shortSrc = srcLabel.length > 22 ? srcLabel.slice(0, 20) + '…' : srcLabel;
-    const d = decompose(r.prevSess, r.prevCvr, r.currS, r.currC);
     const sessDelta = r.currS - r.prevSess;
     const sessPct = r.prevSess > 0 ? (sessDelta / r.prevSess * 100) : (r.currS > 0 ? 100 : 0);
 
@@ -1438,7 +1446,6 @@ function renderSessionVolume(rows, tDelta) {
     const currBarW = Math.max(1, Math.round(r.currS / maxSess * 100));
     const currBarColor = sessDelta >= 0 ? 'var(--positive)' : 'var(--negative)';
 
-    const convDelta = d.totalDelta;
     const heat = cvrHeatColor(r.currC);
 
     html += `
@@ -1453,8 +1460,7 @@ function renderSessionVolume(rows, tDelta) {
           <div class="sess-bar-curr" style="width:${currBarW}%;background:${currBarColor}"></div>
         </div>
         <div class="r sess-delta-tag ${cls(sessDelta)}">${fmtS(Math.round(sessDelta))}<br><span style="font-size:0.65rem;color:var(--text-secondary)">${fmtP(sessPct, 0)}</span></div>
-        <div class="r"><span class="cvr-pill" style="background:${heat.bg};color:${heat.text}" title="Rank among all sources: red=lowest, green=highest">${(r.currC * 100).toFixed(2)}%</span></div>
-        <div class="r"><span style="font-weight:600;font-size:0.78rem" class="${cls(convDelta)}">${fmtS(Math.round(convDelta))}</span></div>
+        <div class="r"><span class="cvr-pill" style="background:${heat.bg};color:${heat.text}">${(r.currC * 100).toFixed(2)}%</span></div>
       </div>`;
   });
 
