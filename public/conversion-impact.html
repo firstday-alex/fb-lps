@@ -1417,8 +1417,8 @@ function renderMixShift(rows, tPrevS, tCurrS, tPrevCvr, tCurrCvr) {
 function renderCvrBuckets(rows) {
   const card = document.getElementById('cvr-bucket-card');
   const minSess = 50;
-  // Need current sessions > 0 for a meaningful CVR, and at least 50 sessions in either period
-  const qualified = rows.filter(r => r.currS > 0 && (r.currS >= minSess || r.prevSess >= minSess));
+  // Require 50+ current sessions for a meaningful current CVR to bucket on
+  const qualified = rows.filter(r => r.currS >= minSess);
 
   const BUCKETS = [
     { key: 'extreme_low', label: 'Extremely Low',  range: '0 – 0.30%', min: 0,     max: 0.003,  color: '#dc2626' },
@@ -1428,15 +1428,20 @@ function renderCvrBuckets(rows) {
     { key: 'very_high',   label: 'Very High',       range: '3%+',       min: 0.03,  max: Infinity, color: '#15803d' },
   ];
 
-  // Assign each source to a bucket based on current CVR
+  // Assign each source to a bucket based on current CVR, keeping per-source detail
   const bucketData = BUCKETS.map(b => ({ ...b, prevS: 0, currS: 0, sources: [] }));
   qualified.forEach(r => {
-    const label = (r.source || '(direct)') + ' ' + (r.currC * 100).toFixed(2) + '%';
     for (const bd of bucketData) {
       if (r.currC >= bd.min && r.currC < bd.max) {
         bd.prevS += r.prevSess;
         bd.currS += r.currS;
-        bd.sources.push(label);
+        bd.sources.push({
+          name: r.source || '(direct)',
+          cvr: r.currC,
+          currS: r.currS,
+          prevS: r.prevSess,
+          delta: r.currS - r.prevSess,
+        });
         break;
       }
     }
@@ -1446,7 +1451,7 @@ function renderCvrBuckets(rows) {
 
   let html = `
     <h3>Session Changes by CVR Bucket</h3>
-    <p class="card__sub">Sources with 50+ total sessions bucketed by current CVR. Shows how sessions shifted between conversion tiers.</p>
+    <p class="card__sub">Sources with 50+ current sessions bucketed by current CVR. Shows how sessions shifted between conversion tiers.</p>
     <div>
       <div class="bucket-row bucket-row--header">
         <div>Bucket</div>
@@ -1463,7 +1468,22 @@ function renderCvrBuckets(rows) {
     const prevBarW = Math.max(1, Math.round(b.prevS / maxSess * 100));
     const currBarW = Math.max(1, Math.round(b.currS / maxSess * 100));
     const barColor = delta >= 0 ? 'var(--positive)' : 'var(--negative)';
-    const srcList = b.sources.slice(0, 4).join(', ') + (b.sources.length > 4 ? ` +${b.sources.length - 4}` : '');
+
+    // Sort sources by absolute delta descending
+    const sortedSrcs = [...b.sources].sort((a, c) => Math.abs(c.delta) - Math.abs(a.delta));
+
+    let srcRows = '';
+    sortedSrcs.forEach(s => {
+      const sPct = s.prevS > 0 ? (s.delta / s.prevS * 100) : (s.currS > 0 ? 100 : 0);
+      srcRows += `
+        <div style="display:grid;grid-template-columns:130px 55px 55px 50px 50px;gap:6px;padding:2px 0;font-size:0.73rem;color:var(--text-secondary)">
+          <div style="font-weight:500;color:var(--text-primary)">${esc(s.name)}</div>
+          <div class="r">${fmtN(s.prevS)}</div>
+          <div class="r">${fmtN(s.currS)}</div>
+          <div class="r ${cls(s.delta)}" style="font-weight:600">${fmtS(Math.round(s.delta))}</div>
+          <div class="r" style="font-size:0.68rem">${(s.cvr * 100).toFixed(2)}%</div>
+        </div>`;
+    });
 
     html += `
       <div class="bucket-row">
@@ -1480,7 +1500,12 @@ function renderCvrBuckets(rows) {
         <div class="r sess-delta-tag ${cls(delta)}" style="font-weight:700">${fmtS(Math.round(delta))}</div>
         <div class="r sess-delta-tag ${cls(delta)}">${fmtP(deltaPct, 0)}</div>
       </div>
-      <div style="padding:0 0 6px 40px"><div class="bucket-sources" title="${esc(b.sources.join(', '))}">${esc(srcList || '—')}</div></div>`;
+      <div style="padding:2px 0 8px 40px">
+        <div style="display:grid;grid-template-columns:130px 55px 55px 50px 50px;gap:6px;padding:2px 0;font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);border-bottom:1px solid var(--border)">
+          <div>Source</div><div class="r">Prev</div><div class="r">Curr</div><div class="r">Δ</div><div class="r">CVR</div>
+        </div>
+        ${srcRows || '<div style="font-size:0.73rem;color:var(--text-secondary);padding:4px 0">—</div>'}
+      </div>`;
   });
 
   html += '</div>';
