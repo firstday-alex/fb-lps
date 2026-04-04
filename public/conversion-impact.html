@@ -1462,25 +1462,44 @@ function renderCvrBuckets(rows) {
         <div class="r">Δ %</div>
       </div>`;
 
+  // For low-CVR buckets, more sessions = bad for overall CVR (invert colors)
+  // For high-CVR buckets, more sessions = good (normal colors)
+  const invertedBuckets = new Set(['extreme_low', 'low']);
+  const normalBuckets = new Set(['high', 'very_high']);
+
+  // CVR-impact color: accounts for whether gaining sessions in this bucket helps or hurts
+  function impactCls(delta, bucketKey) {
+    if (delta === 0) return '';
+    if (invertedBuckets.has(bucketKey)) return delta > 0 ? 'neg' : 'pos'; // up = bad, down = good
+    if (normalBuckets.has(bucketKey)) return delta > 0 ? 'pos' : 'neg';   // up = good, down = bad
+    return cls(delta); // average = neutral default
+  }
+  function impactBarColor(delta, bucketKey) {
+    if (invertedBuckets.has(bucketKey)) return delta >= 0 ? 'var(--negative)' : 'var(--positive)';
+    if (normalBuckets.has(bucketKey)) return delta >= 0 ? 'var(--positive)' : 'var(--negative)';
+    return delta >= 0 ? 'var(--positive)' : 'var(--negative)';
+  }
+
   bucketData.forEach(b => {
     const delta = b.currS - b.prevS;
     const deltaPct = b.prevS > 0 ? (delta / b.prevS * 100) : (b.currS > 0 ? 100 : 0);
     const prevBarW = Math.max(1, Math.round(b.prevS / maxSess * 100));
     const currBarW = Math.max(1, Math.round(b.currS / maxSess * 100));
-    const barColor = delta >= 0 ? 'var(--positive)' : 'var(--negative)';
+    const barColor = impactBarColor(delta, b.key);
+    const deltaClass = impactCls(delta, b.key);
 
     // Sort sources by absolute delta descending
     const sortedSrcs = [...b.sources].sort((a, c) => Math.abs(c.delta) - Math.abs(a.delta));
 
     let srcRows = '';
     sortedSrcs.forEach(s => {
-      const sPct = s.prevS > 0 ? (s.delta / s.prevS * 100) : (s.currS > 0 ? 100 : 0);
+      const sDeltaClass = impactCls(s.delta, b.key);
       srcRows += `
         <div style="display:grid;grid-template-columns:130px 55px 55px 50px 50px;gap:6px;padding:2px 0;font-size:0.73rem;color:var(--text-secondary)">
           <div style="font-weight:500;color:var(--text-primary)">${esc(s.name)}</div>
           <div class="r">${fmtN(s.prevS)}</div>
           <div class="r">${fmtN(s.currS)}</div>
-          <div class="r ${cls(s.delta)}" style="font-weight:600">${fmtS(Math.round(s.delta))}</div>
+          <div class="r ${sDeltaClass}" style="font-weight:600">${fmtS(Math.round(s.delta))}</div>
           <div class="r" style="font-size:0.68rem">${(s.cvr * 100).toFixed(2)}%</div>
         </div>`;
     });
@@ -1497,8 +1516,8 @@ function renderCvrBuckets(rows) {
           <div class="bucket-bar-prev" style="width:${prevBarW}%"></div>
           <div class="bucket-bar-curr" style="width:${currBarW}%;background:${barColor}"></div>
         </div>
-        <div class="r sess-delta-tag ${cls(delta)}" style="font-weight:700">${fmtS(Math.round(delta))}</div>
-        <div class="r sess-delta-tag ${cls(delta)}">${fmtP(deltaPct, 0)}</div>
+        <div class="r sess-delta-tag ${deltaClass}" style="font-weight:700">${fmtS(Math.round(delta))}</div>
+        <div class="r sess-delta-tag ${deltaClass}">${fmtP(deltaPct, 0)}</div>
       </div>
       <div style="padding:2px 0 8px 40px">
         <div style="display:grid;grid-template-columns:130px 55px 55px 50px 50px;gap:6px;padding:2px 0;font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);border-bottom:1px solid var(--border)">
