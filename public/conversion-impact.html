@@ -430,6 +430,112 @@
       letter-spacing: 0.08em;
       color: var(--text-secondary);
     }
+
+    /* CVR Movement Chart */
+    .cvr-movement-card { padding: 20px; }
+    .cvr-movement-card h3 {
+      font-size: 0.82rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--text-secondary); margin-bottom: 4px;
+    }
+    .cvr-movement-card .card__sub { margin-bottom: 16px; }
+    .cvr-chart {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+    .cvr-chart-row {
+      display: grid;
+      grid-template-columns: 160px 60px 1fr 60px 60px;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.8rem;
+    }
+    .cvr-chart-row:last-child { border-bottom: none; }
+    .cvr-chart-row.cvr-chart-row--header {
+      font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--text-secondary);
+      border-bottom: 2px solid var(--border); padding-bottom: 8px;
+    }
+    .cvr-chart-row .r { text-align: right; }
+    .cvr-src-label { font-weight: 600; display: flex; align-items: center; gap: 6px; }
+    .cvr-src-label .ch-dot { flex-shrink: 0; }
+    .cvr-bar-cell { position: relative; height: 22px; }
+    .cvr-bar-track {
+      position: absolute; top: 0; bottom: 0;
+      display: flex; align-items: center;
+    }
+    .cvr-bar-fill {
+      height: 14px; border-radius: 3px; min-width: 2px;
+    }
+    .cvr-bar-label {
+      position: absolute; top: 50%; transform: translateY(-50%);
+      font-size: 0.7rem; font-weight: 600; white-space: nowrap;
+    }
+    .cvr-divider {
+      position: absolute; top: -2px; bottom: -2px; width: 1px;
+      background: var(--text-secondary); opacity: 0.3;
+    }
+
+    /* Mix-shift summary card */
+    .mix-shift-card { padding: 20px; }
+    .mix-shift-card h3 {
+      font-size: 0.82rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--text-secondary); margin-bottom: 4px;
+    }
+    .mix-shift-card .card__sub { margin-bottom: 16px; }
+    .mix-summary {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    @media (max-width: 700px) { .mix-summary { grid-template-columns: 1fr; } }
+    .mix-stat {
+      background: var(--bg);
+      border-radius: 6px;
+      padding: 14px 16px;
+    }
+    .mix-stat__label {
+      font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--text-secondary); margin-bottom: 4px;
+    }
+    .mix-stat__value { font-size: 1.3rem; font-weight: 700; }
+    .mix-stat__sub { font-size: 0.78rem; color: var(--text-secondary); margin-top: 2px; }
+    .mix-waterfall {
+      display: flex; align-items: flex-end; gap: 0;
+      height: 120px; border-bottom: 2px solid var(--border);
+      margin-bottom: 8px; position: relative;
+    }
+    .mix-wf-bar {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: flex-end; position: relative;
+    }
+    .mix-wf-fill {
+      width: 60%; border-radius: 3px 3px 0 0; min-height: 2px;
+      transition: height 0.3s;
+    }
+    .mix-wf-label {
+      font-size: 0.68rem; font-weight: 600; margin-top: 6px;
+      text-align: center; color: var(--text-secondary);
+    }
+    .mix-wf-val {
+      font-size: 0.72rem; font-weight: 700; margin-bottom: 3px;
+    }
+    .mix-wf-connector {
+      position: absolute; top: 0; left: 80%; width: 1px;
+      border-left: 1px dashed var(--border);
+    }
+    .mix-insight {
+      background: #f7f9ff;
+      border: 1px solid #dde4f7;
+      border-radius: 6px;
+      padding: 14px 16px;
+      font-size: 0.85rem;
+      line-height: 1.6;
+    }
+    .mix-insight strong { color: var(--text-primary); }
   </style>
 </head>
 <body>
@@ -473,6 +579,12 @@
 
     <!-- Headline insight -->
     <div class="card headline-card" id="headline-card"></div>
+
+    <!-- CVR Movement by Source -->
+    <div class="card cvr-movement-card" id="cvr-movement-card"></div>
+
+    <!-- Mix-Shift Counterfactual -->
+    <div class="card mix-shift-card" id="mix-shift-card"></div>
 
     <!-- Ranked contributors -->
     <div class="card breakdown-card">
@@ -902,6 +1014,12 @@ function render(rawRows, filename) {
     <p>${esc(topDesc)}</p>
   `;
 
+  // ── CVR Movement by Source ───────────────────
+  renderCvrMovement(rows, tPrevCvr, tCurrCvr);
+
+  // ── Mix-Shift Counterfactual ────────────────
+  renderMixShift(rows, tPrevS, tCurrS, tPrevCvr, tCurrCvr);
+
   // Source rows — one per utm_source, expand to see effect breakdown
   const maxNetAbs = sourceGroups.length > 0 ? Math.abs(sourceGroups[0].netValue) : 1;
   const contribList = document.getElementById('contributors-list');
@@ -1033,6 +1151,170 @@ function render(rawRows, filename) {
   // Show results
   document.getElementById('upload-screen').style.display = 'none';
   document.getElementById('results-screen').style.display = 'block';
+}
+
+// ─────────────────────────────────────────────
+// CVR MOVEMENT BY SOURCE
+// ─────────────────────────────────────────────
+function renderCvrMovement(rows, blendedPrev, blendedCurr) {
+  const card = document.getElementById('cvr-movement-card');
+  // Only sources with meaningful sessions
+  const minSess = 20;
+  const qualified = rows.filter(r => r.prevSess >= minSess || r.currS >= minSess);
+  // Sort by prev CVR descending (highest converting at top)
+  const sorted = [...qualified].sort((a, b) => b.prevCvr - a.prevCvr);
+
+  // Find max absolute CVR change for bar scaling
+  const maxAbsDelta = Math.max(...sorted.map(r => Math.abs(r.currC - r.prevCvr)), 0.001);
+
+  let html = `
+    <h3>CVR Movement by Source</h3>
+    <p class="card__sub">Each row shows how a source's CVR changed. Sorted by previous CVR (highest first). Bar length = magnitude of change.</p>
+    <div class="cvr-chart">
+      <div class="cvr-chart-row cvr-chart-row--header">
+        <div>Source</div>
+        <div class="r">Prev CVR</div>
+        <div style="text-align:center">CVR Change</div>
+        <div class="r">Curr CVR</div>
+        <div class="r">Sessions</div>
+      </div>`;
+
+  sorted.forEach(r => {
+    const srcLabel = r.source || '(direct / none)';
+    const shortSrc = srcLabel.length > 22 ? srcLabel.slice(0, 20) + '…' : srcLabel;
+    const delta = r.currC - r.prevCvr;
+    const deltaPP = delta * 100;
+    const barWidthPct = Math.round(Math.abs(delta) / maxAbsDelta * 45); // max 45% of cell width
+    const isPositive = delta >= 0;
+    const barColor = isPositive ? 'var(--positive)' : 'var(--negative)';
+    const labelColor = isPositive ? 'var(--positive)' : 'var(--negative)';
+
+    // Bar goes left of center for negative, right for positive
+    const barStyle = isPositive
+      ? `left:50%;width:${barWidthPct}%`
+      : `right:50%;width:${barWidthPct}%`;
+    const labelStyle = isPositive
+      ? `left:calc(50% + ${barWidthPct}% + 4px);color:${labelColor}`
+      : `right:calc(50% + ${barWidthPct}% + 4px);color:${labelColor}`;
+
+    html += `
+      <div class="cvr-chart-row">
+        <div class="cvr-src-label" title="${esc(srcLabel)}">
+          <span class="ch-dot" style="background:${esc(chColor(r.channel))}"></span>
+          ${esc(shortSrc)}
+        </div>
+        <div class="r" style="font-size:0.78rem">${(r.prevCvr * 100).toFixed(2)}%</div>
+        <div class="cvr-bar-cell">
+          <div class="cvr-divider" style="left:50%"></div>
+          <div class="cvr-bar-track" style="${barStyle}">
+            <div class="cvr-bar-fill" style="width:100%;background:${barColor};border-radius:${isPositive ? '0 3px 3px 0' : '3px 0 0 3px'}"></div>
+          </div>
+          <div class="cvr-bar-label" style="${labelStyle}">${fmtPP(deltaPP)}</div>
+        </div>
+        <div class="r" style="font-size:0.78rem">${(r.currC * 100).toFixed(2)}%</div>
+        <div class="r" style="font-size:0.78rem;color:var(--text-secondary)">${fmtK(r.currS)}</div>
+      </div>`;
+  });
+
+  html += '</div>';
+  card.innerHTML = html;
+}
+
+// ─────────────────────────────────────────────
+// MIX-SHIFT COUNTERFACTUAL
+// ─────────────────────────────────────────────
+function renderMixShift(rows, tPrevS, tCurrS, tPrevCvr, tCurrCvr) {
+  const card = document.getElementById('mix-shift-card');
+
+  // Counterfactual: use current sessions but previous CVR for each source
+  // = "what would blended CVR be if only sessions changed?"
+  let cfWeightedConv = 0;
+  let cfTotalSess = 0;
+  rows.forEach(r => {
+    cfWeightedConv += r.currS * r.prevCvr;
+    cfTotalSess += r.currS;
+  });
+  const counterfactualCvr = cfTotalSess > 0 ? cfWeightedConv / cfTotalSess : 0;
+
+  const actualDelta = tCurrCvr - tPrevCvr; // total CVR change
+  const mixComponent = counterfactualCvr - tPrevCvr; // portion from session mix shift
+  const pureComponent = tCurrCvr - counterfactualCvr; // portion from actual CVR changes
+
+  const mixPctOfDelta = actualDelta !== 0 ? (mixComponent / actualDelta * 100) : 0;
+  const purePctOfDelta = actualDelta !== 0 ? (pureComponent / actualDelta * 100) : 0;
+
+  // Waterfall: prev CVR → +mix shift → +pure CVR change → curr CVR
+  const vals = [tPrevCvr, counterfactualCvr, tCurrCvr];
+  const maxCvr = Math.max(...vals) * 100;
+  const minCvr = Math.min(...vals) * 100;
+  const range = Math.max(maxCvr - minCvr, 0.1);
+  // Scale bars relative to a baseline near the minimum
+  const barBase = Math.max(0, minCvr - range * 0.3);
+  const barMax = maxCvr + range * 0.3;
+  const barRange = barMax - barBase;
+  const barH = v => Math.max(2, ((v * 100 - barBase) / barRange) * 110);
+
+  const dirWord = actualDelta >= 0 ? 'increase' : 'drop';
+  const mixDirWord = mixComponent >= 0 ? 'increase' : 'decrease';
+
+  let html = `
+    <h3>Mix-Shift Counterfactual</h3>
+    <p class="card__sub">If every source's CVR held constant day-over-day and <em>only</em> the session distribution changed, what would the blended CVR be?</p>
+
+    <div class="mix-summary">
+      <div class="mix-stat">
+        <div class="mix-stat__label">Previous Blended CVR</div>
+        <div class="mix-stat__value">${(tPrevCvr * 100).toFixed(2)}%</div>
+        <div class="mix-stat__sub">Baseline</div>
+      </div>
+      <div class="mix-stat">
+        <div class="mix-stat__label">Counterfactual CVR</div>
+        <div class="mix-stat__value ${cls(mixComponent)}">${(counterfactualCvr * 100).toFixed(2)}%</div>
+        <div class="mix-stat__sub">${fmtPP(mixComponent * 100)} from mix shift alone</div>
+      </div>
+      <div class="mix-stat">
+        <div class="mix-stat__label">Actual Current CVR</div>
+        <div class="mix-stat__value ${cls(actualDelta)}">${(tCurrCvr * 100).toFixed(2)}%</div>
+        <div class="mix-stat__sub">${fmtPP(actualDelta * 100)} total change</div>
+      </div>
+    </div>
+
+    <div class="mix-waterfall">
+      <div class="mix-wf-bar">
+        <div class="mix-wf-val">${(tPrevCvr * 100).toFixed(2)}%</div>
+        <div class="mix-wf-fill" style="height:${barH(tPrevCvr)}px;background:var(--fb-blue)"></div>
+        <div class="mix-wf-label">Prev CVR</div>
+      </div>
+      <div class="mix-wf-bar">
+        <div class="mix-wf-val ${cls(mixComponent)}">${fmtPP(mixComponent * 100)}</div>
+        <div class="mix-wf-fill" style="height:${barH(counterfactualCvr)}px;background:${mixComponent >= 0 ? 'var(--positive)' : 'var(--amber)'}"></div>
+        <div class="mix-wf-label">+ Mix Shift</div>
+      </div>
+      <div class="mix-wf-bar">
+        <div class="mix-wf-val ${cls(pureComponent)}">${fmtPP(pureComponent * 100)}</div>
+        <div class="mix-wf-fill" style="height:${barH(tCurrCvr)}px;background:${pureComponent >= 0 ? 'var(--positive)' : 'var(--negative)'}"></div>
+        <div class="mix-wf-label">+ Pure CVR Δ</div>
+      </div>
+      <div class="mix-wf-bar">
+        <div class="mix-wf-val">${(tCurrCvr * 100).toFixed(2)}%</div>
+        <div class="mix-wf-fill" style="height:${barH(tCurrCvr)}px;background:var(--text-secondary)"></div>
+        <div class="mix-wf-label">Actual CVR</div>
+      </div>
+    </div>
+
+    <div class="mix-insight">
+      <strong>Summary:</strong> The total CVR ${dirWord} was <strong>${fmtPP(Math.abs(actualDelta) * 100)}</strong>.<br>
+      <br>
+      <strong>Mix shift</strong> (sessions redistributing across sources with different CVRs) accounts for
+      <strong>${fmtPP(Math.abs(mixComponent) * 100)}</strong> — that's <strong>${Math.abs(mixPctOfDelta).toFixed(1)}%</strong> of the total ${dirWord}.
+      ${mixComponent !== 0 ? `The session mix alone would have caused a <strong>${mixDirWord}</strong> in blended CVR.` : ''}<br>
+      <br>
+      <strong>Pure CVR changes</strong> (sources actually converting better or worse) account for
+      <strong>${fmtPP(Math.abs(pureComponent) * 100)}</strong> — that's <strong>${Math.abs(purePctOfDelta).toFixed(1)}%</strong> of the total ${dirWord}.
+    </div>
+  `;
+
+  card.innerHTML = html;
 }
 
 // ─────────────────────────────────────────────

@@ -42,6 +42,20 @@ header h1 { font-size: 1.25rem; }
   color: white;
 }
 .btn-primary:hover { background: #166fe5; }
+.btn-load-more {
+  background: white;
+  color: #1877f2;
+  border: 2px solid #1877f2;
+  font-size: 0.95rem;
+  padding: 10px 36px;
+}
+.btn-load-more:hover:not(:disabled) { background: #e7f0fd; }
+.btn-load-more:disabled { opacity: 0.55; cursor: not-allowed; }
+
+#load-more-container {
+  text-align: center;
+  padding: 28px 0 8px;
+}
 
 /* Account Section */
 #account-section {
@@ -165,10 +179,79 @@ header h1 { font-size: 1.25rem; }
   flex-direction: column;
   gap: 8px;
 }
+.ad-card__campaign {
+  font-size: 0.7rem;
+  color: #888;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+.ad-card__adset {
+  color: #aaa;
+  font-weight: 400;
+}
 .ad-card__name {
   font-weight: 600;
   font-size: 0.95rem;
 }
+
+/* New stat rows replacing old ad-card__stats */
+.ad-card__stat-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 0;
+  border-top: 1px solid #f0f0f0;
+  padding-top: 6px;
+}
+.ad-card__stat-row--video { border-top-color: #e8f0fe; }
+.stat-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  flex: 1;
+  padding: 2px 8px 2px 0;
+}
+.stat-label {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: #9ba0a8;
+  white-space: nowrap;
+}
+.stat-val {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #1c1e21;
+  white-space: nowrap;
+}
+
+/* Campaign filter bar */
+#campaign-filter-bar {
+  padding: 10px 24px;
+  background: #f8f9fa;
+  border-bottom: 1px solid #e4e6eb;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.875rem;
+  color: #65676b;
+}
+#campaign-filter {
+  padding: 5px 10px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  max-width: 380px;
+  min-width: 200px;
+}
+.filter-count {
+  font-size: 0.8rem;
+  color: #1877f2;
+  font-weight: 600;
+}
+
 .ad-card__stats {
   display: flex;
   flex-wrap: wrap;
@@ -196,6 +279,19 @@ header h1 { font-size: 1.25rem; }
   color: #65676b;
   font-size: 0.85rem;
 }
+.url-source {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 0.65rem;
+  font-family: monospace;
+  background: #f0f2f5;
+  color: #65676b;
+  border: 1px solid #ddd;
+  border-radius: 3px;
+  padding: 1px 5px;
+  vertical-align: middle;
+  white-space: nowrap;
+}
 
 /* Funnel Metrics */
 .ad-card__funnel {
@@ -210,6 +306,21 @@ header h1 { font-size: 1.25rem; }
   color: #65676b;
   margin-bottom: 6px;
   font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.funnel-match-tag {
+  font-size: 0.6rem;
+  background: #fff3cd;
+  color: #856404;
+  border: 1px solid #ffc107;
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  cursor: help;
 }
 .funnel-metrics {
   display: grid;

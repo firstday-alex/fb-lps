@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ad Debug — Meta API Calls</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+      background: #0d1117;
+      color: #c9d1d9;
+      min-height: 100vh;
+      padding: 24px;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid #21262d;
+    }
+
+    header a {
+      color: #58a6ff;
+      text-decoration: none;
+      font-size: 12px;
+    }
+    header a:hover { text-decoration: underline; }
+
+    h1 {
+      font-size: 15px;
+      font-weight: 600;
+      color: #e6edf3;
+      font-family: system-ui, sans-serif;
+    }
+
+    .input-row {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 28px;
+      align-items: center;
+    }
+
+    input[type="text"] {
+      flex: 1;
+      max-width: 420px;
+      background: #161b22;
+      border: 1px solid #30363d;
+      color: #c9d1d9;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-family: inherit;
+      font-size: 13px;
+      outline: none;
+    }
+    input[type="text"]:focus { border-color: #58a6ff; }
+    input[type="text"]::placeholder { color: #484f58; }
+
+    button {
+      background: #238636;
+      color: #fff;
+      border: none;
+      padding: 8px 18px;
+      border-radius: 6px;
+      font-family: system-ui, sans-serif;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    button:hover { background: #2ea043; }
+    button:disabled { background: #21262d; color: #484f58; cursor: not-allowed; }
+
+    /* ── output area ── */
+    #output { display: none; }
+
+    .summary-bar {
+      display: flex;
+      gap: 24px;
+      align-items: baseline;
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-bottom: 28px;
+      flex-wrap: wrap;
+    }
+    .summary-bar .label { color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+    .summary-bar .val  { color: #e6edf3; margin-left: 6px; }
+    .summary-bar .val.ok   { color: #3fb950; }
+    .summary-bar .val.miss { color: #f85149; }
+    .summary-bar .val.partner { color: #d29922; }
+
+    /* ── calls ── */
+    .calls-list { display: flex; flex-direction: column; gap: 0; }
+
+    .call-block {
+      margin: 18px 0;   /* blank line above + below */
+    }
+
+    .call-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+
+    .call-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: #8b949e;
+      border: 1px solid #30363d;
+      border-radius: 4px;
+      padding: 2px 8px;
+      background: #161b22;
+      white-space: nowrap;
+    }
+
+    .call-url {
+      color: #58a6ff;
+      word-break: break-all;
+      font-size: 12px;
+    }
+
+    .call-body {
+      background: #161b22;
+      border: 1px solid #21262d;
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    .call-row {
+      display: flex;
+      align-items: baseline;
+      gap: 0;
+      padding: 5px 14px;
+      border-bottom: 1px solid #21262d;
+    }
+    .call-row:last-child { border-bottom: none; }
+
+    .row-step {
+      color: #8b949e;
+      min-width: 300px;
+      flex-shrink: 0;
+      font-size: 12px;
+    }
+
+    .row-arrow { color: #30363d; margin: 0 10px; flex-shrink: 0; }
+
+    .row-val {
+      font-size: 12px;
+      word-break: break-all;
+    }
+    .row-val.null  { color: #484f58; font-style: italic; }
+    .row-val.found { color: #3fb950; font-weight: 600; }
+    .row-val.found-partner { color: #d29922; font-weight: 600; }
+
+    .winner-badge {
+      display: inline-block;
+      margin-left: 8px;
+      font-size: 10px;
+      background: #238636;
+      color: #fff;
+      padding: 1px 6px;
+      border-radius: 10px;
+      font-weight: 700;
+      vertical-align: middle;
+      flex-shrink: 0;
+    }
+    .winner-badge.partner { background: #9e6a03; }
+
+    /* ── raw payload toggle ── */
+    .raw-toggle {
+      margin-top: 32px;
+      border-top: 1px solid #21262d;
+      padding-top: 16px;
+    }
+
+    .raw-toggle summary {
+      color: #8b949e;
+      cursor: pointer;
+      font-size: 12px;
+      user-select: none;
+    }
+    .raw-toggle summary:hover { color: #c9d1d9; }
+
+    .raw-json {
+      margin-top: 10px;
+      background: #161b22;
+      border: 1px solid #21262d;
+      border-radius: 6px;
+      padding: 14px;
+      overflow: auto;
+      max-height: 500px;
+      font-size: 11.5px;
+      color: #c9d1d9;
+      white-space: pre;
+    }
+
+    .error-msg {
+      background: #2d1f24;
+      border: 1px solid #f8514966;
+      color: #f85149;
+      border-radius: 6px;
+      padding: 12px 16px;
+      margin-bottom: 16px;
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 14px; height: 14px;
+      border: 2px solid #30363d;
+      border-top-color: #58a6ff;
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      vertical-align: middle;
+      margin-right: 8px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-msg { color: #8b949e; font-size: 13px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <a href="/">← Ads Viewer</a>
+  <h1>Meta API Debug — Ad URL Resolution</h1>
+</header>
+
+<div class="input-row">
+  <input type="text" id="ad-id-input" placeholder="Paste an ad_id (e.g. 120240172138410448)" />
+  <button id="run-btn" onclick="runDebug()">Inspect</button>
+</div>
+
+<div id="loading" style="display:none">
+  <span class="spinner"></span>
+  <span class="loading-msg">Running API calls…</span>
+</div>
+
+<div id="error" style="display:none" class="error-msg"></div>
+
+<div id="output">
+  <div class="summary-bar" id="summary"></div>
+  <div class="calls-list" id="calls"></div>
+  <details class="raw-toggle">
+    <summary>▶ Raw API payloads (JSON)</summary>
+    <pre class="raw-json" id="raw-json"></pre>
+  </details>
+</div>
+
+<script>
+// Map each chain step to which API call it belongs to
+const BASE = 'https://graph.facebook.com/v21.0';
+
+const CALL_GROUPS = [
+  {
+    label: 'Call 1 — Ad → Creative',
+    urlDesc: `GET ${BASE}/{ad_id}?fields=name,creative{id,name,object_story_spec,asset_feed_spec,link_url,effective_object_story_id,url_tags,call_to_action}`,
+    steps: ['1a. storySpec link_data / video_data / photo_data', '1b. asset_feed_spec link_urls', '1c. creative.link_url', '1d. creative.call_to_action?.value?.link', '1e. url_tags parsed URL']
+  },
+  {
+    label: 'Call 2 — Direct Creative',
+    urlDesc: `GET ${BASE}/{creative_id}?fields=link_url,object_url,object_story_spec,call_to_action`,
+    steps: ['2a. direct creative link_url', '2b. direct creative object_url', '2c. direct creative storySpec', '2d. direct creative call_to_action']
+  },
+  {
+    label: 'Step 3 — Ad Name Slug',
+    urlDesc: 'No API call — parsed from ad name (url:slug pattern)',
+    steps: ['3. ad name url: slug']
+  },
+  {
+    label: 'Call 4 — Post Attachments',
+    urlDesc: `GET ${BASE}/{page_id}_{post_id}/attachments?fields=url,unshimmed_url,url_unshimmed,target,subattachments{…}`,
+    steps: ['4. attachment url (unshimmed_url / url_unshimmed / url)']
+  },
+  {
+    label: 'Call 5 — Preview HTML Scrape',
+    urlDesc: `GET ${BASE}/{ad_id}/previews?ad_format=DESKTOP_FEED_STANDARD  →  iframe fetch  →  parse l.facebook.com redirect`,
+    steps: ['5. preview HTML scrape']
+  }
+];
+
+function e(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function runDebug() {
+  const adId = document.getElementById('ad-id-input').value.trim();
+  if (!adId) return;
+
+  const btn = document.getElementById('run-btn');
+  btn.disabled = true;
+  document.getElementById('loading').style.display = 'block';
+  document.getElementById('output').style.display = 'none';
+  document.getElementById('error').style.display = 'none';
+
+  try {
+    const res = await fetch(`/api/debug-ad?ad_id=${encodeURIComponent(adId)}`);
+    const data = await res.json();
+
+    if (data.error) throw new Error(data.error);
+
+    renderOutput(data);
+    document.getElementById('output').style.display = 'block';
+  } catch (err) {
+    const el = document.getElementById('error');
+    el.textContent = 'Error: ' + err.message;
+    el.style.display = 'block';
+  } finally {
+    document.getElementById('loading').style.display = 'none';
+    btn.disabled = false;
+  }
+}
+
+function renderOutput(data) {
+  const { ad_id, ad_name, is_partnership, effective_object_story_id, url_tags, call_to_action, resolution_chain, final_url } = data;
+
+  // Build a lookup from step label → resolved value
+  const stepMap = {};
+  resolution_chain.forEach(s => { stepMap[s.step] = s.resolved; });
+
+  // Find the winning step
+  const winnerStep = resolution_chain.find(s => s.resolved)?.step || null;
+
+  // Summary bar
+  const finalClass = final_url ? 'ok' : 'miss';
+  document.getElementById('summary').innerHTML = `
+    <span><span class="label">Ad ID</span><span class="val">${e(ad_id)}</span></span>
+    <span><span class="label">Partnership</span><span class="val ${is_partnership ? 'partner' : ''}">${is_partnership ? 'YES' : 'no'}</span></span>
+    <span><span class="label">Story ID</span><span class="val">${effective_object_story_id ? e(effective_object_story_id) : '—'}</span></span>
+    <span><span class="label">Final URL</span><span class="val ${finalClass}">${final_url ? e(final_url) : 'NOT FOUND'}</span></span>
+    ${winnerStep ? `<span><span class="label">Resolved by</span><span class="val ok">${e(winnerStep)}</span></span>` : ''}
+  `;
+
+  // Calls
+  let html = '';
+  CALL_GROUPS.forEach(group => {
+    // Check if any step in this group has a value
+    const groupSteps = group.steps.filter(s => s in stepMap);
+    if (group.steps[0].startsWith('2') && !data.raw?.creativeDirectData) {
+      // Skip call 2 if creative had no id
+      return;
+    }
+
+    html += `<div class="call-block">`;
+    html += `<div class="call-header">`;
+    html += `  <span class="call-label">${e(group.label)}</span>`;
+    html += `  <span class="call-url">${e(group.urlDesc)}</span>`;
+    html += `</div>`;
+    html += `<div class="call-body">`;
+
+    groupSteps.forEach(stepKey => {
+      const val = stepMap[stepKey];
+      const isWinner = stepKey === winnerStep;
+      const isPartnerWin = isWinner && is_partnership && stepKey.includes('adname');
+
+      let valClass = val ? (isPartnerWin ? 'found-partner' : 'found') : 'null';
+      const valText = val ? e(val) : 'null';
+      const badge = isWinner
+        ? `<span class="winner-badge${isPartnerWin ? ' partner' : ''}">WINNER</span>`
+        : '';
+
+      html += `<div class="call-row">`;
+      html += `  <span class="row-step">${e(stepKey)}</span>`;
+      html += `  <span class="row-arrow">→</span>`;
+      html += `  <span class="row-val ${valClass}">${valText}</span>`;
+      if (badge) html += badge;
+      html += `</div>`;
+    });
+
+    html += `</div>`; // call-body
+    html += `</div>`; // call-block
+  });
+
+  document.getElementById('calls').innerHTML = html;
+
+  // Ad name (long, shown below calls)
+  if (ad_name) {
+    document.getElementById('calls').innerHTML += `
+      <div style="margin-top:24px;padding-top:16px;border-top:1px solid #21262d">
+        <span style="color:#8b949e;font-size:11px;text-transform:uppercase;letter-spacing:.05em">Ad Name</span>
+        <div style="color:#c9d1d9;margin-top:4px;word-break:break-all;font-size:12px">${e(ad_name)}</div>
+      </div>
+    `;
+  }
+
+  // Raw JSON
+  document.getElementById('raw-json').textContent = JSON.stringify(data.raw, null, 2);
+}
+
+// Allow Enter key to trigger
+document.getElementById('ad-id-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') runDebug();
+});
+</script>
+</body>
+</html>

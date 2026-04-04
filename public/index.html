@@ -29,6 +29,12 @@
       </select>
       <input type="date" id="date-start" class="hidden">
       <input type="date" id="date-end" class="hidden">
+      <label for="ads-limit">Show:</label>
+      <select id="ads-limit">
+        <option value="10">Top 10</option>
+        <option value="25" selected>Top 25</option>
+        <option value="50">Top 50</option>
+      </select>
       <button id="load-ads-btn" class="btn btn-primary">Load Top Ads</button>
     </section>
 
@@ -39,7 +45,19 @@
 
     <div id="error-message" class="hidden"></div>
 
+    <div id="campaign-filter-bar" class="hidden">
+      <label for="campaign-filter">Campaign:</label>
+      <select id="campaign-filter">
+        <option value="">All Campaigns</option>
+      </select>
+      <span id="campaign-filter-count" class="filter-count"></span>
+    </div>
+
     <section id="ads-grid" class="hidden"></section>
+
+    <div id="load-more-container">
+      <button id="load-more-btn" class="btn btn-load-more" onclick="loadMoreAds()" style="display:none">Load More Ads</button>
+    </div>
 
     <div id="empty-state" class="hidden">
       <p>No ads with spend found for the selected date range.</p>

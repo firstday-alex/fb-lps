@@ -180,29 +180,29 @@ app.get('/api/ad-accounts', requireAuth, async (req, res) => {
 });
 
 app.get('/api/top-ads', requireAuth, async (req, res) => {
-  const { account_id, date_preset, since, until } = req.query;
+  const { account_id, date_preset, since, until, after } = req.query;
+  const adsLimit = Math.min(Math.max(parseInt(req.query.limit) || 25, 1), 50);
 
   if (!account_id) {
     return res.status(400).json({ error: 'account_id is required' });
   }
 
   try {
-    // Step 1: Get top 10 ads by spend for the given date range
+    // Step 1: Get top N ads by spend for the given date range
     let dateParams;
     if (since && until) {
-      // Custom date range
       dateParams = `&time_range={"since":"${since}","until":"${until}"}`;
     } else {
-      // Preset (yesterday, last_3d, last_7d, last_14d, last_30d)
       dateParams = `&date_preset=${date_preset || 'yesterday'}`;
     }
 
     const insightsUrl = `${META_BASE_URL}/${account_id}/insights`
-      + `?fields=ad_id,ad_name,spend,impressions,clicks`
+      + `?fields=ad_id,ad_name,spend,impressions,clicks,cpm,frequency,outbound_clicks,actions,campaign_name,campaign_id,adset_name,adset_id,video_thruplay_watched_actions,video_avg_time_watched_actions`
       + dateParams
       + `&level=ad`
       + `&sort=spend_descending`
-      + `&limit=10`
+      + `&limit=${adsLimit}`
+      + (after ? `&after=${encodeURIComponent(after)}` : '')
       + `&${metaParams(req.accessToken)}`;
 
     const insightsResponse = await fetch(insightsUrl);
@@ -217,9 +217,19 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
     }
 
     const ads = insightsData.data || [];
+    const nextCursor = insightsData.paging?.cursors?.after || null;
+    const hasMore = !!insightsData.paging?.next;
+
     if (ads.length === 0) {
-      return res.json({ ads: [] });
+      return res.json({ ads: [], next_cursor: null, has_more: false });
     }
+
+    // Helper: extract numeric value from Meta action-type arrays
+    const actionVal = (arr, type) => {
+      if (!Array.isArray(arr)) return null;
+      const found = arr.find(a => a.action_type === type);
+      return found ? (parseFloat(found.value) || 0) : null;
+    };
 
     // Step 2: Build a page token map (for reading page posts)
     const pageTokenMap = {};
@@ -256,12 +266,16 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
           const storySpec = creative.object_story_spec || {};
           const assetFeed = creative.asset_feed_spec || {};
 
-          let destinationUrl = extractDestinationUrl(storySpec)
-            || extractAssetFeedUrl(assetFeed)
-            || creative.link_url
-            || creative.call_to_action?.value?.link
-            || extractUrlTagsUrl(creative.url_tags)
-            || null;
+          // Track which step resolves the URL
+          let destinationUrl = null;
+          let urlSource = null;
+          const tryUrl = (src, url) => { if (!destinationUrl && url) { destinationUrl = url; urlSource = src; } };
+
+          tryUrl('storySpec', extractDestinationUrl(storySpec));
+          tryUrl('assetFeed', extractAssetFeedUrl(assetFeed));
+          tryUrl('creative.link_url', creative.link_url || null);
+          tryUrl('creative.call_to_action', creative.call_to_action?.value?.link || null);
+          tryUrl('url_tags', extractUrlTagsUrl(creative.url_tags));
 
           // For partnership/post-based ads, fetch the creative directly for more fields
           if (!destinationUrl && creative.id) {
@@ -273,11 +287,10 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
               const directCreativeData = await directCreativeResponse.json();
 
               if (!directCreativeData.error) {
-                destinationUrl = directCreativeData.link_url
-                  || directCreativeData.object_url
-                  || extractDestinationUrl(directCreativeData.object_story_spec || {})
-                  || directCreativeData.call_to_action?.value?.link
-                  || null;
+                tryUrl('direct.link_url', directCreativeData.link_url || null);
+                tryUrl('direct.object_url', directCreativeData.object_url || null);
+                tryUrl('direct.storySpec', extractDestinationUrl(directCreativeData.object_story_spec || {}));
+                tryUrl('direct.call_to_action', directCreativeData.call_to_action?.value?.link || null);
               }
             } catch (e) {}
           }
@@ -291,7 +304,6 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
                 ? 'https://firstday.com/'
                 : `https://firstday.com/pages/${slug}`;
 
-              // Always use ad name URL for partnership ads; otherwise only if no URL yet
               const nameLower = ad.ad_name.toLowerCase();
               const isPartnership = nameLower.includes('creator_wl:ext')
                 || nameLower.includes('notes:ext-')
@@ -301,11 +313,12 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
 
               if (isPartnership || !destinationUrl) {
                 destinationUrl = adNameUrl;
+                urlSource = isPartnership ? 'adname-slug(partner)' : 'adname-slug';
               }
             }
           }
 
-          // Fallback 2: Read the page post attachments using page access token
+          // Fallback: Read the page post attachments using page access token
           let attachmentFallbackUrl = null;
           if (!destinationUrl && creative.effective_object_story_id) {
             const pageId = creative.effective_object_story_id.split('_')[0];
@@ -327,9 +340,9 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
                     candidateUrl = sub.unshimmed_url || sub.url_unshimmed || sub.url || sub.target?.url || null;
                   }
                   if (candidateUrl) {
-                    // Use external URLs directly, save facebook.com URLs as last resort
                     if (!candidateUrl.includes('facebook.com/') && !candidateUrl.includes('fb.com/')) {
                       destinationUrl = candidateUrl;
+                      urlSource = 'attachment';
                     } else {
                       attachmentFallbackUrl = candidateUrl;
                     }
@@ -339,7 +352,7 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
             }
           }
 
-          // Fallback 2: Extract CTA URL from ad preview iframe
+          // Fallback: Extract CTA URL from ad preview iframe
           if (!destinationUrl) {
             const formats = ['DESKTOP_FEED_STANDARD', 'MOBILE_FEED_STANDARD'];
             for (const format of formats) {
@@ -354,8 +367,6 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
                 if (previewData.data?.[0]?.body) {
                   const body = previewData.data[0].body.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
 
-                  // Try to extract destination URL directly from the preview HTML/JSON
-                  // Look for external URLs in href attributes
                   const allHrefs = body.match(/href="(https?:\/\/[^"]+)"/g) || [];
                   const externalHrefs = allHrefs
                     .map(m => m.match(/href="([^"]+)"/)[1])
@@ -364,17 +375,16 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
 
                   if (externalHrefs[0]) {
                     destinationUrl = externalHrefs[0];
+                    urlSource = 'preview-href';
                     break;
                   }
 
-                  // Try loading the iframe
                   const iframeSrcMatch = body.match(/src="(https?:\/\/[^"]+)"/);
                   if (iframeSrcMatch) {
                     const iframeUrl = iframeSrcMatch[1];
                     const iframeResponse = await fetch(iframeUrl);
                     const iframeHtml = await iframeResponse.text();
 
-                    // Extract URLs from l.facebook.com redirect links
                     const redirectMatches = iframeHtml.match(/l\.facebook\.com\/l\.php\?u=([^&"]+)/g) || [];
                     const redirectUrls = redirectMatches
                       .map(m => { try { return decodeURIComponent(m.split('u=')[1]); } catch { return null; } })
@@ -382,13 +392,17 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
 
                     if (redirectUrls[0]) {
                       destinationUrl = redirectUrls[0];
+                      urlSource = 'preview-iframe-redirect';
                     } else {
                       const urlMatches = iframeHtml.match(/href="(https?:\/\/[^"]+)"/g) || [];
                       const extUrls = urlMatches
                         .map(m => m.match(/href="([^"]+)"/)[1])
                         .map(u => { try { return decodeURIComponent(u); } catch { return u; } })
                         .filter(u => !u.includes('facebook.com') && !u.includes('fbcdn.net') && !u.includes('fb.com'));
-                      destinationUrl = extUrls[0] || null;
+                      if (extUrls[0]) {
+                        destinationUrl = extUrls[0];
+                        urlSource = 'preview-iframe-href';
+                      }
                     }
                   }
                 }
@@ -396,9 +410,10 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
             }
           }
 
-          // Fallback 4: Use the facebook.com attachment URL if nothing else worked
+          // Last resort: facebook.com attachment URL
           if (!destinationUrl && attachmentFallbackUrl) {
             destinationUrl = attachmentFallbackUrl;
+            urlSource = 'attachment-fb';
           }
 
           // Get the best quality image - try creative directly first for full-res
@@ -468,10 +483,21 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
           return {
             ad_id: ad.ad_id,
             ad_name: ad.ad_name,
+            campaign_id: ad.campaign_id || null,
+            campaign_name: ad.campaign_name || null,
+            adset_id: ad.adset_id || null,
+            adset_name: ad.adset_name || null,
             spend: ad.spend,
             impressions: ad.impressions,
             clicks: ad.clicks,
+            cpm: ad.cpm ? parseFloat(ad.cpm) : null,
+            frequency: ad.frequency ? parseFloat(ad.frequency) : null,
+            outbound_clicks: actionVal(ad.outbound_clicks, 'outbound_click'),
+            landing_page_views: actionVal(ad.actions, 'landing_page_view'),
+            thruplays: actionVal(ad.video_thruplay_watched_actions, 'video_thruplay_watched'),
+            avg_watch_time: actionVal(ad.video_avg_time_watched_actions, 'video_view'),
             destination_url: destinationUrl,
+            url_source: urlSource,
             image_url: imageUrl,
             thumbnail_url: creative.thumbnail_url || null,
             preview_url: previewUrl,
@@ -483,10 +509,21 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
           return {
             ad_id: ad.ad_id,
             ad_name: ad.ad_name,
+            campaign_id: ad.campaign_id || null,
+            campaign_name: ad.campaign_name || null,
+            adset_id: ad.adset_id || null,
+            adset_name: ad.adset_name || null,
             spend: ad.spend,
             impressions: ad.impressions,
             clicks: ad.clicks,
+            cpm: ad.cpm ? parseFloat(ad.cpm) : null,
+            frequency: ad.frequency ? parseFloat(ad.frequency) : null,
+            outbound_clicks: actionVal(ad.outbound_clicks, 'outbound_click'),
+            landing_page_views: actionVal(ad.actions, 'landing_page_view'),
+            thruplays: actionVal(ad.video_thruplay_watched_actions, 'video_thruplay_watched'),
+            avg_watch_time: actionVal(ad.video_avg_time_watched_actions, 'video_view'),
             destination_url: null,
+            url_source: null,
             image_url: null,
             thumbnail_url: null,
             preview_url: null,
@@ -500,7 +537,7 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
     // Sort by spend descending
     adsWithCreatives.sort((a, b) => parseFloat(b.spend || 0) - parseFloat(a.spend || 0));
 
-    res.json({ ads: adsWithCreatives });
+    res.json({ ads: adsWithCreatives, next_cursor: hasMore ? nextCursor : null, has_more: hasMore });
   } catch (err) {
     console.error('Failed to fetch top ads:', err);
     res.status(500).json({ error: 'Failed to fetch top ads' });
@@ -770,79 +807,112 @@ app.get('/api/shopify-metrics', requireAuth, async (req, res) => {
   }`;
 
   try {
-    // Run one ShopifyQL query per ad, filtered by utm_content = ad_name
     const results = {};
+
+    // Helper: run a ShopifyQL query and aggregate rows into a metrics object
+    async function runShopifyQL(shopifyql) {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
+        body: JSON.stringify({ query: gqlQuery, variables: { q: shopifyql } }),
+      });
+      const json = await response.json();
+      const payload = json.data?.shopifyqlQuery;
+      if (!payload?.tableData) return null;
+
+      const columns = payload.tableData.columns?.map(c => c.name) || [];
+      const rows = payload.tableData.rows || [];
+      if (!rows.length) return null;
+
+      // Rows may be objects (keyed by column name) or arrays (ordered by columns)
+      const getVal = (row, name) => {
+        if (Array.isArray(row)) {
+          const idx = columns.indexOf(name);
+          return idx >= 0 ? row[idx] : undefined;
+        }
+        return row[name];
+      };
+
+      let totalSessions = 0, totalOrders = 0;
+      let bounceSumW = 0, atcSumW = 0, checkoutSumW = 0, completedSumW = 0, cvrSumW = 0;
+      let topPath = '';
+
+      for (const row of rows) {
+        const s = parseFloat(getVal(row, 'sessions')) || 0;
+        totalSessions += s;
+        totalOrders += parseFloat(getVal(row, 'sessions_that_completed_checkout')) || 0;
+        bounceSumW += (parseFloat(getVal(row, 'bounce_rate')) || 0) * s;
+        atcSumW += (parseFloat(getVal(row, 'added_to_cart_rate')) || 0) * s;
+        checkoutSumW += (parseFloat(getVal(row, 'reached_checkout_rate')) || 0) * s;
+        completedSumW += (parseFloat(getVal(row, 'completed_checkout_rate')) || 0) * s;
+        cvrSumW += (parseFloat(getVal(row, 'conversion_rate')) || 0) * s;
+        if (!topPath) topPath = getVal(row, 'landing_page_path') || '';
+      }
+
+      if (totalSessions === 0) return null;
+
+      return {
+        landing_page_path: topPath,
+        sessions: totalSessions,
+        sessions_that_completed_checkout: totalOrders,
+        bounce_rate: +(bounceSumW / totalSessions).toFixed(4),
+        added_to_cart_rate: +(atcSumW / totalSessions).toFixed(4),
+        reached_checkout_rate: +(checkoutSumW / totalSessions).toFixed(4),
+        completed_checkout_rate: +(completedSumW / totalSessions).toFixed(4),
+        conversion_rate: +(cvrSumW / totalSessions).toFixed(4),
+      };
+    }
+
+    const LP_EXCLUDES = `AND landing_page_path NOT CONTAINS 'checkout'
+            AND landing_page_path NOT CONTAINS 'retextion'
+            AND landing_page_path NOT CONTAINS 'account'
+            AND landing_page_path NOT CONTAINS 'order'`;
 
     await Promise.all(adList.map(async (ad) => {
       const adName = ad.ad_name || '';
       if (!adName) return;
 
-      // Escape single quotes in ad name for ShopifyQL
-      const escapedName = adName.replace(/'/g, "\\'");
-
-      const shopifyql = `
-        FROM sessions
-          SHOW sessions, conversion_rate, bounce_rate, added_to_cart_rate,
-            reached_checkout_rate, completed_checkout_rate, sessions_that_completed_checkout
-          WHERE (utm_source CONTAINS 'facebook'
-            AND utm_content = '${escapedName}'
-            AND landing_page_path NOT CONTAINS 'checkout'
-            AND landing_page_path NOT CONTAINS 'retextion'
-            AND landing_page_path NOT CONTAINS 'account'
-            AND landing_page_path NOT CONTAINS 'order')
-          GROUP BY landing_page_path
-          SINCE startOfDay(-${numDays}d) UNTIL endOfDay(-1d)
-          ORDER BY sessions DESC
-      `;
-
       try {
-        const response = await fetch(endpoint, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Shopify-Access-Token': SHOPIFY_TOKEN,
-          },
-          body: JSON.stringify({ query: gqlQuery, variables: { q: shopifyql } }),
-        });
+        // Primary: exact utm_content match (ad name)
+        const escapedName = adName.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        let metrics = await runShopifyQL(`
+          FROM sessions
+            SHOW sessions, conversion_rate, bounce_rate, added_to_cart_rate,
+              reached_checkout_rate, completed_checkout_rate, sessions_that_completed_checkout
+            WHERE utm_source CONTAINS 'facebook'
+              AND utm_content = '${escapedName}'
+              ${LP_EXCLUDES}
+            GROUP BY landing_page_path
+            SINCE startOfDay(-${numDays}d) UNTIL endOfDay(-1d)
+            ORDER BY sessions DESC
+        `);
 
-        const json = await response.json();
-        const payload = json.data?.shopifyqlQuery;
-        if (!payload?.tableData) return;
+        let matchSource = 'utm_content';
 
-        const columns = payload.tableData.columns?.map(c => c.name) || [];
-        const rows = payload.tableData.rows || [];
-        if (!rows.length) return;
-
-        // Aggregate all rows for this ad
-        let totalSessions = 0;
-        let totalOrders = 0;
-        let bounceSumW = 0, atcSumW = 0, checkoutSumW = 0, completedSumW = 0, cvrSumW = 0;
-        let topPath = '';
-
-        for (const row of rows) {
-          const s = parseFloat(row.sessions) || 0;
-          totalSessions += s;
-          totalOrders += parseFloat(row.sessions_that_completed_checkout) || 0;
-          bounceSumW += (parseFloat(row.bounce_rate) || 0) * s;
-          atcSumW += (parseFloat(row.added_to_cart_rate) || 0) * s;
-          checkoutSumW += (parseFloat(row.reached_checkout_rate) || 0) * s;
-          completedSumW += (parseFloat(row.completed_checkout_rate) || 0) * s;
-          cvrSumW += (parseFloat(row.conversion_rate) || 0) * s;
-          if (!topPath) topPath = row.landing_page_path || '';
+        // Fallback: match by landing_page_path derived from destination_url
+        if (!metrics && ad.destination_url) {
+          try {
+            const lpPath = new URL(ad.destination_url).pathname;
+            if (lpPath && lpPath !== '/') {
+              const escapedPath = lpPath.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+              metrics = await runShopifyQL(`
+                FROM sessions
+                  SHOW sessions, conversion_rate, bounce_rate, added_to_cart_rate,
+                    reached_checkout_rate, completed_checkout_rate, sessions_that_completed_checkout
+                  WHERE utm_source CONTAINS 'facebook'
+                    AND landing_page_path = '${escapedPath}'
+                    ${LP_EXCLUDES}
+                  GROUP BY landing_page_path
+                  SINCE startOfDay(-${numDays}d) UNTIL endOfDay(-1d)
+                  ORDER BY sessions DESC
+              `);
+              if (metrics) matchSource = 'landing_page';
+            }
+          } catch {}
         }
 
-        if (totalSessions > 0) {
-          results[adName] = {
-            ad_name: adName,
-            landing_page_path: topPath,
-            sessions: totalSessions,
-            sessions_that_completed_checkout: totalOrders,
-            bounce_rate: +(bounceSumW / totalSessions).toFixed(4),
-            added_to_cart_rate: +(atcSumW / totalSessions).toFixed(4),
-            reached_checkout_rate: +(checkoutSumW / totalSessions).toFixed(4),
-            completed_checkout_rate: +(completedSumW / totalSessions).toFixed(4),
-            conversion_rate: +(cvrSumW / totalSessions).toFixed(4),
-          };
+        if (metrics) {
+          results[adName] = { ad_name: adName, match_source: matchSource, ...metrics };
         }
       } catch (e) {
         console.error(`Shopify query failed for ad "${adName}":`, e.message);
