@@ -478,6 +478,40 @@
       background: var(--text-secondary); opacity: 0.3;
     }
 
+    /* Session volume chart */
+    .sess-chart-row {
+      display: grid;
+      grid-template-columns: 160px 70px 1fr 70px 60px;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.8rem;
+    }
+    .sess-chart-row:last-child { border-bottom: none; }
+    .sess-chart-row.sess-chart-row--header {
+      font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--text-secondary);
+      border-bottom: 2px solid var(--border); padding-bottom: 8px;
+    }
+    .sess-chart-row .r { text-align: right; }
+    .sess-bars {
+      display: flex; align-items: center; gap: 0;
+      height: 22px; position: relative;
+    }
+    .sess-bar-prev, .sess-bar-curr {
+      height: 10px; min-width: 1px; position: absolute;
+    }
+    .sess-bar-prev {
+      top: 1px; background: var(--border); border-radius: 2px; opacity: 0.7;
+    }
+    .sess-bar-curr {
+      top: 12px; border-radius: 2px;
+    }
+    .sess-delta-tag {
+      font-size: 0.7rem; font-weight: 600; white-space: nowrap;
+    }
+
     /* Mix-shift summary card */
     .mix-shift-card { padding: 20px; }
     .mix-shift-card h3 {
@@ -585,6 +619,9 @@
 
     <!-- Mix-Shift Counterfactual -->
     <div class="card mix-shift-card" id="mix-shift-card"></div>
+
+    <!-- Session Volume Impact -->
+    <div class="card cvr-movement-card" id="session-volume-card"></div>
 
     <!-- Ranked contributors -->
     <div class="card breakdown-card">
@@ -1020,6 +1057,9 @@ function render(rawRows, filename) {
   // ── Mix-Shift Counterfactual ────────────────
   renderMixShift(rows, tPrevS, tCurrS, tPrevCvr, tCurrCvr);
 
+  // ── Session Volume Impact ───────────────────
+  renderSessionVolume(rows, tDelta);
+
   // Source rows — one per utm_source, expand to see effect breakdown
   const maxNetAbs = sourceGroups.length > 0 ? Math.abs(sourceGroups[0].netValue) : 1;
   const contribList = document.getElementById('contributors-list');
@@ -1161,22 +1201,22 @@ function renderCvrMovement(rows, blendedPrev, blendedCurr) {
   // Only sources with meaningful sessions
   const minSess = 20;
   const qualified = rows.filter(r => r.prevSess >= minSess || r.currS >= minSess);
-  // Sort by prev CVR descending (highest converting at top)
-  const sorted = [...qualified].sort((a, b) => b.prevCvr - a.prevCvr);
+  // Sort by current transactions descending (highest first)
+  const sorted = [...qualified].sort((a, b) => (b.currS * b.currC) - (a.currS * a.currC));
 
   // Find max absolute CVR change for bar scaling
   const maxAbsDelta = Math.max(...sorted.map(r => Math.abs(r.currC - r.prevCvr)), 0.001);
 
   let html = `
     <h3>CVR Movement by Source</h3>
-    <p class="card__sub">Each row shows how a source's CVR changed. Sorted by previous CVR (highest first). Bar length = magnitude of change.</p>
+    <p class="card__sub">Each row shows how a source's CVR changed. Sorted by transactions (highest first). Bar length = magnitude of CVR change.</p>
     <div class="cvr-chart">
       <div class="cvr-chart-row cvr-chart-row--header">
         <div>Source</div>
         <div class="r">Prev CVR</div>
         <div style="text-align:center">CVR Change</div>
         <div class="r">Curr CVR</div>
-        <div class="r">Sessions</div>
+        <div class="r">Txns</div>
       </div>`;
 
   sorted.forEach(r => {
@@ -1212,7 +1252,7 @@ function renderCvrMovement(rows, blendedPrev, blendedCurr) {
           <div class="cvr-bar-label" style="${labelStyle}">${fmtPP(deltaPP)}</div>
         </div>
         <div class="r" style="font-size:0.78rem">${(r.currC * 100).toFixed(2)}%</div>
-        <div class="r" style="font-size:0.78rem;color:var(--text-secondary)">${fmtK(r.currS)}</div>
+        <div class="r" style="font-size:0.78rem;font-weight:600">${fmtN(Math.round(r.currS * r.currC))}</div>
       </div>`;
   });
 
@@ -1314,6 +1354,60 @@ function renderMixShift(rows, tPrevS, tCurrS, tPrevCvr, tCurrCvr) {
     </div>
   `;
 
+  card.innerHTML = html;
+}
+
+// ─────────────────────────────────────────────
+// SESSION VOLUME IMPACT
+// ─────────────────────────────────────────────
+function renderSessionVolume(rows, tDelta) {
+  const card = document.getElementById('session-volume-card');
+  // Sort by current sessions descending (top volume first)
+  const sorted = [...rows].sort((a, b) => b.currS - a.currS);
+  const maxSess = Math.max(...sorted.map(r => Math.max(r.currS, r.prevSess)), 1);
+
+  let html = `
+    <h3>Session Volume by Source</h3>
+    <p class="card__sub">Sources ordered by current sessions (highest first). Gray = previous sessions, colored = current. Shows session change and its contribution to conversion delta.</p>
+    <div class="cvr-chart">
+      <div class="sess-chart-row sess-chart-row--header">
+        <div>Source</div>
+        <div class="r">Sessions</div>
+        <div>Prev vs Curr Sessions</div>
+        <div class="r">Sess Δ</div>
+        <div class="r">Conv. Δ</div>
+      </div>`;
+
+  sorted.forEach(r => {
+    const srcLabel = r.source || '(direct / none)';
+    const shortSrc = srcLabel.length > 22 ? srcLabel.slice(0, 20) + '…' : srcLabel;
+    const d = decompose(r.prevSess, r.prevCvr, r.currS, r.currC);
+    const sessDelta = r.currS - r.prevSess;
+    const sessPct = r.prevSess > 0 ? (sessDelta / r.prevSess * 100) : (r.currS > 0 ? 100 : 0);
+
+    const prevBarW = Math.max(1, Math.round(r.prevSess / maxSess * 100));
+    const currBarW = Math.max(1, Math.round(r.currS / maxSess * 100));
+    const currBarColor = sessDelta >= 0 ? 'var(--positive)' : 'var(--negative)';
+
+    const convDelta = d.totalDelta;
+
+    html += `
+      <div class="sess-chart-row">
+        <div class="cvr-src-label" title="${esc(srcLabel)}">
+          <span class="ch-dot" style="background:${esc(chColor(r.channel))}"></span>
+          ${esc(shortSrc)}
+        </div>
+        <div class="r" style="font-size:0.78rem;font-weight:600">${fmtK(r.currS)}</div>
+        <div class="sess-bars">
+          <div class="sess-bar-prev" style="width:${prevBarW}%"></div>
+          <div class="sess-bar-curr" style="width:${currBarW}%;background:${currBarColor}"></div>
+        </div>
+        <div class="r sess-delta-tag ${cls(sessDelta)}">${fmtS(Math.round(sessDelta))}<br><span style="font-size:0.65rem;color:var(--text-secondary)">${fmtP(sessPct, 0)}</span></div>
+        <div class="r" style="font-weight:600;font-size:0.78rem" class="${cls(convDelta)}"><span class="${cls(convDelta)}">${fmtS(Math.round(convDelta))}</span></div>
+      </div>`;
+  });
+
+  html += '</div>';
   card.innerHTML = html;
 }
 
