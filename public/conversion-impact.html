@@ -1417,7 +1417,8 @@ function renderMixShift(rows, tPrevS, tCurrS, tPrevCvr, tCurrCvr) {
 function renderCvrBuckets(rows) {
   const card = document.getElementById('cvr-bucket-card');
   const minSess = 50;
-  const qualified = rows.filter(r => (r.currS + r.prevSess) >= minSess);
+  // Need current sessions > 0 for a meaningful CVR, and at least 50 sessions in either period
+  const qualified = rows.filter(r => r.currS > 0 && (r.currS >= minSess || r.prevSess >= minSess));
 
   const BUCKETS = [
     { key: 'extreme_low', label: 'Extremely Low',  range: '0 – 0.30%', min: 0,     max: 0.003,  color: '#dc2626' },
@@ -1430,11 +1431,12 @@ function renderCvrBuckets(rows) {
   // Assign each source to a bucket based on current CVR
   const bucketData = BUCKETS.map(b => ({ ...b, prevS: 0, currS: 0, sources: [] }));
   qualified.forEach(r => {
+    const label = (r.source || '(direct)') + ' ' + (r.currC * 100).toFixed(2) + '%';
     for (const bd of bucketData) {
       if (r.currC >= bd.min && r.currC < bd.max) {
         bd.prevS += r.prevSess;
         bd.currS += r.currS;
-        bd.sources.push(r.source || '(direct)');
+        bd.sources.push(label);
         break;
       }
     }
