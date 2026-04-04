@@ -1519,12 +1519,15 @@ function renderCvrBuckets(rows) {
         <div class="r sess-delta-tag ${deltaClass}" style="font-weight:700">${fmtS(Math.round(delta))}</div>
         <div class="r sess-delta-tag ${deltaClass}">${fmtP(deltaPct, 0)}</div>
       </div>
-      <div style="padding:2px 0 8px 40px">
-        <div style="display:grid;grid-template-columns:130px 55px 55px 50px 50px;gap:6px;padding:2px 0;font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);border-bottom:1px solid var(--border)">
-          <div>Source</div><div class="r">Prev</div><div class="r">Curr</div><div class="r">Δ</div><div class="r">CVR</div>
+      <details style="padding:0 0 4px 40px">
+        <summary style="font-size:0.72rem;color:var(--fb-blue);cursor:pointer;padding:4px 0;user-select:none">Show ${b.sources.length} source${b.sources.length !== 1 ? 's' : ''}</summary>
+        <div style="padding:2px 0 4px">
+          <div style="display:grid;grid-template-columns:130px 55px 55px 50px 50px;gap:6px;padding:2px 0;font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);border-bottom:1px solid var(--border)">
+            <div>Source</div><div class="r">Prev</div><div class="r">Curr</div><div class="r">Δ</div><div class="r">CVR</div>
+          </div>
+          ${srcRows || '<div style="font-size:0.73rem;color:var(--text-secondary);padding:4px 0">—</div>'}
         </div>
-        ${srcRows || '<div style="font-size:0.73rem;color:var(--text-secondary);padding:4px 0">—</div>'}
-      </div>`;
+      </details>`;
   });
 
   html += '</div>';
