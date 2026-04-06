@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Facebook Campaign Analysis</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --fb-blue: #1877f2;
+      --bg: #f0f2f5;
+      --surface: #fff;
+      --text-primary: #1c1e21;
+      --text-secondary: #65676b;
+      --border: #dddfe2;
+      --positive: #1a7f37;
+      --positive-bg: #dcfce7;
+      --negative: #c0392b;
+      --negative-bg: #fee2e2;
+      --shadow: 0 1px 3px rgba(0,0,0,0.12);
+      --radius: 8px;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg); color: var(--text-primary); line-height: 1.5; min-height: 100vh;
+    }
+
+    header {
+      background: var(--fb-blue); color: white; padding: 16px 24px;
+      display: flex; align-items: center; gap: 16px;
+    }
+    .header__back {
+      color: rgba(255,255,255,0.85); text-decoration: none; font-size: 0.875rem;
+      border: 1px solid rgba(255,255,255,0.3); padding: 4px 10px; border-radius: 6px; white-space: nowrap;
+    }
+    .header__back:hover { background: rgba(255,255,255,0.15); color: white; }
+    header h1 { font-size: 1.2rem; font-weight: 700; }
+    header p { font-size: 0.8rem; opacity: 0.75; }
+
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 16px; }
+
+    .card { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); padding: 20px; }
+    .card h3 {
+      font-size: 0.82rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--text-secondary); margin-bottom: 12px;
+    }
+
+    /* Controls */
+    .controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
+    .ctrl-group { display: flex; flex-direction: column; gap: 4px; }
+    .ctrl-group label { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary); }
+    .ctrl-group select, .ctrl-group input {
+      padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px;
+      font-size: 0.85rem; background: white; color: var(--text-primary);
+    }
+    .ctrl-group select { min-width: 140px; }
+    .btn {
+      padding: 8px 18px; border: none; border-radius: 6px; cursor: pointer;
+      font-size: 0.85rem; font-weight: 600; background: var(--fb-blue); color: white;
+    }
+    .btn:hover { background: #166fe5; }
+    .btn:disabled { opacity: 0.5; cursor: default; }
+
+    /* Campaign selector */
+    #campaign-select { min-width: 320px; }
+
+    /* Status */
+    .status { font-size: 0.82rem; color: var(--text-secondary); padding: 20px 0; text-align: center; }
+    .status.error { color: var(--negative); }
+    .spinner { display: inline-block; width: 18px; height: 18px; border: 2px solid var(--border); border-top-color: var(--fb-blue); border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; margin-right: 6px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* KPI row */
+    .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 16px; }
+    .kpi { background: var(--bg); border-radius: 6px; padding: 12px 14px; }
+    .kpi__label { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary); margin-bottom: 2px; }
+    .kpi__value { font-size: 1.3rem; font-weight: 700; }
+
+    /* Daily table */
+    .daily-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    .daily-table th {
+      text-align: left; padding: 7px 10px; font-size: 0.68rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary);
+      border-bottom: 2px solid var(--border); white-space: nowrap;
+    }
+    .daily-table th.r { text-align: right; }
+    .daily-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    .daily-table td.r { text-align: right; }
+    .daily-table tbody tr:last-child td { border-bottom: none; }
+    .daily-table tfoot td { font-weight: 700; background: var(--bg); border-top: 2px solid var(--border); }
+
+    .pos { color: var(--positive); }
+    .neg { color: var(--negative); }
+
+    /* Spark bars */
+    .spark-cell { width: 80px; }
+    .spark-bar { height: 16px; border-radius: 2px; min-width: 2px; }
+
+    /* DoD column */
+    .dod { font-size: 0.72rem; white-space: nowrap; }
+
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+
+<header>
+  <a class="header__back" href="/">&#8592; Ads Viewer</a>
+  <div>
+    <h1>Facebook Campaign Analysis</h1>
+    <p>Analyze campaign performance day-by-day over a date range</p>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <!-- Step 1: Account & date range -->
+  <div class="card" id="setup-card">
+    <h3>Select Account & Date Range</h3>
+    <div class="controls">
+      <div class="ctrl-group">
+        <label>Ad Account</label>
+        <select id="account-select"><option value="">Loading...</option></select>
+      </div>
+      <div class="ctrl-group">
+        <label>Start Date</label>
+        <input type="date" id="date-start">
+      </div>
+      <div class="ctrl-group">
+        <label>End Date</label>
+        <input type="date" id="date-end">
+      </div>
+      <button class="btn" id="btn-load-campaigns">Load Campaigns</button>
+    </div>
+    <div id="setup-status" class="status hidden"></div>
+  </div>
+
+  <!-- Step 2: Campaign selector -->
+  <div class="card hidden" id="campaign-card">
+    <h3>Select Campaign to Analyze</h3>
+    <div class="controls">
+      <div class="ctrl-group">
+        <label>Campaign (by sessions)</label>
+        <select id="campaign-select"><option value="">-- Pick a campaign --</option></select>
+      </div>
+      <button class="btn" id="btn-analyze">Analyze</button>
+    </div>
+    <div id="campaign-status" class="status hidden"></div>
+  </div>
+
+  <!-- Step 3: Results -->
+  <div class="card hidden" id="results-card">
+    <div id="results-kpis" class="kpi-row"></div>
+    <h3 id="results-title"></h3>
+    <div style="overflow-x:auto">
+      <table class="daily-table" id="daily-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th class="r">Spend</th>
+            <th class="r">Impr.</th>
+            <th class="r">CPM</th>
+            <th class="r">Clicks</th>
+            <th class="r">OB Clicks</th>
+            <th class="r">LP Views</th>
+            <th class="r">ATC</th>
+            <th class="r">Checkout</th>
+            <th class="r">Purchases</th>
+            <th class="r">CPA</th>
+            <th class="r">ROAS</th>
+            <th>Spend</th>
+            <th>Purch.</th>
+          </tr>
+        </thead>
+        <tbody id="daily-tbody"></tbody>
+        <tfoot id="daily-tfoot"></tfoot>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ── Helpers ──────────────────────────────
+const fmtN = (n, d=0) => isFinite(n) ? n.toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d}) : '—';
+const fmtD = n => isFinite(n) ? '$'+fmtN(n, 2) : '—';
+const fmtP = (n, d=1) => isFinite(n) ? n.toFixed(d)+'%' : '—';
+const fmtS = (n, d=0) => { if(!isFinite(n)) return '—'; return (n>0?'+':'')+fmtN(n,d); };
+const cls = n => n > 0 ? 'pos' : n < 0 ? 'neg' : '';
+
+function dodCell(curr, prev) {
+  if (prev == null || prev === 0) return '';
+  const pct = (curr - prev) / prev * 100;
+  return `<span class="dod ${cls(pct)}">${fmtS(pct, 0)}%</span>`;
+}
+
+// ── State ────────────────────────────────
+let campaigns = [];
+
+// ── Auth check ───────────────────────────
+async function checkAuth() {
+  const resp = await fetch('/api/auth-status');
+  const data = await resp.json();
+  if (!data.authenticated) {
+    window.location.href = '/auth/facebook';
+    return false;
+  }
+  return true;
+}
+
+async function loadAccounts() {
+  const sel = document.getElementById('account-select');
+  try {
+    const resp = await fetch('/api/ad-accounts');
+    const data = await resp.json();
+    if (data.error) { sel.innerHTML = '<option value="">Error loading accounts</option>'; return; }
+    sel.innerHTML = '<option value="">-- Choose an account --</option>';
+    (data.accounts || []).forEach(a => {
+      const opt = document.createElement('option');
+      opt.value = a.id;
+      opt.textContent = `${a.name} (${a.id})`;
+      sel.appendChild(opt);
+    });
+  } catch (e) {
+    sel.innerHTML = '<option value="">Failed to load</option>';
+  }
+}
+
+// ── Load campaigns ───────────────────────
+document.getElementById('btn-load-campaigns').addEventListener('click', async () => {
+  const accountId = document.getElementById('account-select').value;
+  const since = document.getElementById('date-start').value;
+  const until = document.getElementById('date-end').value;
+  if (!accountId || !since || !until) { showStatus('setup-status', 'Please select account and date range.', true); return; }
+
+  showStatus('setup-status', '<span class="spinner"></span> Loading campaigns...', false);
+  try {
+    const resp = await fetch(`/api/campaign-insights?account_id=${accountId}&since=${since}&until=${until}`);
+    const data = await resp.json();
+    if (data.error) { showStatus('setup-status', data.error, true); return; }
+
+    campaigns = data.campaigns || [];
+    // Sort by outbound_clicks (proxy for sessions) descending
+    campaigns.sort((a, b) => (b.outbound_clicks || b.clicks) - (a.outbound_clicks || a.clicks));
+
+    const sel = document.getElementById('campaign-select');
+    sel.innerHTML = '<option value="">-- Pick a campaign --</option>';
+    campaigns.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.campaign_id;
+      const clicks = c.outbound_clicks || c.clicks;
+      opt.textContent = `${c.campaign_name}  —  ${fmtN(clicks)} clicks · $${fmtN(c.spend, 2)} spend`;
+      sel.appendChild(opt);
+    });
+
+    document.getElementById('campaign-card').classList.remove('hidden');
+    hideStatus('setup-status');
+  } catch (e) {
+    showStatus('setup-status', e.message, true);
+  }
+});
+
+// ── Analyze campaign ─────────────────────
+document.getElementById('btn-analyze').addEventListener('click', async () => {
+  const accountId = document.getElementById('account-select').value;
+  const campaignId = document.getElementById('campaign-select').value;
+  const since = document.getElementById('date-start').value;
+  const until = document.getElementById('date-end').value;
+  if (!campaignId) { showStatus('campaign-status', 'Please select a campaign.', true); return; }
+
+  showStatus('campaign-status', '<span class="spinner"></span> Fetching daily data...', false);
+  try {
+    const resp = await fetch(`/api/campaign-daily?account_id=${accountId}&campaign_id=${campaignId}&since=${since}&until=${until}`);
+    const data = await resp.json();
+    if (data.error) { showStatus('campaign-status', data.error, true); return; }
+
+    const campaign = campaigns.find(c => c.campaign_id === campaignId);
+    renderResults(data.days || [], campaign);
+    hideStatus('campaign-status');
+  } catch (e) {
+    showStatus('campaign-status', e.message, true);
+  }
+});
+
+// ── Render ────────────────────────────────
+function renderResults(days, campaign) {
+  const card = document.getElementById('results-card');
+  card.classList.remove('hidden');
+
+  // Sort by date ascending
+  days.sort((a, b) => a.date.localeCompare(b.date));
+
+  // Totals
+  let tSpend=0, tImpr=0, tClicks=0, tOB=0, tLP=0, tATC=0, tIC=0, tPurch=0;
+  days.forEach(d => {
+    tSpend += d.spend; tImpr += d.impressions; tClicks += d.clicks;
+    tOB += d.outbound_clicks; tLP += d.landing_page_views;
+    tATC += d.add_to_cart; tIC += d.initiate_checkout; tPurch += d.purchases;
+  });
+
+  const tCPA = tPurch > 0 ? tSpend / tPurch : 0;
+  const tCPM = tImpr > 0 ? (tSpend / tImpr) * 1000 : 0;
+
+  // KPIs
+  document.getElementById('results-kpis').innerHTML = `
+    <div class="kpi"><div class="kpi__label">Total Spend</div><div class="kpi__value">${fmtD(tSpend)}</div></div>
+    <div class="kpi"><div class="kpi__label">Impressions</div><div class="kpi__value">${fmtN(tImpr)}</div></div>
+    <div class="kpi"><div class="kpi__label">OB Clicks</div><div class="kpi__value">${fmtN(tOB)}</div></div>
+    <div class="kpi"><div class="kpi__label">LP Views</div><div class="kpi__value">${fmtN(tLP)}</div></div>
+    <div class="kpi"><div class="kpi__label">Add to Cart</div><div class="kpi__value">${fmtN(tATC)}</div></div>
+    <div class="kpi"><div class="kpi__label">Purchases</div><div class="kpi__value">${fmtN(tPurch)}</div></div>
+    <div class="kpi"><div class="kpi__label">CPA</div><div class="kpi__value">${fmtD(tCPA)}</div></div>
+    <div class="kpi"><div class="kpi__label">CPM</div><div class="kpi__value">${fmtD(tCPM)}</div></div>
+  `;
+
+  document.getElementById('results-title').textContent =
+    `Daily Breakdown — ${campaign ? campaign.campaign_name : 'Campaign'}`;
+
+  // Max values for spark bars
+  const maxSpend = Math.max(...days.map(d => d.spend), 1);
+  const maxPurch = Math.max(...days.map(d => d.purchases), 1);
+
+  const tbody = document.getElementById('daily-tbody');
+  tbody.innerHTML = '';
+
+  days.forEach((d, i) => {
+    const prev = i > 0 ? days[i - 1] : null;
+    const cpa = d.purchases > 0 ? d.spend / d.purchases : null;
+    const spendBarW = Math.round(d.spend / maxSpend * 100);
+    const purchBarW = Math.round(d.purchases / maxPurch * 100);
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td style="font-weight:600;white-space:nowrap">${d.date}</td>
+      <td class="r">${fmtD(d.spend)} ${prev ? dodCell(d.spend, prev.spend) : ''}</td>
+      <td class="r">${fmtN(d.impressions)} ${prev ? dodCell(d.impressions, prev.impressions) : ''}</td>
+      <td class="r">${fmtD(d.cpm)}</td>
+      <td class="r">${fmtN(d.clicks)}</td>
+      <td class="r">${fmtN(d.outbound_clicks)} ${prev ? dodCell(d.outbound_clicks, prev.outbound_clicks) : ''}</td>
+      <td class="r">${fmtN(d.landing_page_views)} ${prev ? dodCell(d.landing_page_views, prev.landing_page_views) : ''}</td>
+      <td class="r">${fmtN(d.add_to_cart)} ${prev ? dodCell(d.add_to_cart, prev.add_to_cart) : ''}</td>
+      <td class="r">${fmtN(d.initiate_checkout)}</td>
+      <td class="r" style="font-weight:700">${fmtN(d.purchases)} ${prev ? dodCell(d.purchases, prev.purchases) : ''}</td>
+      <td class="r">${cpa != null ? fmtD(cpa) : '—'}</td>
+      <td class="r">—</td>
+      <td class="spark-cell"><div class="spark-bar" style="width:${spendBarW}%;background:var(--fb-blue);opacity:0.5"></div></td>
+      <td class="spark-cell"><div class="spark-bar" style="width:${purchBarW}%;background:${d.purchases > 0 ? 'var(--positive)' : 'var(--border)'}"></div></td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  // Totals row
+  document.getElementById('daily-tfoot').innerHTML = `
+    <tr>
+      <td>Total</td>
+      <td class="r">${fmtD(tSpend)}</td>
+      <td class="r">${fmtN(tImpr)}</td>
+      <td class="r">${fmtD(tCPM)}</td>
+      <td class="r">${fmtN(tClicks)}</td>
+      <td class="r">${fmtN(tOB)}</td>
+      <td class="r">${fmtN(tLP)}</td>
+      <td class="r">${fmtN(tATC)}</td>
+      <td class="r">${fmtN(tIC)}</td>
+      <td class="r" style="font-weight:700">${fmtN(tPurch)}</td>
+      <td class="r">${fmtD(tCPA)}</td>
+      <td class="r">—</td>
+      <td></td>
+      <td></td>
+    </tr>
+  `;
+}
+
+// ── Utils ─────────────────────────────────
+function showStatus(id, msg, isError) {
+  const el = document.getElementById(id);
+  el.innerHTML = msg;
+  el.className = 'status' + (isError ? ' error' : '');
+  el.classList.remove('hidden');
+}
+function hideStatus(id) {
+  document.getElementById(id).classList.add('hidden');
+}
+
+// ── Init ──────────────────────────────────
+document.addEventListener('DOMContentLoaded', async () => {
+  // Default date range: last 7 days
+  const today = new Date();
+  const weekAgo = new Date(today);
+  weekAgo.setDate(weekAgo.getDate() - 7);
+  document.getElementById('date-end').value = today.toISOString().slice(0, 10);
+  document.getElementById('date-start').value = weekAgo.toISOString().slice(0, 10);
+
+  if (await checkAuth()) {
+    await loadAccounts();
+  }
+});
+</script>
+</body>
+</html>
