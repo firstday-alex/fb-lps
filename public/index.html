@@ -9,6 +9,10 @@
 <body>
   <header>
     <h1>Facebook Ads &mdash; Top Spend</h1>
+    <nav style="display:flex;gap:8px;margin-left:auto;margin-right:16px">
+      <a href="/conversion-impact.html" style="color:rgba(255,255,255,0.85);text-decoration:none;font-size:0.82rem;border:1px solid rgba(255,255,255,0.3);padding:5px 12px;border-radius:6px;white-space:nowrap">CVR Diagnosis by UTM</a>
+      <a href="/campaign-analysis.html" style="color:rgba(255,255,255,0.85);text-decoration:none;font-size:0.82rem;border:1px solid rgba(255,255,255,0.3);padding:5px 12px;border-radius:6px;white-space:nowrap">Campaign Analysis</a>
+    </nav>
     <div id="auth-section"></div>
   </header>
 
@@ -53,7 +57,28 @@
       <span id="campaign-filter-count" class="filter-count"></span>
     </div>
 
-    <section id="ads-grid" class="hidden"></section>
+    <div id="table-container" class="hidden">
+      <table id="ads-table">
+        <thead>
+          <tr>
+            <th class="col-rank">#</th>
+            <th class="col-name">Ad Name</th>
+            <th class="col-lp">Landing Page</th>
+            <th class="col-num">Spend</th>
+            <th class="col-num">CPM</th>
+            <th class="col-num">Impr</th>
+            <th class="col-num">Out. Clicks</th>
+            <th class="col-num">LP Views</th>
+            <th class="col-num col-shopify">Sessions</th>
+            <th class="col-num col-shopify">Bounce</th>
+            <th class="col-num col-shopify">ATC</th>
+            <th class="col-num col-shopify">CVR</th>
+            <th class="col-num col-shopify">Orders</th>
+          </tr>
+        </thead>
+        <tbody id="ads-tbody"></tbody>
+      </table>
+    </div>
 
     <div id="load-more-container">
       <button id="load-more-btn" class="btn btn-load-more" onclick="loadMoreAds()" style="display:none">Load More Ads</button>
@@ -63,6 +88,14 @@
       <p>No ads with spend found for the selected date range.</p>
     </div>
   </main>
+
+  <!-- Detail panel (slide-in) -->
+  <div id="detail-overlay" class="hidden" onclick="closeDetail(event)">
+    <div id="detail-panel">
+      <button class="detail-close" onclick="closeDetail()">&times;</button>
+      <div id="detail-content"></div>
+    </div>
+  </div>
 
   <script src="app.js"></script>
 </body>

@@ -3,12 +3,10 @@ document.addEventListener('DOMContentLoaded', () => {
   checkForErrors();
   document.getElementById('load-ads-btn').addEventListener('click', loadTopAds);
 
-  // Toggle custom date inputs
   const dateRange = document.getElementById('date-range');
   const dateStart = document.getElementById('date-start');
   const dateEnd = document.getElementById('date-end');
 
-  // Default custom dates to last 7 days
   const today = new Date();
   const weekAgo = new Date(today);
   weekAgo.setDate(weekAgo.getDate() - 7);
@@ -28,10 +26,8 @@ async function checkAuthStatus() {
   try {
     const res = await fetch('/api/auth-status');
     const data = await res.json();
-
     const authSection = document.getElementById('auth-section');
     const accountSection = document.getElementById('account-section');
-
     if (data.authenticated) {
       authSection.innerHTML = '<button class="btn btn-logout" onclick="logout()">Logout</button>';
       accountSection.classList.remove('hidden');
@@ -63,13 +59,10 @@ async function loadAdAccounts() {
   try {
     const res = await fetch('/api/ad-accounts');
     if (res.status === 401) { checkAuthStatus(); return; }
-
     const data = await res.json();
     if (data.error) { showError(data.error); return; }
-
     const select = document.getElementById('account-select');
     select.innerHTML = '<option value="">-- Choose an account --</option>';
-
     data.accounts.forEach(acc => {
       const option = document.createElement('option');
       option.value = acc.id;
@@ -81,13 +74,14 @@ async function loadAdAccounts() {
   }
 }
 
-// --- Top Ads ---
+// --- State ---
 
-// Pagination & filter state
 let _loadMoreState = null;
-let _allAds = [];        // full list across all loaded pages
-let _allMetrics = {};    // merged metrics across all pages
+let _allAds = [];
+let _allMetrics = {};
 let _shopifyDays = 1;
+
+// --- Load Ads ---
 
 async function loadTopAds() {
   const accountId = document.getElementById('account-select').value;
@@ -95,8 +89,8 @@ async function loadTopAds() {
 
   showLoading(true);
   hideError();
-  document.getElementById('ads-grid').classList.add('hidden');
-  document.getElementById('ads-grid').innerHTML = '';
+  document.getElementById('table-container').classList.add('hidden');
+  document.getElementById('ads-tbody').innerHTML = '';
   document.getElementById('empty-state').classList.add('hidden');
   document.getElementById('campaign-filter-bar').classList.add('hidden');
   setLoadMoreVisible(false);
@@ -122,7 +116,6 @@ async function loadTopAds() {
     }
 
     const adsLimit = document.getElementById('ads-limit').value || '25';
-
     const adsData = await fetchAdsPage(accountId, adsLimit, adsDateParam, null);
     if (!adsData) return;
 
@@ -133,7 +126,7 @@ async function loadTopAds() {
 
     _shopifyDays = shopifyDays;
 
-    // Shopify metrics for initial batch
+    // Fetch Shopify metrics
     let metricsData = null;
     try {
       const adList = adsData.ads.map(a => ({ ad_name: a.ad_name, destination_url: a.destination_url }));
@@ -147,9 +140,8 @@ async function loadTopAds() {
     populateCampaignFilter(_allAds);
     applyFilter();
 
-    // Save state for load more
     if (adsData.has_more && adsData.next_cursor) {
-      _loadMoreState = { accountId, adsDateParam, shopifyDays, adsLimit, nextCursor: adsData.next_cursor, totalLoaded: adsData.ads.length };
+      _loadMoreState = { accountId, adsDateParam, shopifyDays, adsLimit, nextCursor: adsData.next_cursor };
       setLoadMoreVisible(true);
     }
   } catch {
@@ -161,15 +153,13 @@ async function loadTopAds() {
 
 async function loadMoreAds() {
   if (!_loadMoreState) return;
-  const { accountId, adsDateParam, shopifyDays, adsLimit, nextCursor, totalLoaded } = _loadMoreState;
-
+  const { accountId, adsDateParam, shopifyDays, adsLimit, nextCursor } = _loadMoreState;
   setLoadMoreLoading(true);
 
   try {
     const adsData = await fetchAdsPage(accountId, adsLimit, adsDateParam, nextCursor);
     if (!adsData || !adsData.ads.length) { setLoadMoreVisible(false); return; }
 
-    // Shopify metrics for this batch
     try {
       const adList = adsData.ads.map(a => ({ ad_name: a.ad_name, destination_url: a.destination_url }));
       const metricsRes = await fetch(`/api/shopify-metrics?days=${shopifyDays}&ads=` + encodeURIComponent(JSON.stringify(adList)));
@@ -184,7 +174,7 @@ async function loadMoreAds() {
     applyFilter();
 
     if (adsData.has_more && adsData.next_cursor) {
-      _loadMoreState = { ..._loadMoreState, nextCursor: adsData.next_cursor, totalLoaded: totalLoaded + adsData.ads.length };
+      _loadMoreState = { ..._loadMoreState, nextCursor: adsData.next_cursor };
       setLoadMoreVisible(true);
     } else {
       _loadMoreState = null;
@@ -198,7 +188,7 @@ async function loadMoreAds() {
 }
 
 async function fetchAdsPage(accountId, adsLimit, adsDateParam, after) {
-  const url = `/api/top-ads?account_id=${encodeURIComponent(accountId)}&limit=${adsLimit}${adsDateParam}`
+  const url = `/api/top-ads?lite=1&account_id=${encodeURIComponent(accountId)}&limit=${adsLimit}${adsDateParam}`
     + (after ? `&after=${encodeURIComponent(after)}` : '');
   const res = await fetch(url);
   if (res.status === 401) { checkAuthStatus(); return null; }
@@ -212,7 +202,7 @@ async function fetchAdsPage(accountId, adsLimit, adsDateParam, after) {
 function populateCampaignFilter(ads) {
   const select = document.getElementById('campaign-filter');
   const current = select.value;
-  const campaigns = new Map(); // id → name
+  const campaigns = new Map();
   ads.forEach(a => { if (a.campaign_id) campaigns.set(a.campaign_id, a.campaign_name || a.campaign_id); });
 
   select.innerHTML = '<option value="">All Campaigns</option>';
@@ -239,40 +229,231 @@ function applyFilter() {
   const campaignId = document.getElementById('campaign-filter').value;
   const filtered = campaignId ? _allAds.filter(a => a.campaign_id === campaignId) : _allAds;
 
-  const grid = document.getElementById('ads-grid');
-  grid.innerHTML = '';
-  grid.classList.remove('hidden');
+  const tbody = document.getElementById('ads-tbody');
+  tbody.innerHTML = '';
+  document.getElementById('table-container').classList.remove('hidden');
 
-  const metricsObj = { by_ad: _allMetrics };
-  filtered.forEach((ad, i) => appendAdCard(ad, i, metricsObj));
+  filtered.forEach((ad, i) => {
+    const row = buildTableRow(ad, i, _allMetrics);
+    tbody.appendChild(row);
+  });
 
   const countEl = document.getElementById('campaign-filter-count');
   countEl.textContent = campaignId ? `${filtered.length} ad${filtered.length !== 1 ? 's' : ''}` : '';
 }
 
+// --- Table rendering ---
+
+function buildTableRow(ad, index, metricsMap) {
+  const tr = document.createElement('tr');
+  tr.className = 'ad-row';
+  tr.onclick = () => openDetail(ad, metricsMap);
+
+  const parsed = ad.ad_name_parsed || parseAdNameClient(ad.ad_name || '');
+  const metrics = metricsMap[ad.ad_name] || null;
+
+  const impressions = parseFloat(ad.impressions) || 0;
+  const outClicks = ad.outbound_clicks ?? null;
+  const lpViews = ad.landing_page_views ?? null;
+
+  // Build the ad name display: show segments as tags
+  const segmentsHtml = buildSegmentsHtml(parsed, ad);
+
+  // Landing page display
+  const lpDisplay = parsed.landing_page
+    ? escapeHtml(parsed.landing_page === 'HOMEPAGE' ? '/' : '/' + parsed.landing_page)
+    : '<span class="muted">--</span>';
+
+  tr.innerHTML = `
+    <td class="col-rank">${index + 1}</td>
+    <td class="col-name">
+      <div class="ad-name-segments">${segmentsHtml}</div>
+      <div class="ad-name-campaign">${escapeHtml(ad.campaign_name || '')} <span class="muted">${escapeHtml(ad.adset_name || '')}</span></div>
+    </td>
+    <td class="col-lp">${lpDisplay}</td>
+    <td class="col-num">$${parseFloat(ad.spend || 0).toFixed(2)}</td>
+    <td class="col-num">${ad.cpm !== null ? '$' + ad.cpm.toFixed(2) : '--'}</td>
+    <td class="col-num">${formatNumber(impressions)}</td>
+    <td class="col-num">${outClicks !== null ? formatNumber(outClicks) : '--'}</td>
+    <td class="col-num">${lpViews !== null ? formatNumber(lpViews) : '--'}</td>
+    <td class="col-num col-shopify">${metrics ? formatNumber(metrics.sessions) : '--'}</td>
+    <td class="col-num col-shopify">${metrics ? formatPct(metrics.bounce_rate) : '--'}</td>
+    <td class="col-num col-shopify">${metrics ? formatPct(metrics.added_to_cart_rate) : '--'}</td>
+    <td class="col-num col-shopify">${metrics ? formatPct(metrics.conversion_rate) : '--'}</td>
+    <td class="col-num col-shopify">${metrics ? metrics.sessions_that_completed_checkout : '--'}</td>
+  `;
+
+  return tr;
+}
+
+function buildSegmentsHtml(parsed, ad) {
+  const parts = [];
+
+  // Show parsed segments as inline tags
+  if (parsed.segments && parsed.segments.length > 0) {
+    parsed.segments.forEach((seg, i) => {
+      // First segment is typically the brand
+      const cls = i === 0 ? 'seg seg-brand' : 'seg';
+      parts.push(`<span class="${cls}">${escapeHtml(seg)}</span>`);
+    });
+  } else {
+    // Fallback: show raw ad name truncated
+    const name = ad.ad_name || '(unnamed)';
+    parts.push(`<span class="seg">${escapeHtml(name.length > 40 ? name.slice(0, 40) + '...' : name)}</span>`);
+  }
+
+  // Partnership badge
+  if (parsed.is_partnership) {
+    const creator = parsed.creator ? escapeHtml(parsed.creator) : 'partner';
+    parts.push(`<span class="seg seg-partner">${creator}</span>`);
+  }
+
+  return parts.join(' ');
+}
+
+// Client-side ad name parser (fallback if server didn't provide parsed data)
+function parseAdNameClient(adName) {
+  if (!adName) return { segments: [], landing_page: null, landing_page_url: null, is_partnership: false, creator: null };
+
+  const nameLower = adName.toLowerCase();
+  const isPartnership = nameLower.includes(':ext-') || nameLower.includes('creator_wl:ext') || /\bext[-_]creator\b/.test(nameLower);
+
+  let creator = null;
+  if (isPartnership) {
+    const m = adName.match(/:ext-([^_:]+)/i);
+    if (m) creator = m[1];
+  }
+
+  let landingPage = null;
+  let landingPageUrl = null;
+  const urlMatch = adName.match(/(?:^|[_:-])url[:_]([a-zA-Z0-9-]+)/i);
+  if (urlMatch) {
+    landingPage = urlMatch[1];
+    const domain = nameLower.startsWith('trmv') ? 'therearemanyversions.com' : 'firstday.com';
+    landingPageUrl = landingPage.toUpperCase() === 'HOMEPAGE'
+      ? `https://${domain}/`
+      : `https://${domain}/pages/${landingPage}`;
+  }
+
+  const segments = adName.split('_')
+    .filter(s => !s.match(/^url[:_]/i))
+    .map(s => s.replace(/:ext-.*$/i, '').replace(/^ext[-_].*$/i, ''))
+    .filter(s => s.length > 0);
+
+  return { segments, landing_page: landingPage, landing_page_url: landingPageUrl, is_partnership: isPartnership, creator };
+}
+
+// --- Detail panel ---
+
+function openDetail(ad, metricsMap) {
+  const parsed = ad.ad_name_parsed || parseAdNameClient(ad.ad_name || '');
+  const metrics = metricsMap[ad.ad_name] || null;
+  const impressions = parseFloat(ad.impressions) || 0;
+  const outClicks = ad.outbound_clicks ?? null;
+  const lpViews = ad.landing_page_views ?? null;
+  const outCtr = (outClicks !== null && impressions > 0) ? (outClicks / impressions * 100) : null;
+  const lpLoadRate = (outClicks && lpViews !== null) ? (lpViews / outClicks * 100) : null;
+
+  const destLink = parsed.landing_page_url
+    ? `<a href="${escapeHtml(parsed.landing_page_url)}" target="_blank" rel="noopener">${escapeHtml(parsed.landing_page_url)}</a>`
+    : '<span class="muted">No destination URL</span>';
+
+  let html = `
+    <h2>Ad Detail</h2>
+    <div class="detail-section">
+      <div class="detail-label">Full Ad Name</div>
+      <div class="detail-value detail-adname">${escapeHtml(ad.ad_name || '(unnamed)')}</div>
+    </div>
+
+    <div class="detail-section">
+      <div class="detail-label">Campaign / Ad Set</div>
+      <div class="detail-value">${escapeHtml(ad.campaign_name || '--')} / ${escapeHtml(ad.adset_name || '--')}</div>
+    </div>
+
+    <div class="detail-section">
+      <div class="detail-label">Parsed Segments</div>
+      <div class="detail-value">${buildSegmentsHtml(parsed, ad)}</div>
+    </div>
+
+    <div class="detail-section">
+      <div class="detail-label">Destination URL</div>
+      <div class="detail-value">${destLink}</div>
+    </div>
+
+    ${parsed.is_partnership ? `
+    <div class="detail-section">
+      <div class="detail-label">Partnership</div>
+      <div class="detail-value"><span class="seg seg-partner">${escapeHtml(parsed.creator || 'Yes')}</span></div>
+    </div>` : ''}
+
+    <h3>Meta Performance</h3>
+    <div class="detail-grid">
+      <div class="detail-metric"><span class="detail-metric-val">$${parseFloat(ad.spend || 0).toFixed(2)}</span><span class="detail-metric-lbl">Spend</span></div>
+      <div class="detail-metric"><span class="detail-metric-val">${ad.cpm !== null ? '$' + ad.cpm.toFixed(2) : '--'}</span><span class="detail-metric-lbl">CPM</span></div>
+      <div class="detail-metric"><span class="detail-metric-val">${ad.frequency !== null ? ad.frequency.toFixed(1) : '--'}</span><span class="detail-metric-lbl">Frequency</span></div>
+      <div class="detail-metric"><span class="detail-metric-val">${formatNumber(impressions)}</span><span class="detail-metric-lbl">Impressions</span></div>
+      <div class="detail-metric"><span class="detail-metric-val">${outClicks !== null ? formatNumber(outClicks) : '--'}</span><span class="detail-metric-lbl">Out. Clicks</span></div>
+      <div class="detail-metric"><span class="detail-metric-val">${outCtr !== null ? outCtr.toFixed(2) + '%' : '--'}</span><span class="detail-metric-lbl">Out. CTR</span></div>
+      <div class="detail-metric"><span class="detail-metric-val">${lpViews !== null ? formatNumber(lpViews) : '--'}</span><span class="detail-metric-lbl">LP Views</span></div>
+      <div class="detail-metric"><span class="detail-metric-val">${lpLoadRate !== null ? lpLoadRate.toFixed(1) + '%' : '--'}</span><span class="detail-metric-lbl">LP Load Rate</span></div>
+    </div>
+  `;
+
+  if (ad.thruplays !== null || ad.avg_watch_time !== null) {
+    html += `
+    <h3>Video</h3>
+    <div class="detail-grid">
+      <div class="detail-metric"><span class="detail-metric-val">${ad.thruplays !== null ? formatNumber(ad.thruplays) : '--'}</span><span class="detail-metric-lbl">Thruplays</span></div>
+      <div class="detail-metric"><span class="detail-metric-val">${ad.avg_watch_time !== null ? parseFloat(ad.avg_watch_time).toFixed(1) + 's' : '--'}</span><span class="detail-metric-lbl">Avg Watch</span></div>
+    </div>`;
+  }
+
+  if (metrics) {
+    const matchTag = metrics.match_source === 'landing_page'
+      ? ' <span class="seg seg-warn">LP match</span>'
+      : '';
+    html += `
+    <h3>Shopify Funnel (${getDateRangeLabel()})${matchTag}</h3>
+    <div class="detail-grid">
+      <div class="detail-metric"><span class="detail-metric-val">${formatNumber(metrics.sessions)}</span><span class="detail-metric-lbl">Sessions</span></div>
+      <div class="detail-metric"><span class="detail-metric-val">${formatPct(metrics.bounce_rate)}</span><span class="detail-metric-lbl">Bounce Rate</span></div>
+      <div class="detail-metric"><span class="detail-metric-val">${formatPct(metrics.added_to_cart_rate)}</span><span class="detail-metric-lbl">Add to Cart</span></div>
+      <div class="detail-metric"><span class="detail-metric-val">${formatPct(metrics.reached_checkout_rate)}</span><span class="detail-metric-lbl">Reached Checkout</span></div>
+      <div class="detail-metric"><span class="detail-metric-val">${formatPct(metrics.conversion_rate)}</span><span class="detail-metric-lbl">Conversion Rate</span></div>
+      <div class="detail-metric"><span class="detail-metric-val">${metrics.sessions_that_completed_checkout}</span><span class="detail-metric-lbl">Orders</span></div>
+    </div>`;
+  } else {
+    html += `<h3>Shopify Funnel</h3><p class="muted">No Shopify data matched for this ad.</p>`;
+  }
+
+  document.getElementById('detail-content').innerHTML = html;
+  document.getElementById('detail-overlay').classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeDetail(e) {
+  if (e && e.target !== e.currentTarget) return;
+  document.getElementById('detail-overlay').classList.add('hidden');
+  document.body.style.overflow = '';
+}
+
+// Close on Escape
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeDetail();
+});
+
+// --- Utilities ---
+
 function setLoadMoreVisible(visible) {
-  let btn = document.getElementById('load-more-btn');
-  if (!btn) return;
-  btn.style.display = visible ? 'block' : 'none';
+  const btn = document.getElementById('load-more-btn');
+  if (btn) btn.style.display = visible ? 'block' : 'none';
 }
 
 function setLoadMoreLoading(loading) {
   const btn = document.getElementById('load-more-btn');
   if (!btn) return;
   btn.disabled = loading;
-  btn.textContent = loading ? 'Loading…' : 'Load More Ads';
-}
-
-// --- Rendering ---
-
-function matchMetrics(ad, metricsData) {
-  if (!metricsData?.by_ad || !ad.ad_name) return null;
-  return metricsData.by_ad[ad.ad_name] || null;
-}
-
-function formatPct(val) {
-  if (val === null || val === undefined) return '-';
-  return (val * 100).toFixed(1) + '%';
+  btn.textContent = loading ? 'Loading...' : 'Load More Ads';
 }
 
 function getDateRangeLabel() {
@@ -284,112 +465,6 @@ function getDateRangeLabel() {
   return labels[dateRange] || dateRange;
 }
 
-function renderAds(ads, metricsData, startIndex = 0) {
-  // kept for backward compat — applyFilter is the main render path now
-  const grid = document.getElementById('ads-grid');
-  grid.classList.remove('hidden');
-  ads.forEach((ad, i) => appendAdCard(ad, startIndex + i, { by_ad: metricsData?.by_ad || {} }));
-}
-
-function appendAdCard(ad, index_, metricsData) {
-  const grid = document.getElementById('ads-grid');
-  const card = document.createElement('div');
-  card.className = 'ad-card';
-  card.dataset.campaignId = ad.campaign_id || '';
-
-  const displayImage = ad.is_video
-    ? (ad.thumbnail_url || ad.image_url)
-    : (ad.image_url || ad.thumbnail_url);
-
-  const imgTag = displayImage
-    ? `<img src="${escapeHtml(displayImage)}" alt="" loading="lazy" onerror="this.parentElement.innerHTML='<div class=ad-card__no-image>No image available</div>'">`
-    : '<div class="ad-card__no-image">No image available</div>';
-
-  const imageHtml = ad.preview_url && displayImage
-    ? `<a href="${escapeHtml(ad.preview_url)}" target="_blank" rel="noopener noreferrer" class="ad-card__image-link">${imgTag}</a>`
-    : imgTag;
-
-  const videoBadge = ad.is_video ? '<div class="ad-card__video-badge">VIDEO</div>' : '';
-  const partnershipBadge = ad.is_partnership_ad ? '<div class="ad-card__partnership-badge">PARTNERSHIP</div>' : '';
-
-  const sourceTag = ad.url_source
-    ? `<span class="url-source" title="Resolved via: ${escapeHtml(ad.url_source)}">${escapeHtml(ad.url_source)}</span>`
-    : '';
-  const destinationHtml = ad.destination_url
-    ? `<a href="${escapeHtml(ad.destination_url)}" target="_blank" rel="noopener noreferrer">${truncateUrl(ad.destination_url)}</a>${sourceTag}`
-    : '<span class="no-url">No destination URL</span>';
-
-  // --- Meta performance stats ---
-  const impressions = parseFloat(ad.impressions) || 0;
-  const outClicks   = ad.outbound_clicks ?? null;
-  const lpViews     = ad.landing_page_views ?? null;
-  const outCtr      = (outClicks !== null && impressions > 0) ? (outClicks / impressions * 100) : null;
-  const lpLoadRate  = (outClicks && lpViews !== null) ? (lpViews / outClicks * 100) : null;
-
-  const statFmt = (val, prefix = '', suffix = '', decimals = 2) =>
-    val !== null && val !== undefined ? `${prefix}${parseFloat(val).toFixed(decimals)}${suffix}` : '—';
-
-  const campaignCtx = ad.campaign_name
-    ? `<div class="ad-card__campaign" title="${escapeHtml(ad.campaign_name)} › ${escapeHtml(ad.adset_name || '')}">${escapeHtml(ad.campaign_name)}<span class="ad-card__adset"> › ${escapeHtml(ad.adset_name || '—')}</span></div>`
-    : '';
-
-  const videoStatsHtml = ad.is_video && (ad.thruplays !== null || ad.avg_watch_time !== null) ? `
-    <div class="ad-card__stat-row ad-card__stat-row--video">
-      <span class="stat-item"><span class="stat-label">Thruplay</span><span class="stat-val">${statFmt(ad.thruplays, '', '', 0)}</span></span>
-      <span class="stat-item"><span class="stat-label">Avg Watch</span><span class="stat-val">${ad.avg_watch_time !== null ? parseFloat(ad.avg_watch_time).toFixed(1) + 's' : '—'}</span></span>
-    </div>` : '';
-
-  // --- Shopify funnel ---
-  const metrics = matchMetrics(ad, metricsData);
-  const funnelMatchTag = metrics?.match_source === 'landing_page'
-    ? `<span class="funnel-match-tag" title="Matched by landing page URL — includes all Facebook traffic to this page, not just this ad">LP match</span>`
-    : '';
-  const funnelHtml = metrics ? `
-    <div class="ad-card__funnel">
-      <div class="funnel-title">Shopify Funnel (${getDateRangeLabel()})${funnelMatchTag}</div>
-      <div class="funnel-metrics">
-        <div class="funnel-metric"><span class="funnel-value">${formatNumber(metrics.sessions)}</span><span class="funnel-label">Sessions</span></div>
-        <div class="funnel-metric"><span class="funnel-value">${formatPct(metrics.bounce_rate)}</span><span class="funnel-label">Bounce</span></div>
-        <div class="funnel-metric"><span class="funnel-value">${formatPct(metrics.added_to_cart_rate)}</span><span class="funnel-label">ATC</span></div>
-        <div class="funnel-metric"><span class="funnel-value">${formatPct(metrics.reached_checkout_rate)}</span><span class="funnel-label">Checkout</span></div>
-        <div class="funnel-metric"><span class="funnel-value">${formatPct(metrics.conversion_rate)}</span><span class="funnel-label">CVR</span></div>
-        <div class="funnel-metric"><span class="funnel-value">${metrics.sessions_that_completed_checkout}</span><span class="funnel-label">Orders</span></div>
-      </div>
-    </div>` : '';
-
-  card.innerHTML = `
-    <div class="ad-card__image-container">
-      ${imageHtml}
-      ${videoBadge}
-      ${partnershipBadge}
-      <div class="ad-card__rank">${index_ + 1}</div>
-    </div>
-    <div class="ad-card__body">
-      ${campaignCtx}
-      <div class="ad-card__name">${escapeHtml(ad.ad_name)}</div>
-      <div class="ad-card__stat-row">
-        <span class="stat-item"><span class="stat-label">Spend</span><span class="stat-val">$${parseFloat(ad.spend || 0).toFixed(2)}</span></span>
-        <span class="stat-item"><span class="stat-label">CPM</span><span class="stat-val">${statFmt(ad.cpm, '$')}</span></span>
-        <span class="stat-item"><span class="stat-label">Freq</span><span class="stat-val">${statFmt(ad.frequency, '', '', 1)}</span></span>
-        <span class="stat-item"><span class="stat-label">Impr</span><span class="stat-val">${formatNumber(ad.impressions)}</span></span>
-      </div>
-      <div class="ad-card__stat-row">
-        <span class="stat-item"><span class="stat-label">Out. Clicks</span><span class="stat-val">${outClicks !== null ? formatNumber(outClicks) : '—'}</span></span>
-        <span class="stat-item"><span class="stat-label">Out. CTR</span><span class="stat-val">${outCtr !== null ? outCtr.toFixed(2) + '%' : '—'}</span></span>
-        <span class="stat-item"><span class="stat-label">LP Views</span><span class="stat-val">${lpViews !== null ? formatNumber(lpViews) : '—'}</span></span>
-        <span class="stat-item"><span class="stat-label">LP Load</span><span class="stat-val">${lpLoadRate !== null ? lpLoadRate.toFixed(1) + '%' : '—'}</span></span>
-      </div>
-      ${videoStatsHtml}
-      <div class="ad-card__url">${destinationHtml}</div>
-      ${funnelHtml}
-    </div>
-  `;
-
-  grid.appendChild(card);
-}
-
-// --- Utilities ---
-
 function escapeHtml(str) {
   if (!str) return '';
   const div = document.createElement('div');
@@ -397,20 +472,14 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
-function truncateUrl(url, maxLen = 60) {
-  if (!url) return '';
-  try {
-    const parsed = new URL(url);
-    const display = parsed.hostname + parsed.pathname;
-    return display.length > maxLen ? display.substring(0, maxLen) + '...' : display;
-  } catch {
-    return url.length > maxLen ? url.substring(0, maxLen) + '...' : url;
-  }
+function formatNumber(num) {
+  if (!num && num !== 0) return '0';
+  return parseInt(num).toLocaleString();
 }
 
-function formatNumber(num) {
-  if (!num) return '0';
-  return parseInt(num).toLocaleString();
+function formatPct(val) {
+  if (val === null || val === undefined) return '--';
+  return (val * 100).toFixed(1) + '%';
 }
 
 function showLoading(visible) {

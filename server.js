@@ -231,6 +231,35 @@ app.get('/api/top-ads', requireAuth, async (req, res) => {
       return found ? (parseFloat(found.value) || 0) : null;
     };
 
+    // Lite mode: skip creative/image fetching, just return insights + parsed ad name
+    if (req.query.lite === '1') {
+      const liteAds = ads.map(ad => {
+        const parsed = parseAdName(ad.ad_name || '');
+        return {
+          ad_id: ad.ad_id,
+          ad_name: ad.ad_name,
+          ad_name_parsed: parsed,
+          campaign_id: ad.campaign_id || null,
+          campaign_name: ad.campaign_name || null,
+          adset_id: ad.adset_id || null,
+          adset_name: ad.adset_name || null,
+          spend: ad.spend,
+          impressions: ad.impressions,
+          clicks: ad.clicks,
+          cpm: ad.cpm ? parseFloat(ad.cpm) : null,
+          frequency: ad.frequency ? parseFloat(ad.frequency) : null,
+          outbound_clicks: actionVal(ad.outbound_clicks, 'outbound_click'),
+          landing_page_views: actionVal(ad.actions, 'landing_page_view'),
+          thruplays: actionVal(ad.video_thruplay_watched_actions, 'video_thruplay_watched'),
+          avg_watch_time: actionVal(ad.video_avg_time_watched_actions, 'video_view'),
+          destination_url: parsed.landing_page_url || null,
+          is_partnership_ad: parsed.is_partnership,
+        };
+      });
+      liteAds.sort((a, b) => parseFloat(b.spend || 0) - parseFloat(a.spend || 0));
+      return res.json({ ads: liteAds, next_cursor: hasMore ? nextCursor : null, has_more: hasMore });
+    }
+
     // Step 2: Build a page token map (for reading page posts)
     const pageTokenMap = {};
     try {
@@ -925,6 +954,179 @@ app.get('/api/shopify-metrics', requireAuth, async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch Shopify metrics' });
   }
 });
+
+// --- Campaign insights by day ---
+
+app.get('/api/campaign-insights', requireAuth, async (req, res) => {
+  const { account_id, since, until } = req.query;
+  if (!account_id || !since || !until) {
+    return res.status(400).json({ error: 'account_id, since, and until are required' });
+  }
+
+  try {
+    const timeRange = `{"since":"${since}","until":"${until}"}`;
+
+    // Step 1: Get all campaigns with total sessions (sorted by spend)
+    const summaryUrl = `${META_BASE_URL}/${account_id}/insights`
+      + `?fields=campaign_name,campaign_id,spend,impressions,clicks,actions,cpm,ctr,outbound_clicks`
+      + `&time_range=${timeRange}`
+      + `&level=campaign`
+      + `&sort=spend_descending`
+      + `&limit=100`
+      + `&${metaParams(req.accessToken)}`;
+
+    const summaryResp = await fetch(summaryUrl);
+    const summaryData = await summaryResp.json();
+
+    if (summaryData.error) {
+      if (summaryData.error.code === 190) {
+        clearTokenCookie(res);
+        return res.status(401).json({ error: 'Session expired. Please log in again.' });
+      }
+      return res.status(400).json({ error: summaryData.error.message });
+    }
+
+    const campaigns = (summaryData.data || []).map(c => {
+      const actionVal = (arr, type) => {
+        if (!Array.isArray(arr)) return 0;
+        const found = arr.find(a => a.action_type === type);
+        return found ? (parseFloat(found.value) || 0) : 0;
+      };
+      const oc = Array.isArray(c.outbound_clicks)
+        ? c.outbound_clicks.find(o => o.action_type === 'outbound_click')
+        : null;
+      return {
+        campaign_id: c.campaign_id,
+        campaign_name: c.campaign_name,
+        spend: parseFloat(c.spend) || 0,
+        impressions: parseInt(c.impressions) || 0,
+        clicks: parseInt(c.clicks) || 0,
+        outbound_clicks: oc ? parseInt(oc.value) : 0,
+        cpm: parseFloat(c.cpm) || 0,
+        ctr: parseFloat(c.ctr) || 0,
+        purchases: actionVal(c.actions, 'purchase'),
+        add_to_cart: actionVal(c.actions, 'add_to_cart'),
+        initiate_checkout: actionVal(c.actions, 'initiate_checkout'),
+        landing_page_views: actionVal(c.actions, 'landing_page_view'),
+      };
+    });
+
+    res.json({ campaigns });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/campaign-daily', requireAuth, async (req, res) => {
+  const { account_id, campaign_id, since, until } = req.query;
+  if (!account_id || !campaign_id || !since || !until) {
+    return res.status(400).json({ error: 'account_id, campaign_id, since, and until are required' });
+  }
+
+  try {
+    const timeRange = `{"since":"${since}","until":"${until}"}`;
+
+    const url = `${META_BASE_URL}/${campaign_id}/insights`
+      + `?fields=campaign_name,spend,impressions,clicks,actions,cpm,ctr,outbound_clicks`
+      + `&time_range=${timeRange}`
+      + `&time_increment=1`
+      + `&limit=90`
+      + `&${metaParams(req.accessToken)}`;
+
+    const resp = await fetch(url);
+    const data = await resp.json();
+
+    if (data.error) {
+      if (data.error.code === 190) {
+        clearTokenCookie(res);
+        return res.status(401).json({ error: 'Session expired. Please log in again.' });
+      }
+      return res.status(400).json({ error: data.error.message });
+    }
+
+    const actionVal = (arr, type) => {
+      if (!Array.isArray(arr)) return 0;
+      const found = arr.find(a => a.action_type === type);
+      return found ? (parseFloat(found.value) || 0) : 0;
+    };
+
+    const days = (data.data || []).map(d => {
+      const oc = Array.isArray(d.outbound_clicks)
+        ? d.outbound_clicks.find(o => o.action_type === 'outbound_click')
+        : null;
+      return {
+        date: d.date_start,
+        spend: parseFloat(d.spend) || 0,
+        impressions: parseInt(d.impressions) || 0,
+        clicks: parseInt(d.clicks) || 0,
+        outbound_clicks: oc ? parseInt(oc.value) : 0,
+        cpm: parseFloat(d.cpm) || 0,
+        ctr: parseFloat(d.ctr) || 0,
+        purchases: actionVal(d.actions, 'purchase'),
+        add_to_cart: actionVal(d.actions, 'add_to_cart'),
+        initiate_checkout: actionVal(d.actions, 'initiate_checkout'),
+        landing_page_views: actionVal(d.actions, 'landing_page_view'),
+      };
+    });
+
+    res.json({ days });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Ad name parser ---
+
+// Deconstructs ad names like: "brand_campaign-type_audience_creative-desc_url:landing-page"
+// Partnership ads contain ":ext-" patterns
+function parseAdName(adName) {
+  if (!adName) return { segments: [], landing_page: null, landing_page_url: null, is_partnership: false, creator: null };
+
+  const nameLower = adName.toLowerCase();
+
+  // Detect partnership
+  const isPartnership = nameLower.includes('creator_wl:ext')
+    || nameLower.includes('notes:ext-')
+    || nameLower.includes('editor:ext-')
+    || nameLower.includes(':ext-')
+    || /\bext[-_]creator\b/.test(nameLower);
+
+  // Extract creator handle from partnership patterns
+  let creator = null;
+  if (isPartnership) {
+    const creatorMatch = adName.match(/:ext-([^_:]+)/i);
+    if (creatorMatch) creator = creatorMatch[1];
+  }
+
+  // Extract URL slug
+  let landingPage = null;
+  let landingPageUrl = null;
+  const urlSlugMatch = adName.match(/(?:^|[_:-])url[:_]([a-zA-Z0-9-]+)/i);
+  if (urlSlugMatch) {
+    const slug = urlSlugMatch[1];
+    landingPage = slug;
+    // Determine brand domain from ad name
+    const brandDomain = nameLower.startsWith('trmv') ? 'therearemanyversions.com' : 'firstday.com';
+    landingPageUrl = slug.toUpperCase() === 'HOMEPAGE'
+      ? `https://${brandDomain}/`
+      : `https://${brandDomain}/pages/${slug}`;
+  }
+
+  // Split into segments (by underscore), excluding url: and ext- parts
+  const rawSegments = adName.split('_');
+  const segments = rawSegments
+    .filter(s => !s.match(/^url[:_]/i))
+    .map(s => s.replace(/:ext-.*$/i, '').replace(/^ext[-_].*$/i, ''))
+    .filter(s => s.length > 0);
+
+  return {
+    segments,
+    landing_page: landingPage,
+    landing_page_url: landingPageUrl,
+    is_partnership: isPartnership,
+    creator,
+  };
+}
 
 // --- Helpers ---
 
