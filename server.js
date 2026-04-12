@@ -1016,6 +1016,57 @@ app.get('/api/shopify-metrics', requireAuth, async (req, res) => {
   }
 });
 
+// --- Conversion Impact (ShopifyQL period comparison) ---
+
+app.get('/api/conversion-impact-data', requireAuth, async (req, res) => {
+  if (!SHOPIFY_URL || !SHOPIFY_TOKEN) {
+    return res.status(500).json({ error: 'Shopify credentials not configured' });
+  }
+
+  const endpoint = `https://${SHOPIFY_URL}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
+  const gqlQuery = `query RunShopifyQL($q: String!) {
+    shopifyqlQuery(query: $q) {
+      tableData { columns { name dataType } rows }
+      parseErrors
+    }
+  }`;
+
+  const shopifyql = `FROM sessions
+  SHOW sessions, conversion_rate
+  GROUP BY ONLY TOP 20 utm_source, ONLY TOP 20 landing_page_path WITH
+    GROUP_TOTALS, TOTALS, PERCENT_CHANGE
+  SINCE startOfDay(-2d) UNTIL endOfDay(-1d)
+  COMPARE TO previous_period
+  ORDER BY conversion_rate__utm_source_totals DESC, conversion_rate DESC,
+    utm_source ASC, landing_page_path ASC
+VISUALIZE conversion_rate`;
+
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
+      body: JSON.stringify({ query: gqlQuery, variables: { q: shopifyql } }),
+    });
+    const json = await response.json();
+    const payload = json.data?.shopifyqlQuery;
+
+    if (payload?.parseErrors?.length) {
+      return res.status(400).json({ error: 'ShopifyQL parse error', details: payload.parseErrors });
+    }
+    if (!payload?.tableData) {
+      return res.status(500).json({ error: 'No data returned from Shopify' });
+    }
+
+    res.json({
+      columns: payload.tableData.columns,
+      rows: payload.tableData.rows,
+    });
+  } catch (err) {
+    console.error('Conversion impact data error:', err);
+    res.status(500).json({ error: 'Failed to fetch Shopify data' });
+  }
+});
+
 // --- Campaign insights by day ---
 
 app.get('/api/campaign-insights', requireAuth, async (req, res) => {

@@ -118,6 +118,44 @@
     }
     .upload-error.show { display: block; }
 
+    /* Shopify load button */
+    .shopify-load-btn {
+      display: block;
+      width: 100%;
+      padding: 14px 20px;
+      margin-bottom: 12px;
+      background: #96bf48;
+      color: #fff;
+      border: none;
+      border-radius: var(--radius);
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .shopify-load-btn:hover { background: #7ea93e; }
+    .shopify-load-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .shopify-status {
+      font-size: 0.82rem;
+      color: var(--text-secondary);
+      min-height: 1.4em;
+      margin-bottom: 4px;
+    }
+    .shopify-status.error { color: var(--negative); }
+    .upload-divider {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 12px 0;
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+    }
+    .upload-divider::before, .upload-divider::after {
+      content: '';
+      flex: 1;
+      border-top: 1px solid var(--border);
+    }
+
     /* Results screen */
     #results-screen { display: none; }
     .results-wrap {
@@ -626,7 +664,7 @@
   <a class="header__back" href="/">&#8592; Ads Viewer</a>
   <div>
     <h1>Conversion Impact Analysis</h1>
-    <p>Upload a period-comparison CSV to see what drove conversion changes</p>
+    <p>Conversion impact analysis — auto-loaded from Shopify or upload CSV</p>
   </div>
   <a class="header__report-link" href="https://admin.shopify.com/store/first-day-inc/analytics/reports/275054690?ql=FROM+sessions%0A++SHOW+sessions%2C+conversion_rate%0A++GROUP+BY+ONLY+TOP+20+utm_source%2C+ONLY+TOP+20+landing_page_path+WITH%0A++++GROUP_TOTALS%2C+TOTALS%2C+PERCENT_CHANGE%0A++SINCE+startOfDay%28-2d%29+UNTIL+endOfDay%28-1d%29%0A++COMPARE+TO+previous_period%0A++ORDER+BY+conversion_rate__utm_source_totals+DESC%2C+conversion_rate+DESC%2C%0A++++utm_source+ASC%2C+landing_page_path+ASC%0AVISUALIZE+conversion_rate" target="_blank" rel="noopener">Open Shopify Report ↗</a>
 </header>
@@ -634,8 +672,11 @@
 <!-- ===== UPLOAD SCREEN ===== -->
 <div id="upload-screen">
   <div class="upload-card">
-    <h2>Upload your CVR by Channel CSV</h2>
-    <p>Export from Shopify Analytics with a date range and "previous period" comparison enabled. The tool will automatically calculate what drove the change in overall conversions.</p>
+    <h2>Conversion Impact Analysis</h2>
+    <p>Auto-load yesterday vs. previous day from Shopify, or upload a CSV export.</p>
+    <button class="shopify-load-btn" id="btn-shopify-load">Load from Shopify (Yesterday vs Previous Day)</button>
+    <div class="shopify-status" id="shopify-status"></div>
+    <div class="upload-divider"><span>or upload CSV</span></div>
     <div class="upload-zone" id="upload-zone">
       <input type="file" id="csv-input" accept=".csv,text/csv">
       <div class="upload-zone__icon">&#128196;</div>
@@ -1725,6 +1766,103 @@ function renderDrillDown(container, source, tDelta, tPrevConv) {
 }
 
 // ─────────────────────────────────────────────
+// SHOPIFY QL PARSING
+// ─────────────────────────────────────────────
+function parseShopifyQL(data) {
+  const { columns, rows } = data;
+  if (!columns || !rows || !rows.length) throw new Error('No data returned from Shopify.');
+
+  const colNames = columns.map(c => (c.name || '').toLowerCase());
+
+  const getVal = (row, idx) => {
+    if (idx < 0) return undefined;
+    return Array.isArray(row) ? row[idx] : row[columns[idx].name];
+  };
+
+  // Find column indices — ShopifyQL COMPARE TO previous_period uses
+  // "comparison_<metric>__previous_period" naming for prior-period columns
+  const iSrc  = colNames.findIndex(s => s === 'utm_source');
+  const iLp   = colNames.findIndex(s => s === 'landing_page_path');
+  const iSess = colNames.findIndex(s => s === 'sessions');
+  const iCvr  = colNames.findIndex(s => s === 'conversion_rate');
+  const iPrevS   = colNames.findIndex(s => s === 'comparison_sessions__previous_period');
+  const iPrevCvr = colNames.findIndex(s => s === 'comparison_conversion_rate__previous_period');
+
+  if (iSess < 0) throw new Error('Missing "sessions" column in Shopify response. Columns: ' + colNames.join(', '));
+  if (iCvr  < 0) throw new Error('Missing "conversion_rate" column in Shopify response. Columns: ' + colNames.join(', '));
+  if (iPrevS < 0) throw new Error('Missing previous-period sessions column. Columns: ' + colNames.join(', '));
+  if (iPrevCvr < 0) throw new Error('Missing previous-period conversion_rate column. Columns: ' + colNames.join(', '));
+
+  const parsed = [];
+
+  for (const row of rows) {
+    const rawSrc = getVal(row, iSrc);
+    const rawLp  = getVal(row, iLp);
+
+    // null/undefined utm_source = Direct traffic; convert to empty string
+    const source = (rawSrc == null ? '' : String(rawSrc)).trim();
+    const lp     = (rawLp  == null ? '' : String(rawLp)).trim();
+
+    // Skip rows where both dimensions are empty (totals row)
+    if (!source && !lp) continue;
+
+    // Skip post-conversion / non-landing pages
+    if (/^\/(checkout|checkouts|orders|payment-methods|gift_cards|apps\/retextion|account|profile)(\/|$)/i.test(lp)) continue;
+
+    const sessRaw    = parseFloat(getVal(row, iSess)) || 0;
+    const cvrRaw     = parseFloat(getVal(row, iCvr))  || 0;
+    const prevSRaw   = parseFloat(getVal(row, iPrevS)) || 0;
+    const prevCvrRaw = parseFloat(getVal(row, iPrevCvr)) || 0;
+
+    // ShopifyQL returns CVR as decimal (0.02 = 2%) — normCvr handles >1 as percentage
+    const currS   = Math.round(sessRaw);
+    const currC   = normCvr(cvrRaw) ?? 0;
+    const prevSess = Math.round(prevSRaw);
+    const prevCvr  = normCvr(prevCvrRaw) ?? 0;
+
+    parsed.push({ source, lp, channel: classifySource(source), currS, currC, prevSess, prevCvr });
+  }
+
+  if (parsed.length === 0) throw new Error('No valid rows in Shopify response.');
+  return parsed;
+}
+
+async function loadFromShopify() {
+  const btn    = document.getElementById('btn-shopify-load');
+  const status = document.getElementById('shopify-status');
+  const errEl  = document.getElementById('upload-error');
+
+  btn.disabled = true;
+  status.className = 'shopify-status';
+  status.textContent = 'Querying Shopify…';
+  errEl.className = 'upload-error';
+
+  try {
+    const resp = await fetch('/api/conversion-impact-data');
+    if (resp.status === 401) {
+      status.textContent = '';
+      status.className = 'shopify-status error';
+      status.textContent = 'Not authenticated — please log in first.';
+      btn.disabled = false;
+      return;
+    }
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${resp.status}`);
+    }
+
+    const data = await resp.json();
+    status.textContent = 'Parsing response…';
+    const rows = parseShopifyQL(data);
+    render(rows, 'Shopify · Yesterday vs Previous Day');
+  } catch (err) {
+    status.className = 'shopify-status error';
+    status.textContent = err.message;
+    btn.disabled = false;
+  }
+}
+
+// ─────────────────────────────────────────────
 // EVENT WIRING
 // ─────────────────────────────────────────────
 function handleFile(file) {
@@ -1760,6 +1898,8 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-reset').addEventListener('click', () => {
     document.getElementById('results-screen').style.display = 'none';
     document.getElementById('upload-screen').style.display = 'block';
+    document.getElementById('btn-shopify-load').disabled = false;
+    document.getElementById('shopify-status').textContent = '';
     input.value = '';
   });
 
@@ -1768,6 +1908,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const open = wrap.classList.toggle('open');
     this.textContent = open ? 'Hide raw utm_source rows' : 'Show raw utm_source rows';
   });
+
+  // Shopify auto-load
+  document.getElementById('btn-shopify-load').addEventListener('click', loadFromShopify);
+
+  // Auto-load on page open
+  loadFromShopify();
 });
 </script>
 </body>
