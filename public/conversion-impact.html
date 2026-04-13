@@ -118,6 +118,29 @@
     }
     .upload-error.show { display: block; }
 
+    /* Date picker row */
+    .date-row {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 14px;
+      justify-content: center;
+    }
+    .date-row label {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .date-row input[type="date"] {
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-family: inherit;
+    }
+
     /* Shopify load button */
     .shopify-load-btn {
       display: block;
@@ -673,8 +696,12 @@
 <div id="upload-screen">
   <div class="upload-card">
     <h2>Conversion Impact Analysis</h2>
-    <p>Auto-load yesterday vs. previous day from Shopify, or upload a CSV export.</p>
-    <button class="shopify-load-btn" id="btn-shopify-load">Load from Shopify (Yesterday vs Previous Day)</button>
+    <p>Load from Shopify with a date range and compare to the same-length previous period, or upload a CSV export.</p>
+    <div class="date-row">
+      <label>Start <input type="date" id="date-start"></label>
+      <label>End <input type="date" id="date-end"></label>
+    </div>
+    <button class="shopify-load-btn" id="btn-shopify-load">Load from Shopify</button>
     <div class="shopify-status" id="shopify-status"></div>
     <div class="upload-divider"><span>or upload CSV</span></div>
     <div class="upload-zone" id="upload-zone">
@@ -1831,6 +1858,14 @@ async function loadFromShopify() {
   const btn    = document.getElementById('btn-shopify-load');
   const status = document.getElementById('shopify-status');
   const errEl  = document.getElementById('upload-error');
+  const startDate = document.getElementById('date-start').value;
+  const endDate   = document.getElementById('date-end').value;
+
+  if (!startDate || !endDate) {
+    status.className = 'shopify-status error';
+    status.textContent = 'Please select a start and end date.';
+    return;
+  }
 
   btn.disabled = true;
   status.className = 'shopify-status';
@@ -1838,9 +1873,8 @@ async function loadFromShopify() {
   errEl.className = 'upload-error';
 
   try {
-    const resp = await fetch('/api/conversion-impact-data');
+    const resp = await fetch(`/api/conversion-impact-data?start=${startDate}&end=${endDate}`);
     if (resp.status === 401) {
-      status.textContent = '';
       status.className = 'shopify-status error';
       status.textContent = 'Not authenticated — please log in first.';
       btn.disabled = false;
@@ -1854,7 +1888,7 @@ async function loadFromShopify() {
     const data = await resp.json();
     status.textContent = 'Parsing response…';
     const rows = parseShopifyQL(data);
-    render(rows, 'Shopify · Yesterday vs Previous Day');
+    render(rows, `Shopify · ${startDate} to ${endDate} vs previous period`);
   } catch (err) {
     status.className = 'shopify-status error';
     status.textContent = err.message;
@@ -1909,11 +1943,17 @@ document.addEventListener('DOMContentLoaded', () => {
     this.textContent = open ? 'Hide raw utm_source rows' : 'Show raw utm_source rows';
   });
 
-  // Shopify auto-load
-  document.getElementById('btn-shopify-load').addEventListener('click', loadFromShopify);
+  // Default dates: yesterday for both start and end
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const dayBefore = new Date();
+  dayBefore.setDate(dayBefore.getDate() - 2);
+  const fmt = d => d.toISOString().slice(0, 10);
+  document.getElementById('date-start').value = fmt(dayBefore);
+  document.getElementById('date-end').value = fmt(yesterday);
 
-  // Auto-load on page open
-  loadFromShopify();
+  // Shopify load
+  document.getElementById('btn-shopify-load').addEventListener('click', loadFromShopify);
 });
 </script>
 </body>

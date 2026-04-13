@@ -1023,6 +1023,11 @@ app.get('/api/conversion-impact-data', requireAuth, async (req, res) => {
     return res.status(500).json({ error: 'Shopify credentials not configured' });
   }
 
+  const { start, end } = req.query;
+  if (!start || !end || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+    return res.status(400).json({ error: 'start and end query params required (YYYY-MM-DD)' });
+  }
+
   const endpoint = `https://${SHOPIFY_URL}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
   const gqlQuery = `query RunShopifyQL($q: String!) {
     shopifyqlQuery(query: $q) {
@@ -1035,7 +1040,7 @@ app.get('/api/conversion-impact-data', requireAuth, async (req, res) => {
   SHOW sessions, conversion_rate
   GROUP BY ONLY TOP 20 utm_source, ONLY TOP 20 landing_page_path WITH
     GROUP_TOTALS, TOTALS, PERCENT_CHANGE
-  SINCE startOfDay(-2d) UNTIL endOfDay(-1d)
+  SINCE ${start} UNTIL ${end}
   COMPARE TO previous_period
   ORDER BY conversion_rate__utm_source_totals DESC, conversion_rate DESC,
     utm_source ASC, landing_page_path ASC
