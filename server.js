@@ -1038,12 +1038,11 @@ app.get('/api/conversion-impact-data', async (req, res) => {
 
   const shopifyql = `FROM sessions
   SHOW sessions, conversion_rate
-  GROUP BY ONLY TOP 20 utm_source, ONLY TOP 20 landing_page_path WITH
-    GROUP_TOTALS, TOTALS, PERCENT_CHANGE
+  GROUP BY utm_source, landing_page_path WITH TOTALS, PERCENT_CHANGE
   SINCE ${start} UNTIL ${end}
   COMPARE TO previous_period
-  ORDER BY conversion_rate__utm_source_totals DESC, conversion_rate DESC,
-    utm_source ASC, landing_page_path ASC
+  ORDER BY sessions DESC, conversion_rate DESC, utm_source ASC,
+    landing_page_path ASC
 VISUALIZE conversion_rate`;
 
   console.log('\n[conversion-impact-data] ShopifyQL query:\n' + shopifyql + '\n');
