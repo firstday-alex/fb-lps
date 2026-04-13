@@ -1036,10 +1036,10 @@ app.get('/api/conversion-impact-data', async (req, res) => {
     }
   }`;
 
-  // Main summary: top 5 utm_source with full funnel metrics, selected range vs previous period
+  // Main summary: all utm_sources with full funnel metrics, selected range vs previous period
   const mainQuery = `FROM sessions
   SHOW sessions, conversion_rate, average_session_duration, sessions_with_cart_additions, sessions_that_reached_checkout, sessions_that_reached_and_completed_checkout
-  GROUP BY ONLY TOP 5 utm_source WITH TOTALS, PERCENT_CHANGE
+  GROUP BY utm_source WITH TOTALS, PERCENT_CHANGE
   SINCE ${start} UNTIL ${end}
   COMPARE TO previous_period
   ORDER BY sessions DESC
