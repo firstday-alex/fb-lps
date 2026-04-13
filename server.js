@@ -1018,7 +1018,7 @@ app.get('/api/shopify-metrics', requireAuth, async (req, res) => {
 
 // --- Conversion Impact (ShopifyQL period comparison) ---
 
-app.get('/api/conversion-impact-data', requireAuth, async (req, res) => {
+app.get('/api/conversion-impact-data', async (req, res) => {
   if (!SHOPIFY_URL || !SHOPIFY_TOKEN) {
     return res.status(500).json({ error: 'Shopify credentials not configured' });
   }

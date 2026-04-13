@@ -1874,12 +1874,6 @@ async function loadFromShopify() {
 
   try {
     const resp = await fetch(`/api/conversion-impact-data?start=${startDate}&end=${endDate}`);
-    if (resp.status === 401) {
-      status.className = 'shopify-status error';
-      status.textContent = 'Not authenticated — please log in first.';
-      btn.disabled = false;
-      return;
-    }
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
       throw new Error(err.error || `HTTP ${resp.status}`);
