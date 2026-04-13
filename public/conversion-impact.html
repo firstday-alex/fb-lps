@@ -1880,9 +1880,21 @@ async function loadFromShopify() {
     }
 
     const data = await resp.json();
+    if (data.query) console.log('[ShopifyQL]\n' + data.query);
     status.textContent = 'Parsing response…';
     const rows = parseShopifyQL(data);
     render(rows, `Shopify · ${startDate} to ${endDate} vs previous period`);
+    // Expose query in results top bar for quick inspection
+    if (data.query) {
+      const info = document.getElementById('top-bar-info');
+      if (info) {
+        info.innerHTML += ` &nbsp;·&nbsp; <a href="#" id="show-query-link" style="color:var(--fb-blue)">Show ShopifyQL</a>`;
+        document.getElementById('show-query-link').addEventListener('click', (e) => {
+          e.preventDefault();
+          alert(data.query);
+        });
+      }
+    }
   } catch (err) {
     status.className = 'shopify-status error';
     status.textContent = err.message;

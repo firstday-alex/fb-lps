@@ -1046,6 +1046,8 @@ app.get('/api/conversion-impact-data', async (req, res) => {
     utm_source ASC, landing_page_path ASC
 VISUALIZE conversion_rate`;
 
+  console.log('\n[conversion-impact-data] ShopifyQL query:\n' + shopifyql + '\n');
+
   try {
     const response = await fetch(endpoint, {
       method: 'POST',
@@ -1063,6 +1065,7 @@ VISUALIZE conversion_rate`;
     }
 
     res.json({
+      query: shopifyql,
       columns: payload.tableData.columns,
       rows: payload.tableData.rows,
     });
