@@ -680,6 +680,35 @@
     }
     .mix-insight strong { color: var(--text-primary); }
 
+    /* Correlation card */
+    .corr-summary {
+      display: grid;
+      grid-template-columns: 1fr 2fr;
+      gap: 16px;
+      background: #f7f9fc;
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .corr-kpi__label {
+      font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+      color: var(--text-secondary); letter-spacing: 0.5px;
+    }
+    .corr-kpi__value {
+      font-size: 2rem; font-weight: 700; color: var(--text-primary);
+      line-height: 1.1; margin-top: 4px;
+    }
+    .corr-kpi__value.pos { color: var(--positive); }
+    .corr-kpi__value.neg { color: var(--negative); }
+    .corr-kpi__sub {
+      font-size: 0.78rem; color: var(--text-secondary); margin-top: 2px;
+    }
+    .corr-scatter {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      display: block;
+    }
+
     /* Collapsible cards */
     .card.collapsible { padding: 0; }
     .card-toggle {
@@ -739,12 +768,8 @@
 <div id="upload-screen">
   <div class="upload-card">
     <h2>Conversion Impact Analysis</h2>
-    <p>Load from Shopify with a date range and compare to the same-length previous period, or upload a CSV export.</p>
-    <div class="date-row">
-      <label>Start <input type="date" id="date-start"></label>
-      <label>End <input type="date" id="date-end"></label>
-    </div>
-    <button class="shopify-load-btn" id="btn-shopify-load">Load from Shopify</button>
+    <p>Load today's funnel metrics vs. yesterday from Shopify (top 5 sources + LP correlation), or upload a CSV export.</p>
+    <button class="shopify-load-btn" id="btn-shopify-load">Load from Shopify (Today vs Yesterday)</button>
     <div class="shopify-status" id="shopify-status"></div>
     <div class="upload-divider"><span>or upload CSV</span></div>
     <div class="upload-zone" id="upload-zone">
@@ -784,6 +809,9 @@
 
     <!-- CVR Bucket Summary -->
     <div class="card cvr-movement-card" id="cvr-bucket-card"></div>
+
+    <!-- Duration ↔ CVR Correlation -->
+    <div class="card cvr-movement-card" id="correlation-card"></div>
 
     <!-- Ranked contributors -->
     <div class="card breakdown-card">
@@ -1245,6 +1273,9 @@ function render(rawRows, filename) {
   // ── CVR Bucket Summary ──────────────────────
   renderCvrBuckets(rows);
 
+  // ── Duration ↔ CVR Correlation (uses LP-level Shopify data) ──
+  renderCorrelation(_correlationData);
+
   // Source rows — one per utm_source, expand to see effect breakdown
   const maxNetAbs = sourceGroups.length > 0 ? Math.abs(sourceGroups[0].netValue) : 1;
   const contribList = document.getElementById('contributors-list');
@@ -1391,6 +1422,7 @@ function makeCardsCollapsible() {
     'mix-shift-card':      { title: 'Mix-Shift Counterfactual',  hint: 'Blended CVR if only session mix changed' },
     'session-volume-card': { title: 'Session Volume Impact',     hint: 'Which sources gained or lost traffic' },
     'cvr-bucket-card':     { title: 'CVR Bucket Summary',        hint: 'Session movements grouped by CVR tier' },
+    'correlation-card':    { title: 'Duration ↔ CVR Correlation', hint: 'Does time on page predict conversion?' },
   };
 
   document.querySelectorAll('#results-screen .card').forEach(card => {
@@ -1876,6 +1908,208 @@ function renderEffects(container, group, tDelta, tPrevConv) {
 // ─────────────────────────────────────────────
 // DRILL-DOWN: landing page breakdown for one source
 // ─────────────────────────────────────────────
+// ─────────────────────────────────────────────
+// DURATION ↔ CVR CORRELATION
+// ─────────────────────────────────────────────
+// Pearson correlation coefficient, weighted by sessions
+function pearson(points) {
+  const n = points.length;
+  if (n < 2) return { r: null, n };
+  let sx=0, sy=0, sxx=0, syy=0, sxy=0, tw=0;
+  for (const p of points) {
+    const w = p.w || 1;
+    sx  += p.x * w;
+    sy  += p.y * w;
+    sxx += p.x * p.x * w;
+    syy += p.y * p.y * w;
+    sxy += p.x * p.y * w;
+    tw  += w;
+  }
+  const mx = sx / tw, my = sy / tw;
+  const vxx = sxx / tw - mx * mx;
+  const vyy = syy / tw - my * my;
+  const cxy = sxy / tw - mx * my;
+  const denom = Math.sqrt(vxx * vyy);
+  if (denom === 0) return { r: null, n };
+  return { r: cxy / denom, n, meanX: mx, meanY: my };
+}
+
+function renderCorrelation(corrData) {
+  const card = document.getElementById('correlation-card');
+  if (!corrData || !corrData.rows || !corrData.rows.length) {
+    card.innerHTML = `<h3>Session Duration ↔ Conversion Rate Correlation</h3>
+      <p class="card__sub">No correlation data available (load from Shopify to enable).</p>`;
+    return;
+  }
+
+  const { columns, rows } = corrData;
+  const colNames = columns.map(c => (c.name || '').toLowerCase());
+  const iSrc  = colNames.indexOf('utm_source');
+  const iLp   = colNames.indexOf('landing_page_path');
+  const iSess = colNames.indexOf('sessions');
+  const iCvr  = colNames.indexOf('conversion_rate');
+  const iDur  = colNames.indexOf('average_session_duration');
+  const getVal = (r, i) => i < 0 ? undefined : (Array.isArray(r) ? r[i] : r[columns[i].name]);
+
+  // Only include rows with meaningful session volume (≥30 sessions) so
+  // the correlation isn't dominated by noisy one-off landing pages
+  const MIN_SESS = 30;
+  const parsed = [];
+  for (const row of rows) {
+    const rawSrc = getVal(row, iSrc);
+    const source = (rawSrc == null ? '' : String(rawSrc)).trim();
+    const lp     = String(getVal(row, iLp) || '').trim();
+    const sess   = parseFloat(getVal(row, iSess)) || 0;
+    const cvr    = parseFloat(getVal(row, iCvr))  || 0;
+    const dur    = parseFloat(getVal(row, iDur))  || 0;
+    if (sess < MIN_SESS || !lp) continue;
+    parsed.push({ source, lp, channel: classifySource(source), sessions: sess, cvr, duration: dur });
+  }
+
+  if (parsed.length < 3) {
+    card.innerHTML = `<h3>Session Duration ↔ Conversion Rate Correlation</h3>
+      <p class="card__sub">Not enough landing pages with ≥${MIN_SESS} sessions today to compute correlation (${parsed.length} qualifying rows).</p>`;
+    return;
+  }
+
+  // Overall correlation (session-weighted)
+  const allPoints = parsed.map(r => ({ x: r.duration, y: r.cvr, w: r.sessions }));
+  const overall = pearson(allPoints);
+
+  // Per-channel correlation
+  const byChannel = {};
+  parsed.forEach(r => {
+    if (!byChannel[r.channel]) byChannel[r.channel] = [];
+    byChannel[r.channel].push(r);
+  });
+  const channelRows = Object.entries(byChannel).map(([ch, lps]) => {
+    const pts = lps.map(r => ({ x: r.duration, y: r.cvr, w: r.sessions }));
+    const p = pearson(pts);
+    const totalSess = lps.reduce((a, r) => a + r.sessions, 0);
+    const wDur = lps.reduce((a, r) => a + r.duration * r.sessions, 0) / totalSess;
+    const wCvr = lps.reduce((a, r) => a + r.cvr * r.sessions, 0) / totalSess;
+    return {
+      channel: ch, lps: lps.length, sessions: totalSess,
+      avgDur: wDur, avgCvr: wCvr, r: p.r,
+    };
+  }).sort((a, b) => b.sessions - a.sessions);
+
+  // Build scatter plot — duration (x) vs cvr (y), one dot per LP, colored by channel
+  const maxDur = Math.max(...parsed.map(r => r.duration));
+  const maxCvr = Math.max(...parsed.map(r => r.cvr));
+  const maxSess = Math.max(...parsed.map(r => r.sessions));
+  const W = 560, H = 260, PAD_L = 40, PAD_R = 10, PAD_T = 10, PAD_B = 34;
+  const plotW = W - PAD_L - PAD_R;
+  const plotH = H - PAD_T - PAD_B;
+  const xScale = d => PAD_L + (d / maxDur) * plotW;
+  const yScale = c => PAD_T + plotH - (c / maxCvr) * plotH;
+  const rScale = s => 2 + Math.sqrt(s / maxSess) * 7;
+
+  const dots = parsed
+    .slice()
+    .sort((a, b) => b.sessions - a.sessions) // bigger dots drawn first (smaller on top)
+    .map(r => {
+      const color = chColor(r.channel);
+      return `<circle cx="${xScale(r.duration).toFixed(1)}" cy="${yScale(r.cvr).toFixed(1)}" r="${rScale(r.sessions).toFixed(1)}"
+                fill="${color}" fill-opacity="0.55" stroke="${color}" stroke-width="0.8">
+        <title>${esc(r.source || '(direct)')} · ${esc(r.lp)}
+  ${Math.round(r.sessions)} sessions · ${(r.cvr*100).toFixed(2)}% CVR · ${r.duration.toFixed(0)}s</title>
+      </circle>`;
+    }).join('');
+
+  // Axis ticks (4 on each axis)
+  const xTicks = [0, 0.25, 0.5, 0.75, 1].map(t => {
+    const x = PAD_L + t * plotW;
+    const v = t * maxDur;
+    return `<line x1="${x}" y1="${PAD_T+plotH}" x2="${x}" y2="${PAD_T+plotH+4}" stroke="#999"/>
+      <text x="${x}" y="${PAD_T+plotH+16}" text-anchor="middle" font-size="10" fill="#65676b">${v.toFixed(0)}s</text>`;
+  }).join('');
+  const yTicks = [0, 0.25, 0.5, 0.75, 1].map(t => {
+    const y = PAD_T + plotH - t * plotH;
+    const v = t * maxCvr * 100;
+    return `<line x1="${PAD_L-4}" y1="${y}" x2="${PAD_L}" y2="${y}" stroke="#999"/>
+      <text x="${PAD_L-6}" y="${y+3}" text-anchor="end" font-size="10" fill="#65676b">${v.toFixed(1)}%</text>`;
+  }).join('');
+
+  // Per-channel correlation table
+  const tableRows = channelRows.map(c => {
+    const rText = c.r == null ? '—' : c.r.toFixed(3);
+    const rClass = c.r == null ? '' : (c.r > 0.2 ? 'pos' : c.r < -0.2 ? 'neg' : '');
+    const strength =
+      c.r == null ? '—'
+      : Math.abs(c.r) >= 0.6 ? 'Strong'
+      : Math.abs(c.r) >= 0.3 ? 'Moderate'
+      : Math.abs(c.r) >= 0.1 ? 'Weak'
+      : 'None';
+    return `<tr>
+      <td><span class="ch-dot" style="background:${esc(chColor(c.channel))}"></span>${esc(chLabel(c.channel))}</td>
+      <td class="r">${c.lps}</td>
+      <td class="r">${fmtN(Math.round(c.sessions))}</td>
+      <td class="r">${c.avgDur.toFixed(0)}s</td>
+      <td class="r">${(c.avgCvr*100).toFixed(2)}%</td>
+      <td class="r ${rClass}"><strong>${rText}</strong></td>
+      <td class="r">${strength}</td>
+    </tr>`;
+  }).join('');
+
+  const overallR = overall.r == null ? '—' : overall.r.toFixed(3);
+  const overallClass = overall.r == null ? '' : (overall.r > 0.2 ? 'pos' : overall.r < -0.2 ? 'neg' : '');
+  const overallStrength =
+    overall.r == null ? '—'
+    : Math.abs(overall.r) >= 0.6 ? 'Strong'
+    : Math.abs(overall.r) >= 0.3 ? 'Moderate'
+    : Math.abs(overall.r) >= 0.1 ? 'Weak'
+    : 'None';
+
+  card.innerHTML = `
+    <h3>Session Duration ↔ Conversion Rate Correlation</h3>
+    <p class="card__sub">Each dot is one landing page with ≥${MIN_SESS} sessions today; dot size = session volume, color = channel. Pearson r is session-weighted.</p>
+
+    <div class="corr-summary">
+      <div class="corr-kpi">
+        <div class="corr-kpi__label">Overall Pearson r</div>
+        <div class="corr-kpi__value ${overallClass}">${overallR}</div>
+        <div class="corr-kpi__sub">${overallStrength} · n=${overall.n} LPs</div>
+      </div>
+      <div class="corr-kpi">
+        <div class="corr-kpi__label">Interpretation</div>
+        <div class="corr-kpi__sub" style="font-size:0.82rem;padding-top:4px">${
+          overall.r == null ? 'Insufficient variance.'
+          : overall.r > 0.1 ? 'Pages that hold visitors longer tend to convert better — invest in engagement on weak pages.'
+          : overall.r < -0.1 ? 'Longer sessions correlate with <em>lower</em> CVR — high duration may indicate confusion or indecision.'
+          : 'No meaningful linear relationship — other factors (offer, traffic quality) matter more than on-page time.'
+        }</div>
+      </div>
+    </div>
+
+    <svg class="corr-scatter" viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet" style="margin-top:16px">
+      <rect x="${PAD_L}" y="${PAD_T}" width="${plotW}" height="${plotH}" fill="#fafbfc" stroke="#e4e6eb"/>
+      ${xTicks}
+      ${yTicks}
+      <text x="${PAD_L + plotW/2}" y="${H-4}" text-anchor="middle" font-size="11" fill="#65676b">Avg. Session Duration (s)</text>
+      <text x="12" y="${PAD_T + plotH/2}" text-anchor="middle" font-size="11" fill="#65676b" transform="rotate(-90, 12, ${PAD_T + plotH/2})">Conversion Rate</text>
+      ${dots}
+    </svg>
+
+    <div style="overflow-x:auto;margin-top:18px">
+      <table class="breakdown-table">
+        <thead>
+          <tr>
+            <th>Channel</th>
+            <th class="r">LPs</th>
+            <th class="r">Sessions</th>
+            <th class="r">Avg Duration</th>
+            <th class="r">Avg CVR</th>
+            <th class="r">Pearson r</th>
+            <th class="r">Strength</th>
+          </tr>
+        </thead>
+        <tbody>${tableRows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
 function renderDrillDown(container, source, tDelta, tPrevConv) {
   const lpRows = aggregateByLp(_rawRows, source);
   if (lpRows.length === 0) {
@@ -1925,6 +2159,9 @@ function renderDrillDown(container, source, tDelta, tPrevConv) {
 // 1000-row cap. We use these to display headline KPIs that match Shopify exactly.
 let _shopifyTotals = null;
 
+// Raw LP-level dataset from the correlation query (sessions, CVR, avg duration per source+LP)
+let _correlationData = null;
+
 function parseShopifyQL(data) {
   const { columns, rows } = data;
   if (!columns || !rows || !rows.length) throw new Error('No data returned from Shopify.');
@@ -1936,33 +2173,62 @@ function parseShopifyQL(data) {
     return Array.isArray(row) ? row[idx] : row[columns[idx].name];
   };
 
-  // Find column indices — ShopifyQL COMPARE TO previous_period uses
-  // "comparison_<metric>__previous_period" naming for prior-period columns
+  // Prior-period columns use "__previous_period" OR "__yesterday" depending on COMPARE TO target
+  const findPrior = (metric) => colNames.findIndex(s =>
+    s === `comparison_${metric}__previous_period` || s === `comparison_${metric}__yesterday`
+  );
+  const findTotalPrior = (metric) => colNames.findIndex(s =>
+    s === `comparison_${metric}__previous_period__totals` || s === `comparison_${metric}__yesterday__totals`
+  );
+
   const iSrc  = colNames.findIndex(s => s === 'utm_source');
-  const iLp   = colNames.findIndex(s => s === 'landing_page_path');
+  const iLp   = colNames.findIndex(s => s === 'landing_page_path'); // -1 if query doesn't group by LP
   const iSess = colNames.findIndex(s => s === 'sessions');
   const iCvr  = colNames.findIndex(s => s === 'conversion_rate');
-  const iPrevS   = colNames.findIndex(s => s === 'comparison_sessions__previous_period');
-  const iPrevCvr = colNames.findIndex(s => s === 'comparison_conversion_rate__previous_period');
+  const iPrevS   = findPrior('sessions');
+  const iPrevCvr = findPrior('conversion_rate');
+
+  // Optional funnel metrics (present when the query SHOWs them)
+  const iDur          = colNames.findIndex(s => s === 'average_session_duration');
+  const iAtc          = colNames.findIndex(s => s === 'sessions_with_cart_additions');
+  const iReached      = colNames.findIndex(s => s === 'sessions_that_reached_checkout');
+  const iCompleted    = colNames.findIndex(s => s === 'sessions_that_reached_and_completed_checkout');
 
   // Shopify's grand-total columns (present when WITH TOTALS is used)
-  const iTotS     = colNames.findIndex(s => s === 'sessions__totals');
-  const iTotCvr   = colNames.findIndex(s => s === 'conversion_rate__totals');
-  const iTotPrevS = colNames.findIndex(s => s === 'comparison_sessions__previous_period__totals');
-  const iTotPrevCvr = colNames.findIndex(s => s === 'comparison_conversion_rate__previous_period__totals');
+  const iTotS         = colNames.findIndex(s => s === 'sessions__totals');
+  const iTotCvr       = colNames.findIndex(s => s === 'conversion_rate__totals');
+  const iTotDur       = colNames.findIndex(s => s === 'average_session_duration__totals');
+  const iTotAtc       = colNames.findIndex(s => s === 'sessions_with_cart_additions__totals');
+  const iTotReached   = colNames.findIndex(s => s === 'sessions_that_reached_checkout__totals');
+  const iTotCompleted = colNames.findIndex(s => s === 'sessions_that_reached_and_completed_checkout__totals');
+  const iTotPrevS     = findTotalPrior('sessions');
+  const iTotPrevCvr   = findTotalPrior('conversion_rate');
+  const iTotPrevDur   = findTotalPrior('average_session_duration');
+  const iTotPrevAtc   = findTotalPrior('sessions_with_cart_additions');
+  const iTotPrevReached   = findTotalPrior('sessions_that_reached_checkout');
+  const iTotPrevCompleted = findTotalPrior('sessions_that_reached_and_completed_checkout');
 
   if (iSess < 0) throw new Error('Missing "sessions" column in Shopify response. Columns: ' + colNames.join(', '));
   if (iCvr  < 0) throw new Error('Missing "conversion_rate" column in Shopify response. Columns: ' + colNames.join(', '));
   if (iPrevS < 0) throw new Error('Missing previous-period sessions column. Columns: ' + colNames.join(', '));
   if (iPrevCvr < 0) throw new Error('Missing previous-period conversion_rate column. Columns: ' + colNames.join(', '));
 
-  // Pull Shopify's true totals from the first row (same for every row)
+  // Pull Shopify's true totals from the first row (same value on every row)
   if (iTotS >= 0 && rows[0]) {
+    const N = (idx) => idx >= 0 ? (parseFloat(getVal(rows[0], idx)) || 0) : null;
     _shopifyTotals = {
-      currS:   parseFloat(getVal(rows[0], iTotS)) || 0,
-      currCvr: normCvr(parseFloat(getVal(rows[0], iTotCvr)) || 0) ?? 0,
-      prevS:   parseFloat(getVal(rows[0], iTotPrevS)) || 0,
-      prevCvr: normCvr(parseFloat(getVal(rows[0], iTotPrevCvr)) || 0) ?? 0,
+      currS:         N(iTotS),
+      currCvr:       normCvr(N(iTotCvr)) ?? 0,
+      prevS:         N(iTotPrevS),
+      prevCvr:       normCvr(N(iTotPrevCvr)) ?? 0,
+      currDur:       N(iTotDur),
+      prevDur:       N(iTotPrevDur),
+      currAtc:       N(iTotAtc),
+      prevAtc:       N(iTotPrevAtc),
+      currReached:   N(iTotReached),
+      prevReached:   N(iTotPrevReached),
+      currCompleted: N(iTotCompleted),
+      prevCompleted: N(iTotPrevCompleted),
     };
   } else {
     _shopifyTotals = null;
@@ -1972,13 +2238,13 @@ function parseShopifyQL(data) {
 
   for (const row of rows) {
     const rawSrc = getVal(row, iSrc);
-    const rawLp  = getVal(row, iLp);
+    const rawLp  = iLp >= 0 ? getVal(row, iLp) : '';
 
     // null/undefined utm_source = Direct traffic; convert to empty string
     const source = (rawSrc == null ? '' : String(rawSrc)).trim();
     const lp     = (rawLp  == null ? '' : String(rawLp)).trim();
 
-    // Skip rows where both dimensions are empty (totals row)
+    // Skip rows where all dimensions are empty (totals row)
     if (!source && !lp) continue;
 
     const sessRaw    = parseFloat(getVal(row, iSess)) || 0;
@@ -2003,14 +2269,6 @@ async function loadFromShopify() {
   const btn    = document.getElementById('btn-shopify-load');
   const status = document.getElementById('shopify-status');
   const errEl  = document.getElementById('upload-error');
-  const startDate = document.getElementById('date-start').value;
-  const endDate   = document.getElementById('date-end').value;
-
-  if (!startDate || !endDate) {
-    status.className = 'shopify-status error';
-    status.textContent = 'Please select a start and end date.';
-    return;
-  }
 
   btn.disabled = true;
   status.className = 'shopify-status';
@@ -2018,27 +2276,28 @@ async function loadFromShopify() {
   errEl.className = 'upload-error';
 
   try {
-    const resp = await fetch(`/api/conversion-impact-data?start=${startDate}&end=${endDate}`);
+    const resp = await fetch('/api/conversion-impact-data');
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
       throw new Error(err.error || `HTTP ${resp.status}`);
     }
 
     const data = await resp.json();
-    if (data.query) console.log('[ShopifyQL]\n' + data.query);
+    if (data.query) console.log('[ShopifyQL — main]\n' + data.query);
+    if (data.correlation?.query) console.log('[ShopifyQL — correlation]\n' + data.correlation.query);
     status.textContent = 'Parsing response…';
     const rows = parseShopifyQL(data);
-    render(rows, `Shopify · ${startDate} to ${endDate} vs previous period`);
-    // Expose query in results top bar for quick inspection
-    if (data.query) {
-      const info = document.getElementById('top-bar-info');
-      if (info) {
-        info.innerHTML += ` &nbsp;·&nbsp; <a href="#" id="show-query-link" style="color:var(--fb-blue)">Show ShopifyQL</a>`;
-        document.getElementById('show-query-link').addEventListener('click', (e) => {
-          e.preventDefault();
-          alert(data.query);
-        });
-      }
+    _correlationData = data.correlation || null;
+    render(rows, 'Shopify · Today vs Yesterday');
+    // Expose queries in the top bar
+    const info = document.getElementById('top-bar-info');
+    if (info) {
+      info.innerHTML += ` &nbsp;·&nbsp; <a href="#" id="show-query-link" style="color:var(--fb-blue)">Show ShopifyQL</a>`;
+      document.getElementById('show-query-link').addEventListener('click', (e) => {
+        e.preventDefault();
+        const both = `--- Main ---\n${data.query}\n\n--- Correlation ---\n${data.correlation?.query || '(none)'}`;
+        alert(both);
+      });
     }
   } catch (err) {
     status.className = 'shopify-status error';
@@ -2094,15 +2353,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const open = wrap.classList.toggle('open');
     this.textContent = open ? 'Hide raw utm_source rows' : 'Show raw utm_source rows';
   });
-
-  // Default dates: yesterday for both start and end
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  const dayBefore = new Date();
-  dayBefore.setDate(dayBefore.getDate() - 2);
-  const fmt = d => d.toISOString().slice(0, 10);
-  document.getElementById('date-start').value = fmt(dayBefore);
-  document.getElementById('date-end').value = fmt(yesterday);
 
   // Shopify load
   document.getElementById('btn-shopify-load').addEventListener('click', loadFromShopify);

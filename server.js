@@ -1023,11 +1023,6 @@ app.get('/api/conversion-impact-data', async (req, res) => {
     return res.status(500).json({ error: 'Shopify credentials not configured' });
   }
 
-  const { start, end } = req.query;
-  if (!start || !end || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
-    return res.status(400).json({ error: 'start and end query params required (YYYY-MM-DD)' });
-  }
-
   const endpoint = `https://${SHOPIFY_URL}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
   const gqlQuery = `query RunShopifyQL($q: String!) {
     shopifyqlQuery(query: $q) {
@@ -1036,41 +1031,61 @@ app.get('/api/conversion-impact-data', async (req, res) => {
     }
   }`;
 
-  const shopifyql = `FROM sessions
-  SHOW sessions, conversion_rate
-  GROUP BY utm_source, landing_page_path WITH TOTALS, PERCENT_CHANGE
-  SINCE ${start} UNTIL ${end}
-  COMPARE TO previous_period
-  ORDER BY sessions DESC, conversion_rate DESC, utm_source ASC,
-    landing_page_path ASC
-VISUALIZE conversion_rate`;
+  // Main summary: top 5 utm_source with full funnel metrics, today vs yesterday
+  const mainQuery = `FROM sessions
+  SHOW sessions, conversion_rate, average_session_duration, sessions_with_cart_additions, sessions_that_reached_checkout, sessions_that_reached_and_completed_checkout
+  GROUP BY ONLY TOP 5 utm_source WITH TOTALS, PERCENT_CHANGE
+  DURING today
+  COMPARE TO yesterday
+  ORDER BY sessions DESC
+VISUALIZE conversion_rate TYPE table`;
 
-  console.log('\n[conversion-impact-data] ShopifyQL query:\n' + shopifyql + '\n');
+  // Correlation dataset: session duration vs conversion rate, grouped by source + LP
+  const correlationQuery = `FROM sessions
+  SHOW sessions, conversion_rate, average_session_duration
+  GROUP BY utm_source, landing_page_path
+  DURING today
+  ORDER BY sessions DESC`;
 
-  try {
-    const response = await fetch(endpoint, {
+  console.log('\n[conversion-impact-data] Main query:\n' + mainQuery);
+  console.log('\n[conversion-impact-data] Correlation query:\n' + correlationQuery);
+
+  const runQuery = async (q) => {
+    const resp = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
-      body: JSON.stringify({ query: gqlQuery, variables: { q: shopifyql } }),
+      body: JSON.stringify({ query: gqlQuery, variables: { q } }),
     });
-    const json = await response.json();
+    const json = await resp.json();
     const payload = json.data?.shopifyqlQuery;
-
     if (payload?.parseErrors?.length) {
-      return res.status(400).json({ error: 'ShopifyQL parse error', details: payload.parseErrors });
+      const err = new Error('ShopifyQL parse error: ' + JSON.stringify(payload.parseErrors));
+      err.details = payload.parseErrors;
+      throw err;
     }
-    if (!payload?.tableData) {
-      return res.status(500).json({ error: 'No data returned from Shopify' });
-    }
+    if (!payload?.tableData) throw new Error('No data returned from Shopify');
+    return payload.tableData;
+  };
+
+  try {
+    const [main, correlation] = await Promise.all([
+      runQuery(mainQuery),
+      runQuery(correlationQuery),
+    ]);
 
     res.json({
-      query: shopifyql,
-      columns: payload.tableData.columns,
-      rows: payload.tableData.rows,
+      query: mainQuery,
+      columns: main.columns,
+      rows: main.rows,
+      correlation: {
+        query: correlationQuery,
+        columns: correlation.columns,
+        rows: correlation.rows,
+      },
     });
   } catch (err) {
     console.error('Conversion impact data error:', err);
-    res.status(500).json({ error: 'Failed to fetch Shopify data' });
+    res.status(500).json({ error: err.message, details: err.details });
   }
 });
 
