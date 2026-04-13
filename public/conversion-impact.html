@@ -708,6 +708,78 @@
       border-radius: 6px;
       display: block;
     }
+    .corr-scatter-wrap {
+      position: relative;
+      margin-top: 14px;
+    }
+    .corr-dot {
+      cursor: pointer;
+      transition: fill-opacity 0.12s, stroke-width 0.12s;
+    }
+    .corr-dot:hover {
+      fill-opacity: 0.9;
+      stroke-width: 2;
+    }
+    .corr-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      margin-top: 14px;
+      padding: 8px 12px;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 0.82rem;
+    }
+    .corr-legend__item {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--text-primary);
+    }
+    .corr-legend__dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    .corr-tooltip {
+      display: none;
+      position: absolute;
+      pointer-events: none;
+      background: #1c1e21;
+      color: #fff;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 0.78rem;
+      line-height: 1.5;
+      min-width: 200px;
+      max-width: 320px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+      z-index: 10;
+    }
+    .corr-tooltip__title {
+      font-weight: 700;
+      margin-bottom: 2px;
+    }
+    .corr-tooltip__channel {
+      font-weight: 400;
+      opacity: 0.75;
+    }
+    .corr-tooltip__lp {
+      font-family: Menlo, Monaco, monospace;
+      font-size: 0.72rem;
+      opacity: 0.85;
+      margin-bottom: 4px;
+      word-break: break-all;
+    }
+    .corr-tooltip__stats {
+      display: flex;
+      gap: 10px;
+      font-weight: 600;
+    }
+    .corr-tooltip__stats span {
+      white-space: nowrap;
+    }
 
     /* Collapsible cards */
     .card.collapsible { padding: 0; }
@@ -2002,38 +2074,75 @@ function renderCorrelation(corrData) {
   const maxDur = Math.max(...parsed.map(r => r.duration));
   const maxCvr = Math.max(...parsed.map(r => r.cvr));
   const maxSess = Math.max(...parsed.map(r => r.sessions));
-  const W = 560, H = 260, PAD_L = 40, PAD_R = 10, PAD_T = 10, PAD_B = 34;
+  const W = 720, H = 360, PAD_L = 56, PAD_R = 16, PAD_T = 16, PAD_B = 48;
   const plotW = W - PAD_L - PAD_R;
   const plotH = H - PAD_T - PAD_B;
   const xScale = d => PAD_L + (d / maxDur) * plotW;
   const yScale = c => PAD_T + plotH - (c / maxCvr) * plotH;
-  const rScale = s => 2 + Math.sqrt(s / maxSess) * 7;
+  const rScale = s => 4 + Math.sqrt(s / maxSess) * 14;
 
-  const dots = parsed
-    .slice()
-    .sort((a, b) => b.sessions - a.sessions) // bigger dots drawn first (smaller on top)
-    .map(r => {
-      const color = chColor(r.channel);
-      return `<circle cx="${xScale(r.duration).toFixed(1)}" cy="${yScale(r.cvr).toFixed(1)}" r="${rScale(r.sessions).toFixed(1)}"
-                fill="${color}" fill-opacity="0.55" stroke="${color}" stroke-width="0.8">
-        <title>${esc(r.source || '(direct)')} · ${esc(r.lp)}
-  ${Math.round(r.sessions)} sessions · ${(r.cvr*100).toFixed(2)}% CVR · ${r.duration.toFixed(0)}s</title>
-      </circle>`;
-    }).join('');
+  // Short LP label — just the last segment of the path
+  const shortLp = p => {
+    if (!p || p === '/') return '/';
+    const parts = p.replace(/\/$/, '').split('/').filter(Boolean);
+    const last = parts[parts.length - 1] || '/';
+    return last.length > 22 ? last.slice(0, 20) + '…' : last;
+  };
 
-  // Axis ticks (4 on each axis)
+  // Sort biggest first so they paint in back, and label the top ones in-chart
+  const sorted = parsed.slice().sort((a, b) => b.sessions - a.sessions);
+  const labelCount = Math.min(5, sorted.length);
+
+  const dots = sorted.map((r, i) => {
+    const color = chColor(r.channel);
+    const cx = xScale(r.duration);
+    const cy = yScale(r.cvr);
+    const rad = rScale(r.sessions);
+    const dataAttrs =
+      `data-source="${esc(r.source || '(direct)')}" ` +
+      `data-lp="${esc(r.lp)}" ` +
+      `data-channel="${esc(chLabel(r.channel))}" ` +
+      `data-sessions="${Math.round(r.sessions)}" ` +
+      `data-cvr="${(r.cvr*100).toFixed(2)}" ` +
+      `data-dur="${r.duration.toFixed(0)}"`;
+    return `<circle class="corr-dot" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${rad.toFixed(1)}"
+              fill="${color}" fill-opacity="0.6" stroke="${color}" stroke-width="1.2"
+              ${dataAttrs} />`;
+  }).join('');
+
+  // In-chart labels for the top-N LPs by volume (drawn on top)
+  const labels = sorted.slice(0, labelCount).map(r => {
+    const cx = xScale(r.duration);
+    const cy = yScale(r.cvr);
+    const rad = rScale(r.sessions);
+    const tx = cx + rad + 4;
+    const ty = cy + 3;
+    return `<text x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" font-size="10" fill="#1c1e21" font-weight="600" pointer-events="none">${esc(shortLp(r.lp))}</text>`;
+  }).join('');
+
+  // Axis ticks (5 on each axis) + subtle gridlines
   const xTicks = [0, 0.25, 0.5, 0.75, 1].map(t => {
     const x = PAD_L + t * plotW;
     const v = t * maxDur;
-    return `<line x1="${x}" y1="${PAD_T+plotH}" x2="${x}" y2="${PAD_T+plotH+4}" stroke="#999"/>
-      <text x="${x}" y="${PAD_T+plotH+16}" text-anchor="middle" font-size="10" fill="#65676b">${v.toFixed(0)}s</text>`;
+    return `<line x1="${x}" y1="${PAD_T}" x2="${x}" y2="${PAD_T+plotH}" stroke="#eef0f4"/>
+      <line x1="${x}" y1="${PAD_T+plotH}" x2="${x}" y2="${PAD_T+plotH+4}" stroke="#999"/>
+      <text x="${x}" y="${PAD_T+plotH+18}" text-anchor="middle" font-size="11" fill="#65676b">${v.toFixed(0)}s</text>`;
   }).join('');
   const yTicks = [0, 0.25, 0.5, 0.75, 1].map(t => {
     const y = PAD_T + plotH - t * plotH;
     const v = t * maxCvr * 100;
-    return `<line x1="${PAD_L-4}" y1="${y}" x2="${PAD_L}" y2="${y}" stroke="#999"/>
-      <text x="${PAD_L-6}" y="${y+3}" text-anchor="end" font-size="10" fill="#65676b">${v.toFixed(1)}%</text>`;
+    return `<line x1="${PAD_L}" y1="${y}" x2="${PAD_L+plotW}" y2="${y}" stroke="#eef0f4"/>
+      <line x1="${PAD_L-4}" y1="${y}" x2="${PAD_L}" y2="${y}" stroke="#999"/>
+      <text x="${PAD_L-8}" y="${y+3}" text-anchor="end" font-size="11" fill="#65676b">${v.toFixed(1)}%</text>`;
   }).join('');
+
+  // Legend — only show channels that actually appear in the data
+  const legendChannels = [...new Set(parsed.map(r => r.channel))];
+  const legendHtml = legendChannels.map(ch => `
+    <span class="corr-legend__item">
+      <span class="corr-legend__dot" style="background:${esc(chColor(ch))}"></span>${esc(chLabel(ch))}
+    </span>
+  `).join('');
 
   // Per-channel correlation table
   const tableRows = channelRows.map(c => {
@@ -2067,7 +2176,7 @@ function renderCorrelation(corrData) {
 
   card.innerHTML = `
     <h3>Session Duration ↔ Conversion Rate Correlation</h3>
-    <p class="card__sub">Each dot is one landing page with ≥${MIN_SESS} sessions today; dot size = session volume, color = channel. Pearson r is session-weighted.</p>
+    <p class="card__sub">Each dot is one landing page with ≥${MIN_SESS} sessions. Size = session volume, color = channel. Top 5 LPs by volume are labeled. <strong>Hover any dot for details.</strong></p>
 
     <div class="corr-summary">
       <div class="corr-kpi">
@@ -2086,14 +2195,20 @@ function renderCorrelation(corrData) {
       </div>
     </div>
 
-    <svg class="corr-scatter" viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet" style="margin-top:16px">
-      <rect x="${PAD_L}" y="${PAD_T}" width="${plotW}" height="${plotH}" fill="#fafbfc" stroke="#e4e6eb"/>
-      ${xTicks}
-      ${yTicks}
-      <text x="${PAD_L + plotW/2}" y="${H-4}" text-anchor="middle" font-size="11" fill="#65676b">Avg. Session Duration (s)</text>
-      <text x="12" y="${PAD_T + plotH/2}" text-anchor="middle" font-size="11" fill="#65676b" transform="rotate(-90, 12, ${PAD_T + plotH/2})">Conversion Rate</text>
-      ${dots}
-    </svg>
+    <div class="corr-legend">${legendHtml}</div>
+
+    <div class="corr-scatter-wrap">
+      <svg class="corr-scatter" viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet">
+        <rect x="${PAD_L}" y="${PAD_T}" width="${plotW}" height="${plotH}" fill="#fafbfc" stroke="#e4e6eb"/>
+        ${xTicks}
+        ${yTicks}
+        <text x="${PAD_L + plotW/2}" y="${H-6}" text-anchor="middle" font-size="12" fill="#65676b">Avg. Session Duration (seconds)</text>
+        <text x="14" y="${PAD_T + plotH/2}" text-anchor="middle" font-size="12" fill="#65676b" transform="rotate(-90, 14, ${PAD_T + plotH/2})">Conversion Rate</text>
+        ${dots}
+        ${labels}
+      </svg>
+      <div class="corr-tooltip" id="corr-tooltip"></div>
+    </div>
 
     <div style="overflow-x:auto;margin-top:18px">
       <table class="breakdown-table">
@@ -2112,6 +2227,28 @@ function renderCorrelation(corrData) {
       </table>
     </div>
   `;
+
+  // Hover tooltip — shown by JS so it reliably follows the cursor across channels
+  const wrap = card.querySelector('.corr-scatter-wrap');
+  const tip = card.querySelector('#corr-tooltip');
+  wrap.addEventListener('mousemove', (e) => {
+    const target = e.target.closest('.corr-dot');
+    if (!target) { tip.style.display = 'none'; return; }
+    const d = target.dataset;
+    tip.innerHTML = `
+      <div class="corr-tooltip__title">${d.source} · <span class="corr-tooltip__channel">${d.channel}</span></div>
+      <div class="corr-tooltip__lp">${d.lp}</div>
+      <div class="corr-tooltip__stats">
+        <span>${(+d.sessions).toLocaleString()} sessions</span>
+        <span>${d.cvr}% CVR</span>
+        <span>${d.dur}s avg</span>
+      </div>`;
+    const rect = wrap.getBoundingClientRect();
+    tip.style.display = 'block';
+    tip.style.left = (e.clientX - rect.left + 14) + 'px';
+    tip.style.top  = (e.clientY - rect.top  + 14) + 'px';
+  });
+  wrap.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
 }
 
 function renderDrillDown(container, source, tDelta, tPrevConv) {
