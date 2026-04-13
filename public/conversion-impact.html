@@ -1049,34 +1049,49 @@ function render(rawRows, filename) {
   const tPrevCvr = tPrevS > 0 ? tPrevWC / tPrevS : 0;
   const tCurrCvr = tCurrS > 0 ? tCurrWC / tCurrS : 0;
 
+  // Use Shopify's authoritative totals for the headline KPIs when available.
+  // These include rows truncated from the 1000-row response cap, so they
+  // exactly match what Shopify shows in the admin report.
+  const kpiCurrS   = _shopifyTotals ? _shopifyTotals.currS   : tCurrS;
+  const kpiPrevS   = _shopifyTotals ? _shopifyTotals.prevS   : tPrevS;
+  const kpiCurrCvr = _shopifyTotals ? _shopifyTotals.currCvr : tCurrCvr;
+  const kpiPrevCvr = _shopifyTotals ? _shopifyTotals.prevCvr : tPrevCvr;
+  const kpiCurrConv = kpiCurrS * kpiCurrCvr;
+  const kpiPrevConv = kpiPrevS * kpiPrevCvr;
+  const kpiTxnDelta = kpiCurrConv - kpiPrevConv;
+
   // Top bar
+  const rowInfo = `${rows.length} utm_source / landing page rows &nbsp;·&nbsp; ${channels.length} channel groups`;
+  const truncNote = _shopifyTotals && Math.abs(_shopifyTotals.currS - tCurrS) > 1
+    ? ` &nbsp;·&nbsp; <span title="Shopify caps response at 1000 rows; totals include truncated data">KPIs use Shopify grand totals</span>`
+    : '';
   document.getElementById('top-bar-info').innerHTML =
-    `<strong>${esc(filename)}</strong> &nbsp;·&nbsp; ${rows.length} utm_source / landing page rows &nbsp;·&nbsp; ${channels.length} channel groups`;
+    `<strong>${esc(filename)}</strong> &nbsp;·&nbsp; ${rowInfo}${truncNote}`;
 
   // Overall Summary KPIs
-  const sessDelta = tCurrS - tPrevS;
-  const sessPct = tPrevS > 0 ? sessDelta / tPrevS * 100 : 0;
-  const cvrDelta = tCurrCvr - tPrevCvr;
-  const txnPct = tPrevConv > 0 ? tDelta / tPrevConv * 100 : 0;
+  const sessDelta = kpiCurrS - kpiPrevS;
+  const sessPct = kpiPrevS > 0 ? sessDelta / kpiPrevS * 100 : 0;
+  const cvrDelta = kpiCurrCvr - kpiPrevCvr;
+  const txnPct = kpiPrevConv > 0 ? kpiTxnDelta / kpiPrevConv * 100 : 0;
 
   document.getElementById('kpi-row').innerHTML = `
     <div class="kpi">
       <div class="kpi__label">Total Sessions</div>
-      <div class="kpi__value">${fmtN(tCurrS)}</div>
-      <div class="kpi__sub">was ${fmtN(tPrevS)}</div>
+      <div class="kpi__value">${fmtN(Math.round(kpiCurrS))}</div>
+      <div class="kpi__sub">was ${fmtN(Math.round(kpiPrevS))}</div>
       <div class="kpi__badge ${bcls(sessDelta)}">${fmtS(Math.round(sessDelta))} (${fmtP(sessPct,1)})</div>
     </div>
     <div class="kpi">
       <div class="kpi__label">Conversion Rate</div>
-      <div class="kpi__value">${(tCurrCvr*100).toFixed(2)}%</div>
-      <div class="kpi__sub">was ${(tPrevCvr*100).toFixed(2)}%</div>
+      <div class="kpi__value">${(kpiCurrCvr*100).toFixed(2)}%</div>
+      <div class="kpi__sub">was ${(kpiPrevCvr*100).toFixed(2)}%</div>
       <div class="kpi__badge ${bcls(cvrDelta)}">${fmtPP(cvrDelta*100)}</div>
     </div>
     <div class="kpi">
       <div class="kpi__label">Transactions</div>
-      <div class="kpi__value">${fmtN(Math.round(tCurrConv))}</div>
-      <div class="kpi__sub">was ${fmtN(Math.round(tPrevConv))}</div>
-      <div class="kpi__badge ${bcls(tDelta)}">${fmtS(Math.round(tDelta))} (${fmtP(txnPct,1)})</div>
+      <div class="kpi__value">${fmtN(Math.round(kpiCurrConv))}</div>
+      <div class="kpi__sub">was ${fmtN(Math.round(kpiPrevConv))}</div>
+      <div class="kpi__badge ${bcls(kpiTxnDelta)}">${fmtS(Math.round(kpiTxnDelta))} (${fmtP(txnPct,1)})</div>
     </div>
   `;
 
@@ -1795,6 +1810,11 @@ function renderDrillDown(container, source, tDelta, tPrevConv) {
 // ─────────────────────────────────────────────
 // SHOPIFY QL PARSING
 // ─────────────────────────────────────────────
+// Shopify's true totals (from the __totals columns in the response).
+// These reflect ALL data in the date range, even rows truncated by Shopify's
+// 1000-row cap. We use these to display headline KPIs that match Shopify exactly.
+let _shopifyTotals = null;
+
 function parseShopifyQL(data) {
   const { columns, rows } = data;
   if (!columns || !rows || !rows.length) throw new Error('No data returned from Shopify.');
@@ -1815,10 +1835,28 @@ function parseShopifyQL(data) {
   const iPrevS   = colNames.findIndex(s => s === 'comparison_sessions__previous_period');
   const iPrevCvr = colNames.findIndex(s => s === 'comparison_conversion_rate__previous_period');
 
+  // Shopify's grand-total columns (present when WITH TOTALS is used)
+  const iTotS     = colNames.findIndex(s => s === 'sessions__totals');
+  const iTotCvr   = colNames.findIndex(s => s === 'conversion_rate__totals');
+  const iTotPrevS = colNames.findIndex(s => s === 'comparison_sessions__previous_period__totals');
+  const iTotPrevCvr = colNames.findIndex(s => s === 'comparison_conversion_rate__previous_period__totals');
+
   if (iSess < 0) throw new Error('Missing "sessions" column in Shopify response. Columns: ' + colNames.join(', '));
   if (iCvr  < 0) throw new Error('Missing "conversion_rate" column in Shopify response. Columns: ' + colNames.join(', '));
   if (iPrevS < 0) throw new Error('Missing previous-period sessions column. Columns: ' + colNames.join(', '));
   if (iPrevCvr < 0) throw new Error('Missing previous-period conversion_rate column. Columns: ' + colNames.join(', '));
+
+  // Pull Shopify's true totals from the first row (same for every row)
+  if (iTotS >= 0 && rows[0]) {
+    _shopifyTotals = {
+      currS:   parseFloat(getVal(rows[0], iTotS)) || 0,
+      currCvr: normCvr(parseFloat(getVal(rows[0], iTotCvr)) || 0) ?? 0,
+      prevS:   parseFloat(getVal(rows[0], iTotPrevS)) || 0,
+      prevCvr: normCvr(parseFloat(getVal(rows[0], iTotPrevCvr)) || 0) ?? 0,
+    };
+  } else {
+    _shopifyTotals = null;
+  }
 
   const parsed = [];
 
@@ -1832,9 +1870,6 @@ function parseShopifyQL(data) {
 
     // Skip rows where both dimensions are empty (totals row)
     if (!source && !lp) continue;
-
-    // Skip post-conversion / non-landing pages
-    if (/^\/(checkout|checkouts|orders|payment-methods|gift_cards|apps\/retextion|account|profile)(\/|$)/i.test(lp)) continue;
 
     const sessRaw    = parseFloat(getVal(row, iSess)) || 0;
     const cvrRaw     = parseFloat(getVal(row, iCvr))  || 0;
@@ -1911,6 +1946,7 @@ function handleFile(file) {
   const reader = new FileReader();
   reader.onload = e => {
     try {
+      _shopifyTotals = null; // CSV has no grand totals — fall back to summed rows
       const rows = parseCSV(e.target.result);
       render(rows, file.name);
     } catch (err) {
