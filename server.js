@@ -1023,6 +1023,11 @@ app.get('/api/conversion-impact-data', async (req, res) => {
     return res.status(500).json({ error: 'Shopify credentials not configured' });
   }
 
+  const { start, end } = req.query;
+  if (!start || !end || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+    return res.status(400).json({ error: 'start and end query params required (YYYY-MM-DD)' });
+  }
+
   const endpoint = `https://${SHOPIFY_URL}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
   const gqlQuery = `query RunShopifyQL($q: String!) {
     shopifyqlQuery(query: $q) {
@@ -1031,12 +1036,12 @@ app.get('/api/conversion-impact-data', async (req, res) => {
     }
   }`;
 
-  // Main summary: top 5 utm_source with full funnel metrics, today vs yesterday
+  // Main summary: top 5 utm_source with full funnel metrics, selected range vs previous period
   const mainQuery = `FROM sessions
   SHOW sessions, conversion_rate, average_session_duration, sessions_with_cart_additions, sessions_that_reached_checkout, sessions_that_reached_and_completed_checkout
   GROUP BY ONLY TOP 5 utm_source WITH TOTALS, PERCENT_CHANGE
-  DURING today
-  COMPARE TO yesterday
+  SINCE ${start} UNTIL ${end}
+  COMPARE TO previous_period
   ORDER BY sessions DESC
 VISUALIZE conversion_rate TYPE table`;
 
@@ -1044,7 +1049,7 @@ VISUALIZE conversion_rate TYPE table`;
   const correlationQuery = `FROM sessions
   SHOW sessions, conversion_rate, average_session_duration
   GROUP BY utm_source, landing_page_path
-  DURING today
+  SINCE ${start} UNTIL ${end}
   ORDER BY sessions DESC`;
 
   console.log('\n[conversion-impact-data] Main query:\n' + mainQuery);

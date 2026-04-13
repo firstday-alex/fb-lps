@@ -768,8 +768,12 @@
 <div id="upload-screen">
   <div class="upload-card">
     <h2>Conversion Impact Analysis</h2>
-    <p>Load today's funnel metrics vs. yesterday from Shopify (top 5 sources + LP correlation), or upload a CSV export.</p>
-    <button class="shopify-load-btn" id="btn-shopify-load">Load from Shopify (Today vs Yesterday)</button>
+    <p>Load full funnel metrics + LP correlation from Shopify for a date range, compared to the same-length previous period.</p>
+    <div class="date-row">
+      <label>Start <input type="date" id="date-start"></label>
+      <label>End <input type="date" id="date-end"></label>
+    </div>
+    <button class="shopify-load-btn" id="btn-shopify-load">Load from Shopify</button>
     <div class="shopify-status" id="shopify-status"></div>
     <div class="upload-divider"><span>or upload CSV</span></div>
     <div class="upload-zone" id="upload-zone">
@@ -2269,6 +2273,14 @@ async function loadFromShopify() {
   const btn    = document.getElementById('btn-shopify-load');
   const status = document.getElementById('shopify-status');
   const errEl  = document.getElementById('upload-error');
+  const startDate = document.getElementById('date-start').value;
+  const endDate   = document.getElementById('date-end').value;
+
+  if (!startDate || !endDate) {
+    status.className = 'shopify-status error';
+    status.textContent = 'Please select a start and end date.';
+    return;
+  }
 
   btn.disabled = true;
   status.className = 'shopify-status';
@@ -2276,7 +2288,7 @@ async function loadFromShopify() {
   errEl.className = 'upload-error';
 
   try {
-    const resp = await fetch('/api/conversion-impact-data');
+    const resp = await fetch(`/api/conversion-impact-data?start=${startDate}&end=${endDate}`);
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
       throw new Error(err.error || `HTTP ${resp.status}`);
@@ -2288,7 +2300,7 @@ async function loadFromShopify() {
     status.textContent = 'Parsing response…';
     const rows = parseShopifyQL(data);
     _correlationData = data.correlation || null;
-    render(rows, 'Shopify · Today vs Yesterday');
+    render(rows, `Shopify · ${startDate} to ${endDate} vs previous period`);
     // Expose queries in the top bar
     const info = document.getElementById('top-bar-info');
     if (info) {
@@ -2353,6 +2365,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const open = wrap.classList.toggle('open');
     this.textContent = open ? 'Hide raw utm_source rows' : 'Show raw utm_source rows';
   });
+
+  // Default dates: yesterday (start) and yesterday (end) — single-day view
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const fmt = d => d.toISOString().slice(0, 10);
+  document.getElementById('date-start').value = fmt(yesterday);
+  document.getElementById('date-end').value = fmt(yesterday);
 
   // Shopify load
   document.getElementById('btn-shopify-load').addEventListener('click', loadFromShopify);
