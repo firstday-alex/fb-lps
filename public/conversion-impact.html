@@ -679,6 +679,49 @@
       line-height: 1.6;
     }
     .mix-insight strong { color: var(--text-primary); }
+
+    /* Collapsible cards */
+    .card.collapsible { padding: 0; }
+    .card-toggle {
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 16px 20px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      user-select: none;
+      transition: background 0.15s;
+    }
+    .card-toggle:hover { background: #f7f9fc; }
+    .card-toggle__chevron {
+      display: inline-block;
+      transition: transform 0.2s;
+      font-size: 0.7em;
+      color: var(--text-secondary);
+      width: 12px;
+    }
+    .card.collapsed .card-toggle__chevron { transform: rotate(-90deg); }
+    .card-toggle__title { flex: 1; }
+    .card-toggle__hint {
+      font-size: 0.78rem;
+      font-weight: 400;
+      color: var(--text-secondary);
+    }
+    .card-toggle__body {
+      padding: 0 20px 20px;
+      border-top: 1px solid var(--border);
+      padding-top: 16px;
+    }
+    .card.collapsed .card-toggle__body { display: none; }
+    .card.collapsed .card-toggle { padding-bottom: 16px; }
+    /* Cards that already have internal padding shouldn't double it up */
+    .card.collapsible.breakdown-card .card-toggle__body,
+    .card.collapsible.cvr-movement-card .card-toggle__body,
+    .card.collapsible.mix-shift-card .card-toggle__body {
+      padding-left: 20px; padding-right: 20px;
+    }
   </style>
 </head>
 <body>
@@ -1026,6 +1069,11 @@ let _rawRows = [];
 
 function render(rawRows, filename) {
   _rawRows = rawRows;
+  // Clear the collapsible-wrapped flag so cards get re-wrapped after re-render
+  document.querySelectorAll('#results-screen .card').forEach(c => {
+    c.classList.remove('collapsible', 'collapsed');
+    delete c.dataset.collapsibleDone;
+  });
   // Aggregate to utm_source level for contributor list
   const rows = aggregateBySource(rawRows);
   const channels = aggregate(rawRows);
@@ -1325,9 +1373,71 @@ function render(rawRows, filename) {
     rawTbody.appendChild(tr);
   });
 
+  // Make all analysis cards collapsible (collapsed by default)
+  makeCardsCollapsible();
+
   // Show results
   document.getElementById('upload-screen').style.display = 'none';
   document.getElementById('results-screen').style.display = 'block';
+}
+
+// Wrap each analysis card with a collapsible toggle header.
+// Safe to call multiple times — idempotent per card.
+function makeCardsCollapsible() {
+  // Card id → title/hint override (used for cards without an h3 inside)
+  const titles = {
+    'headline-card':       { title: 'Headline Insight',          hint: 'One-line summary of what drove the change' },
+    'cvr-movement-card':   { title: 'CVR Movement by Source',    hint: 'How each source\'s conversion rate shifted' },
+    'mix-shift-card':      { title: 'Mix-Shift Counterfactual',  hint: 'Blended CVR if only session mix changed' },
+    'session-volume-card': { title: 'Session Volume Impact',     hint: 'Which sources gained or lost traffic' },
+    'cvr-bucket-card':     { title: 'CVR Bucket Summary',        hint: 'Session movements grouped by CVR tier' },
+  };
+
+  document.querySelectorAll('#results-screen .card').forEach(card => {
+    if (card.dataset.collapsibleDone === '1') {
+      // Already wrapped — nothing to do (guard against re-render)
+      return;
+    }
+
+    // Find an existing h3 inside the card to use as the toggle title
+    const innerH3 = card.querySelector(':scope > h3, :scope > div > h3');
+    const innerSub = card.querySelector(':scope > p.card__sub, :scope > div > p.card__sub');
+
+    let title, hint;
+    if (innerH3) {
+      title = innerH3.textContent.trim();
+      hint = innerSub ? innerSub.textContent.trim() : '';
+    } else {
+      const override = titles[card.id];
+      if (!override) return; // card we don't want collapsible
+      title = override.title;
+      hint = override.hint || '';
+    }
+
+    // Build the toggle header
+    const header = document.createElement('div');
+    header.className = 'card-toggle';
+    header.innerHTML = `
+      <span class="card-toggle__chevron">&#9660;</span>
+      <span class="card-toggle__title">${esc(title)}</span>
+      ${hint ? `<span class="card-toggle__hint">${esc(hint.length > 80 ? hint.slice(0, 77) + '…' : hint)}</span>` : ''}
+    `;
+
+    // Move the card's existing children into a body wrapper
+    const body = document.createElement('div');
+    body.className = 'card-toggle__body';
+    while (card.firstChild) body.appendChild(card.firstChild);
+
+    // Remove the original h3/sub from the body since they now live in the header
+    body.querySelectorAll(':scope > h3, :scope > p.card__sub').forEach(el => el.remove());
+
+    card.appendChild(header);
+    card.appendChild(body);
+    card.classList.add('collapsible', 'collapsed');
+    card.dataset.collapsibleDone = '1';
+
+    header.addEventListener('click', () => card.classList.toggle('collapsed'));
+  });
 }
 
 // ─────────────────────────────────────────────
