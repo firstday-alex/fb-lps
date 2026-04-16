@@ -1,0 +1,2000 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Meta Paid Social · Conversion Impact</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --fb-blue: #1877f2;
+      --fb-blue-dark: #166fe5;
+      --bg: #f0f2f5;
+      --surface: #fff;
+      --text-primary: #1c1e21;
+      --text-secondary: #65676b;
+      --border: #dddfe2;
+      --positive: #1a7f37;
+      --positive-bg: #dcfce7;
+      --negative: #c0392b;
+      --negative-bg: #fee2e2;
+      --neutral-bg: #e4e6eb;
+      --shadow: 0 1px 3px rgba(0,0,0,0.12);
+      --radius: 8px;
+      --c-campaign: #1877f2;
+      --c-lp: #7c3aed;
+      --amber: #d97706;
+      --amber-bg: #fef3c7;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text-primary);
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    header {
+      background: var(--fb-blue);
+      color: white;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .header__back {
+      color: rgba(255,255,255,0.85);
+      text-decoration: none;
+      font-size: 0.875rem;
+      border: 1px solid rgba(255,255,255,0.3);
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+    }
+    .header__back:hover { background: rgba(255,255,255,0.15); color: white; }
+    header h1 { font-size: 1.2rem; font-weight: 700; }
+    header p { font-size: 0.8rem; opacity: 0.75; }
+    .header__report-link {
+      margin-left: auto;
+      color: rgba(255,255,255,0.85);
+      text-decoration: none;
+      font-size: 0.875rem;
+      border: 1px solid rgba(255,255,255,0.3);
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+    }
+    .header__report-link:hover { background: rgba(255,255,255,0.15); color: white; }
+
+    #upload-screen {
+      max-width: 560px;
+      margin: 60px auto;
+      padding: 0 24px;
+    }
+    .upload-card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 32px;
+      text-align: center;
+    }
+    .upload-card h2 { font-size: 1.1rem; margin-bottom: 8px; }
+    .upload-card p { font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 24px; }
+
+    .date-row {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 14px;
+      justify-content: center;
+    }
+    .date-row label {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .date-row input[type="date"],
+    .date-row input[type="text"] {
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-family: inherit;
+    }
+
+    .shopify-load-btn {
+      display: block;
+      width: 100%;
+      padding: 14px 20px;
+      margin-bottom: 12px;
+      background: #96bf48;
+      color: #fff;
+      border: none;
+      border-radius: var(--radius);
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .shopify-load-btn:hover { background: #7ea93e; }
+    .shopify-load-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .shopify-status {
+      font-size: 0.82rem;
+      color: var(--text-secondary);
+      min-height: 1.4em;
+      margin-bottom: 4px;
+    }
+    .shopify-status.error { color: var(--negative); }
+    .upload-error {
+      margin-top: 12px;
+      padding: 10px 14px;
+      background: var(--negative-bg);
+      color: var(--negative);
+      border-radius: 6px;
+      font-size: 0.82rem;
+      display: none;
+    }
+    .upload-error.show { display: block; }
+
+    #results-screen { display: none; }
+    .results-wrap {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 20px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .top-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .top-bar__info { font-size: 0.82rem; color: var(--text-secondary); }
+    .top-bar__info strong { color: var(--text-primary); }
+    .btn-reset {
+      font-size: 0.82rem;
+      padding: 6px 14px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--surface);
+      cursor: pointer;
+      color: var(--text-secondary);
+    }
+    .btn-reset:hover { background: var(--bg); }
+
+    .card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    .kpi-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+    }
+    @media (max-width: 700px) { .kpi-row { grid-template-columns: 1fr; } }
+    .kpi {
+      background: var(--surface);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 16px 18px;
+    }
+    .kpi__label {
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-secondary);
+      margin-bottom: 4px;
+    }
+    .kpi__value {
+      font-size: 1.7rem;
+      font-weight: 700;
+      line-height: 1.1;
+    }
+    .kpi__sub { font-size: 0.78rem; color: var(--text-secondary); margin-top: 4px; }
+    .kpi__badge {
+      display: inline-block;
+      margin-top: 4px;
+      padding: 2px 8px;
+      border-radius: 20px;
+      font-size: 0.72rem;
+      font-weight: 700;
+    }
+    .pos { color: var(--positive); }
+    .neg { color: var(--negative); }
+    .amb { color: var(--amber); }
+    .badge-pos { background: var(--positive-bg); color: var(--positive); }
+    .badge-neg { background: var(--negative-bg); color: var(--negative); }
+    .badge-neu { background: var(--neutral-bg); color: var(--text-secondary); }
+
+    .cvr-badge {
+      display: inline-block;
+      margin-left: 5px;
+      font-size: 0.68rem;
+      font-weight: 600;
+      padding: 1px 5px;
+      border-radius: 3px;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+    .cvr-badge--hi { background: var(--positive-bg); color: var(--positive); }
+    .cvr-badge--lo { background: var(--negative-bg); color: var(--negative); }
+
+    .ch-dot {
+      width: 9px; height: 9px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .breakdown-card { padding: 20px; }
+    .breakdown-card h3 {
+      font-size: 0.82rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-secondary);
+      margin-bottom: 14px;
+    }
+    .breakdown-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.83rem;
+    }
+    .breakdown-table th {
+      text-align: left;
+      padding: 7px 10px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-secondary);
+      border-bottom: 2px solid var(--border);
+      white-space: nowrap;
+    }
+    .breakdown-table th.r { text-align: right; }
+    .breakdown-table td {
+      padding: 9px 10px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+    .breakdown-table td.r { text-align: right; }
+    .breakdown-table tbody tr:last-child td { border-bottom: none; }
+    .breakdown-table tfoot td {
+      padding: 9px 10px;
+      font-weight: 700;
+      background: var(--bg);
+      border-top: 2px solid var(--border);
+    }
+    .breakdown-table tfoot td.r { text-align: right; }
+
+    .headline-card {
+      padding: 18px 20px;
+      border-left: 4px solid var(--border);
+    }
+    .headline-card.up   { border-left-color: var(--positive); }
+    .headline-card.down { border-left-color: var(--negative); }
+    .headline-card h3   { font-size: 1rem; margin-bottom: 4px; }
+    .headline-card p    { font-size: 0.875rem; color: var(--text-secondary); margin: 0; }
+
+    .card__sub { font-size: 0.8rem; color: var(--text-secondary); margin: -6px 0 14px; }
+
+    .contrib-stat {
+      text-align: right; font-size: 0.78rem; color: var(--text-secondary); white-space: nowrap;
+    }
+    .contrib-stat strong { display: block; font-size: 0.82rem; color: var(--text-primary); font-weight: 600; }
+    .contrib-bar-wrap { height: 8px; background: var(--neutral-bg); border-radius: 4px; overflow: hidden; }
+    .contrib-bar { height: 100%; border-radius: 4px; min-width: 2px; }
+    .contrib-val { text-align: right; font-weight: 700; font-size: 0.9rem; }
+    .contrib-pct { text-align: right; font-size: 0.74rem; color: var(--text-secondary); }
+    .contrib-chevron { font-size: 0.65rem; color: var(--text-secondary); text-align: right; }
+
+    .contrib-header {
+      display: grid;
+      grid-template-columns: 210px 52px 52px 52px 1fr 90px 80px 20px;
+      gap: 10px;
+      padding: 6px 4px;
+      font-size: 0.68rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--text-secondary);
+      border-bottom: 2px solid var(--border);
+      position: sticky;
+      top: 0;
+      background: var(--surface);
+      z-index: 10;
+    }
+    .contrib-header .r { text-align: right; }
+
+    .source-wrap { border-bottom: 1px solid var(--border); }
+    .source-wrap:last-child { border-bottom: none; }
+    .source-row {
+      display: grid;
+      grid-template-columns: 210px 52px 52px 52px 1fr 90px 80px 20px;
+      align-items: center;
+      gap: 10px;
+      padding: 11px 4px;
+      cursor: pointer;
+      user-select: none;
+      font-size: 0.82rem;
+      border-radius: 6px;
+    }
+    .source-row:hover { background: #f7f9ff; }
+    .source-wrap.open .source-row { background: #eef3ff; }
+    .source-label { display: flex; align-items: flex-start; gap: 7px; font-weight: 600; }
+    .source-driver { font-size: 0.72rem; color: var(--text-secondary); font-weight: 400; margin-top: 2px; }
+
+    .effects-panel {
+      display: none;
+      background: #f4f6fb;
+      border-top: 1px solid #dde4f7;
+      padding: 6px 8px 10px 38px;
+    }
+    .source-wrap.open .effects-panel { display: block; }
+    .effect-row {
+      display: grid;
+      grid-template-columns: 150px 1fr 130px 65px 80px;
+      align-items: center;
+      gap: 10px;
+      padding: 5px 0;
+      border-top: 1px solid #e4e8f4;
+      font-size: 0.78rem;
+    }
+    .effect-row:first-child { border-top: none; }
+    .effect-type { font-weight: 600; white-space: nowrap; }
+    .effect-detail { font-size: 0.73rem; color: var(--text-secondary); }
+
+    .lp-btn {
+      margin-top: 8px;
+      font-size: 0.74rem;
+      color: var(--fb-blue);
+      background: none;
+      border: 1px solid #c5d4f5;
+      border-radius: 5px;
+      cursor: pointer;
+      padding: 3px 10px;
+    }
+    .lp-btn:hover { background: #eef3ff; }
+    .drill-panel { display: none; margin-top: 6px; }
+    .drill-panel.open { display: block; }
+    .drill-header {
+      font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.07em; color: var(--text-secondary); padding: 6px 0 3px;
+    }
+    .drill-row {
+      display: grid;
+      grid-template-columns: 1fr 52px 52px 130px 65px 80px;
+      align-items: center;
+      gap: 10px;
+      padding: 5px 0;
+      border-top: 1px solid #e4e8f4;
+      font-size: 0.77rem;
+    }
+    .drill-lp { font-weight: 500; font-size: 0.76rem; color: var(--text-primary); word-break: break-all; }
+
+    .hidden { display: none !important; }
+    .section-label {
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-secondary);
+    }
+
+    .cvr-movement-card { padding: 20px; }
+    .cvr-movement-card h3 {
+      font-size: 0.82rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--text-secondary); margin-bottom: 4px;
+    }
+    .cvr-movement-card .card__sub { margin-bottom: 16px; }
+    .cvr-chart {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+    .cvr-chart-row {
+      display: grid;
+      grid-template-columns: 200px 60px 1fr 60px 60px;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.8rem;
+    }
+    .cvr-chart-row:last-child { border-bottom: none; }
+    .cvr-chart-row.cvr-chart-row--header {
+      font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--text-secondary);
+      border-bottom: 2px solid var(--border); padding-bottom: 8px;
+    }
+    .cvr-chart-row .r { text-align: right; }
+    .cvr-src-label { font-weight: 600; display: flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; }
+    .cvr-src-label .ch-dot { flex-shrink: 0; }
+    .cvr-bar-cell { position: relative; height: 22px; }
+    .cvr-bar-track {
+      position: absolute; top: 0; bottom: 0;
+      display: flex; align-items: center;
+    }
+    .cvr-bar-fill {
+      height: 14px; border-radius: 3px; min-width: 2px;
+    }
+    .cvr-bar-label {
+      position: absolute; top: 50%; transform: translateY(-50%);
+      font-size: 0.7rem; font-weight: 600; white-space: nowrap;
+    }
+    .cvr-divider {
+      position: absolute; top: -2px; bottom: -2px; width: 1px;
+      background: var(--text-secondary); opacity: 0.3;
+    }
+
+    .sess-chart-row {
+      display: grid;
+      grid-template-columns: 200px 70px 1fr 70px 90px;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.8rem;
+    }
+    .sess-chart-row:last-child { border-bottom: none; }
+    .sess-chart-row.sess-chart-row--header {
+      font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--text-secondary);
+      border-bottom: 2px solid var(--border); padding-bottom: 8px;
+    }
+    .sess-chart-row .r { text-align: right; }
+    .sess-bars {
+      display: flex; align-items: center; gap: 0;
+      height: 22px; position: relative;
+    }
+    .sess-bar-prev, .sess-bar-curr {
+      height: 10px; min-width: 1px; position: absolute;
+    }
+    .sess-bar-prev {
+      top: 1px; background: var(--border); border-radius: 2px; opacity: 0.7;
+    }
+    .sess-bar-curr {
+      top: 12px; border-radius: 2px;
+    }
+    .sess-delta-tag {
+      font-size: 0.7rem; font-weight: 600; white-space: nowrap;
+    }
+    .cvr-pill {
+      display: inline-block;
+      padding: 3px 9px;
+      border-radius: 4px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-align: center;
+      white-space: nowrap;
+      line-height: 1.3;
+    }
+
+    .bucket-row {
+      display: grid;
+      grid-template-columns: 220px 80px 80px 1fr 80px 60px;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.82rem;
+    }
+    .bucket-row:last-child { border-bottom: none; }
+    .bucket-row--header {
+      font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--text-secondary);
+      border-bottom: 2px solid var(--border); padding-bottom: 8px;
+    }
+    .bucket-row .r { text-align: right; }
+    .bucket-label {
+      display: flex; align-items: center; gap: 8px; font-weight: 600;
+    }
+    .bucket-color {
+      width: 32px; height: 18px; border-radius: 3px; flex-shrink: 0;
+    }
+    .bucket-name { line-height: 1.2; overflow: hidden; }
+    .bucket-name small { display: block; font-weight: 400; font-size: 0.7rem; color: var(--text-secondary); }
+    .bucket-bars {
+      position: relative; height: 22px;
+    }
+    .bucket-bar-prev, .bucket-bar-curr {
+      position: absolute; height: 10px; min-width: 1px; border-radius: 2px;
+    }
+    .bucket-bar-prev { top: 1px; background: var(--border); opacity: 0.7; }
+    .bucket-bar-curr { top: 12px; }
+
+    .mix-shift-card { padding: 20px; }
+    .mix-shift-card h3 {
+      font-size: 0.82rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--text-secondary); margin-bottom: 4px;
+    }
+    .mix-shift-card .card__sub { margin-bottom: 16px; }
+    .mix-summary {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    @media (max-width: 700px) { .mix-summary { grid-template-columns: 1fr; } }
+    .mix-stat {
+      background: var(--bg);
+      border-radius: 6px;
+      padding: 14px 16px;
+    }
+    .mix-stat__label {
+      font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--text-secondary); margin-bottom: 4px;
+    }
+    .mix-stat__value { font-size: 1.3rem; font-weight: 700; }
+    .mix-stat__sub { font-size: 0.78rem; color: var(--text-secondary); margin-top: 2px; }
+    .mix-waterfall {
+      display: flex; align-items: flex-end; gap: 0;
+      height: 120px; border-bottom: 2px solid var(--border);
+      margin-bottom: 8px; position: relative;
+    }
+    .mix-wf-bar {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: flex-end; position: relative;
+    }
+    .mix-wf-fill {
+      width: 60%; border-radius: 3px 3px 0 0; min-height: 2px;
+      transition: height 0.3s;
+    }
+    .mix-wf-label {
+      font-size: 0.68rem; font-weight: 600; margin-top: 6px;
+      text-align: center; color: var(--text-secondary);
+    }
+    .mix-wf-val {
+      font-size: 0.72rem; font-weight: 700; margin-bottom: 3px;
+    }
+    .mix-insight {
+      background: #f7f9ff;
+      border: 1px solid #dde4f7;
+      border-radius: 6px;
+      padding: 14px 16px;
+      font-size: 0.85rem;
+      line-height: 1.6;
+    }
+    .mix-insight strong { color: var(--text-primary); }
+
+    .corr-summary {
+      display: grid;
+      grid-template-columns: 1fr 2fr;
+      gap: 16px;
+      background: #f7f9fc;
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .corr-kpi__label {
+      font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+      color: var(--text-secondary); letter-spacing: 0.5px;
+    }
+    .corr-kpi__value {
+      font-size: 2rem; font-weight: 700; color: var(--text-primary);
+      line-height: 1.1; margin-top: 4px;
+    }
+    .corr-kpi__value.pos { color: var(--positive); }
+    .corr-kpi__value.neg { color: var(--negative); }
+    .corr-kpi__sub {
+      font-size: 0.78rem; color: var(--text-secondary); margin-top: 2px;
+    }
+    .corr-scatter {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      display: block;
+    }
+    .corr-scatter-wrap {
+      position: relative;
+      margin-top: 14px;
+    }
+    .corr-dot {
+      cursor: pointer;
+      transition: fill-opacity 0.12s, stroke-width 0.12s;
+    }
+    .corr-dot:hover {
+      fill-opacity: 0.9;
+      stroke-width: 2;
+    }
+    .corr-tooltip {
+      display: none;
+      position: absolute;
+      pointer-events: none;
+      background: #1c1e21;
+      color: #fff;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 0.78rem;
+      line-height: 1.5;
+      min-width: 200px;
+      max-width: 320px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+      z-index: 10;
+    }
+    .corr-tooltip__lp {
+      font-family: Menlo, Monaco, monospace;
+      font-size: 0.72rem;
+      opacity: 0.9;
+      margin-bottom: 4px;
+      word-break: break-all;
+    }
+    .corr-tooltip__stats {
+      display: flex;
+      gap: 10px;
+      font-weight: 600;
+    }
+    .corr-tooltip__stats span {
+      white-space: nowrap;
+    }
+
+    .card.collapsible { padding: 0; }
+    .card-toggle {
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 16px 20px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      user-select: none;
+      transition: background 0.15s;
+    }
+    .card-toggle:hover { background: #f7f9fc; }
+    .card-toggle__chevron {
+      display: inline-block;
+      transition: transform 0.2s;
+      font-size: 0.7em;
+      color: var(--text-secondary);
+      width: 12px;
+    }
+    .card.collapsed .card-toggle__chevron { transform: rotate(-90deg); }
+    .card-toggle__title { flex: 1; }
+    .card-toggle__hint {
+      font-size: 0.78rem;
+      font-weight: 400;
+      color: var(--text-secondary);
+    }
+    .card-toggle__body {
+      padding: 0 20px 20px;
+      border-top: 1px solid var(--border);
+      padding-top: 16px;
+    }
+    .card.collapsed .card-toggle__body { display: none; }
+    .card.collapsed .card-toggle { padding-bottom: 16px; }
+    .card.collapsible.breakdown-card .card-toggle__body,
+    .card.collapsible.cvr-movement-card .card-toggle__body,
+    .card.collapsible.mix-shift-card .card-toggle__body {
+      padding-left: 20px; padding-right: 20px;
+    }
+
+    .filter-row {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-bottom: 14px;
+      font-size: 0.82rem;
+    }
+    .filter-row label {
+      display: flex; align-items: center; gap: 6px;
+      color: var(--text-secondary); font-weight: 600;
+    }
+    .filter-row input {
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-family: inherit;
+      width: 140px;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <a class="header__back" href="/">&#8592; Ads Viewer</a>
+  <div>
+    <h1>Meta Paid Social &middot; Conversion Impact</h1>
+    <p>Campaign &amp; landing-page analysis filtered to utm_source / utm_medium</p>
+  </div>
+  <a class="header__report-link" id="shopify-report-link" href="#" target="_blank" rel="noopener">Open Shopify Report ↗</a>
+</header>
+
+<div id="upload-screen">
+  <div class="upload-card">
+    <h2>Meta Paid Social Impact</h2>
+    <p>Load Shopify sessions filtered by <code>utm_source</code> &amp; <code>utm_medium</code>, grouped by campaign and landing page, compared to the prior period.</p>
+    <div class="date-row">
+      <label>Start <input type="date" id="date-start"></label>
+      <label>End <input type="date" id="date-end"></label>
+    </div>
+    <div class="filter-row">
+      <label>utm_source <input type="text" id="filter-source" value="facebook"></label>
+      <label>utm_medium <input type="text" id="filter-medium" value="paid_social"></label>
+    </div>
+    <button class="shopify-load-btn" id="btn-shopify-load">Load from Shopify</button>
+    <div class="shopify-status" id="shopify-status"></div>
+    <div class="upload-error" id="upload-error"></div>
+  </div>
+</div>
+
+<div id="results-screen">
+  <div class="results-wrap">
+
+    <div class="top-bar">
+      <div class="top-bar__info" id="top-bar-info"></div>
+      <button class="btn-reset" id="btn-reset">&#8592; New query</button>
+    </div>
+
+    <div class="kpi-row" id="kpi-row"></div>
+
+    <div class="card headline-card" id="headline-card"></div>
+
+    <!-- CVR Movement by Campaign -->
+    <div class="card cvr-movement-card" id="cvr-movement-card"></div>
+
+    <!-- CVR Movement by Landing Page -->
+    <div class="card cvr-movement-card" id="cvr-movement-lp-card"></div>
+
+    <!-- Mix-Shift Counterfactual (by campaign) -->
+    <div class="card mix-shift-card" id="mix-shift-card"></div>
+
+    <!-- Session Volume by Campaign -->
+    <div class="card cvr-movement-card" id="session-volume-card"></div>
+
+    <!-- Session Volume by Landing Page -->
+    <div class="card cvr-movement-card" id="session-volume-lp-card"></div>
+
+    <!-- CVR Bucket Summary (by campaign) -->
+    <div class="card cvr-movement-card" id="cvr-bucket-card"></div>
+
+    <!-- Duration ↔ CVR Correlation (LPs) -->
+    <div class="card cvr-movement-card" id="correlation-card"></div>
+
+    <!-- Ranked contributors (by campaign) -->
+    <div class="card breakdown-card">
+      <h3>Top Contributors to Conversion Change</h3>
+      <p class="card__sub">Each row is one utm_campaign, ranked by absolute impact on transactions. <strong>Txns</strong> = this campaign's current-period transactions. <strong>Conv. Δ</strong> = this campaign's net contribution to the overall conversion delta (sessions + CVR + mix-shift effects).</p>
+      <div class="contrib-header">
+        <div>Campaign</div>
+        <div class="r">Sessions</div>
+        <div class="r">CVR</div>
+        <div class="r">Txns</div>
+        <div>Impact</div>
+        <div class="r" title="Contribution to overall change in conversions. Not the same as current Txns.">Conv. Δ ⓘ</div>
+        <div class="r">% of Δ</div>
+        <div></div>
+      </div>
+      <div id="contributors-list"></div>
+    </div>
+
+    <!-- Campaign breakdown table -->
+    <div class="card breakdown-card">
+      <h3>Campaign Breakdown</h3>
+      <div style="overflow-x:auto">
+        <table class="breakdown-table" id="breakdown-table">
+          <thead>
+            <tr>
+              <th>Campaign</th>
+              <th class="r">Prev Sess</th>
+              <th class="r">Curr Sess</th>
+              <th class="r">Δ Sess</th>
+              <th class="r">Prev CVR</th>
+              <th class="r">Curr CVR</th>
+              <th class="r">Δ CVR (pp)</th>
+              <th class="r">Prev Conv.</th>
+              <th class="r">Curr Conv.</th>
+              <th class="r">Δ Conv.</th>
+              <th class="r">Sess Effect</th>
+              <th class="r">CVR Effect</th>
+              <th class="r">Interaction</th>
+            </tr>
+          </thead>
+          <tbody id="breakdown-tbody"></tbody>
+          <tfoot id="breakdown-tfoot"></tfoot>
+        </table>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────
+// CONSTANTS
+// ─────────────────────────────────────────────
+const CAMPAIGN_COLOR = '#1877f2';
+const LP_COLOR       = '#7c3aed';
+
+// ─────────────────────────────────────────────
+// FORMAT HELPERS
+// ─────────────────────────────────────────────
+const fmtN  = (n, d=0) => isFinite(n) ? n.toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d}) : '—';
+const fmtK  = n => { if (!isFinite(n)) return '—'; if (Math.abs(n) >= 1000) return (n/1000).toFixed(1).replace(/\.0$/,'')+'K'; return String(Math.round(n)); };
+const fmtS  = (n, d=0) => { if(!isFinite(n)) return '—'; return (n>0?'+':'')+fmtN(n,d); };
+const fmtP  = (n, d=1) => { if(!isFinite(n)) return '—'; return (n>0?'+':'')+n.toFixed(d)+'%'; };
+const fmtPP = (n, d=2) => { if(!isFinite(n)) return '—'; return (n>0?'+':'')+n.toFixed(d)+'pp'; };
+const cls   = n => n > 0 ? 'pos' : n < 0 ? 'neg' : '';
+const bcls  = n => n > 0 ? 'badge-pos' : n < 0 ? 'badge-neg' : 'badge-neu';
+function esc(s) { const d=document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
+function normCvr(v) { if (v == null) return null; return v > 1 ? v / 100 : v; }
+
+// ─────────────────────────────────────────────
+// DECOMPOSITION MATH
+// ─────────────────────────────────────────────
+function decompose(prevS, prevC, currS, currC) {
+  const dS = currS - prevS;
+  const dC = currC - prevC;
+  const prevConv = prevS * prevC;
+  const currConv = currS * currC;
+  const sessEffect  = dS * prevC;
+  const cvrEffect   = prevS * dC;
+  const interaction = dS * dC;
+  const totalDelta  = currConv - prevConv;
+  return { prevConv, currConv, totalDelta, sessEffect, cvrEffect, interaction, dS, dC };
+}
+
+// ─────────────────────────────────────────────
+// AGGREGATION
+// ─────────────────────────────────────────────
+// Keyed aggregation — groups rows by a keyFn. Weighted CVR + duration.
+function aggregateBy(rows, keyFn) {
+  const map = new Map();
+  rows.forEach(r => {
+    const key = keyFn(r) || '(empty)';
+    let g = map.get(key);
+    if (!g) { g = { key, prevS: 0, currS: 0, prevWC: 0, currWC: 0, currWD: 0 }; map.set(key, g); }
+    g.prevS  += r.prevSess;
+    g.currS  += r.currS;
+    g.prevWC += r.prevSess * r.prevCvr;
+    g.currWC += r.currS    * r.currC;
+    g.currWD += r.currS    * (r.currDur || 0);
+  });
+  return Array.from(map.values()).map(g => ({
+    key: g.key,
+    currS:    g.currS,
+    currC:    g.currS > 0 ? g.currWC / g.currS : 0,
+    prevSess: g.prevS,
+    prevCvr:  g.prevS > 0 ? g.prevWC / g.prevS : 0,
+    currDur:  g.currS > 0 ? g.currWD / g.currS : 0,
+  }));
+}
+
+// ─────────────────────────────────────────────
+// GLOBAL STATE
+// ─────────────────────────────────────────────
+let _shopifyTotals = null;
+let _rawRows = [];
+
+// ─────────────────────────────────────────────
+// MAIN RENDER
+// ─────────────────────────────────────────────
+function render(rawRows, filename) {
+  _rawRows = rawRows;
+  document.querySelectorAll('#results-screen .card').forEach(c => {
+    c.classList.remove('collapsible', 'collapsed');
+    delete c.dataset.collapsibleDone;
+  });
+
+  const campaignRows = aggregateBy(rawRows, r => r.campaign);
+  const lpRows       = aggregateBy(rawRows, r => r.lp);
+
+  // Totals from aggregated campaign rows
+  let tPrevS=0, tCurrS=0, tPrevConv=0, tCurrConv=0, tDelta=0;
+  let tSessEff=0, tCvrEff=0, tInteract=0;
+  let tPrevWC=0, tCurrWC=0;
+  campaignRows.forEach(r => {
+    const d = decompose(r.prevSess, r.prevCvr, r.currS, r.currC);
+    tPrevS    += r.prevSess;
+    tCurrS    += r.currS;
+    tPrevConv += d.prevConv;
+    tCurrConv += d.currConv;
+    tDelta    += d.totalDelta;
+    tSessEff  += d.sessEffect;
+    tCvrEff   += d.cvrEffect;
+    tInteract += d.interaction;
+    tPrevWC   += r.prevSess * r.prevCvr;
+    tCurrWC   += r.currS    * r.currC;
+  });
+  const tPrevCvr = tPrevS > 0 ? tPrevWC / tPrevS : 0;
+  const tCurrCvr = tCurrS > 0 ? tCurrWC / tCurrS : 0;
+
+  // Use Shopify grand totals when available (matches headline KPIs to Shopify report)
+  const kpiCurrS   = _shopifyTotals ? _shopifyTotals.currS   : tCurrS;
+  const kpiPrevS   = _shopifyTotals ? _shopifyTotals.prevS   : tPrevS;
+  const kpiCurrCvr = _shopifyTotals ? _shopifyTotals.currCvr : tCurrCvr;
+  const kpiPrevCvr = _shopifyTotals ? _shopifyTotals.prevCvr : tPrevCvr;
+  const kpiCurrConv = kpiCurrS * kpiCurrCvr;
+  const kpiPrevConv = kpiPrevS * kpiPrevCvr;
+  const kpiTxnDelta = kpiCurrConv - kpiPrevConv;
+
+  const rowInfo = `${campaignRows.length} campaigns · ${lpRows.length} landing pages · ${rawRows.length} rows`;
+  const truncNote = _shopifyTotals && Math.abs(_shopifyTotals.currS - tCurrS) > 1
+    ? ` &nbsp;·&nbsp; <span title="Shopify caps response at 1000 rows; totals include truncated data">KPIs use Shopify grand totals</span>`
+    : '';
+  document.getElementById('top-bar-info').innerHTML =
+    `<strong>${esc(filename)}</strong> &nbsp;·&nbsp; ${rowInfo}${truncNote}`;
+
+  const sessDelta = kpiCurrS - kpiPrevS;
+  const sessPct = kpiPrevS > 0 ? sessDelta / kpiPrevS * 100 : 0;
+  const cvrDelta = kpiCurrCvr - kpiPrevCvr;
+  const txnPct = kpiPrevConv > 0 ? kpiTxnDelta / kpiPrevConv * 100 : 0;
+
+  document.getElementById('kpi-row').innerHTML = `
+    <div class="kpi">
+      <div class="kpi__label">Total Sessions</div>
+      <div class="kpi__value">${fmtN(Math.round(kpiCurrS))}</div>
+      <div class="kpi__sub">was ${fmtN(Math.round(kpiPrevS))}</div>
+      <div class="kpi__badge ${bcls(sessDelta)}">${fmtS(Math.round(sessDelta))} (${fmtP(sessPct,1)})</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi__label">Conversion Rate</div>
+      <div class="kpi__value">${(kpiCurrCvr*100).toFixed(2)}%</div>
+      <div class="kpi__sub">was ${(kpiPrevCvr*100).toFixed(2)}%</div>
+      <div class="kpi__badge ${bcls(cvrDelta)}">${fmtPP(cvrDelta*100)}</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi__label">Transactions</div>
+      <div class="kpi__value">${fmtN(Math.round(kpiCurrConv))}</div>
+      <div class="kpi__sub">was ${fmtN(Math.round(kpiPrevConv))}</div>
+      <div class="kpi__badge ${bcls(kpiTxnDelta)}">${fmtS(Math.round(kpiTxnDelta))} (${fmtP(txnPct,1)})</div>
+    </div>
+  `;
+
+  // ── Contributors (by campaign) ───────────────
+  const contributors = [];
+  campaignRows.forEach(r => {
+    const d = decompose(r.prevSess, r.prevCvr, r.currS, r.currC);
+    const label = r.key || '(empty)';
+    const aboveAvg = r.prevCvr > tPrevCvr;
+    const mixShift = d.dS * (r.prevCvr - tPrevCvr);
+
+    if (d.sessEffect !== 0) {
+      const mixHarmful = (aboveAvg && d.dS < 0) || (!aboveAvg && d.dS > 0);
+      contributors.push({
+        campaign: label, currS: r.currS, currC: r.currC,
+        aboveAvg, prevCvr: r.prevCvr, blendedCvr: tPrevCvr,
+        typeLabel: d.dS >= 0 ? 'Sessions Increase' : 'Sessions Decrease',
+        mixHarmful,
+        value: d.sessEffect,
+        detail: `${fmtS(Math.round(d.dS))} sessions (${fmtP(r.prevSess > 0 ? d.dS / r.prevSess * 100 : 0, 1)})`,
+      });
+    }
+    if (d.cvrEffect !== 0) {
+      contributors.push({
+        campaign: label, currS: r.currS, currC: r.currC,
+        aboveAvg, prevCvr: r.prevCvr, blendedCvr: tPrevCvr,
+        typeLabel: d.dC >= 0 ? 'CVR Increase' : 'CVR Decrease',
+        value: d.cvrEffect,
+        detail: `${fmtPP(d.dC*100)} (${(r.prevCvr*100).toFixed(2)}% → ${(r.currC*100).toFixed(2)}%)`,
+      });
+    }
+    if (Math.abs(d.interaction) > 0.5) {
+      contributors.push({
+        campaign: label, currS: r.currS, currC: r.currC,
+        aboveAvg, prevCvr: r.prevCvr, blendedCvr: tPrevCvr,
+        typeLabel: 'Interaction Effect',
+        value: d.interaction,
+        detail: `${fmtS(Math.round(d.dS))} sessions × ${fmtPP(d.dC*100)} CVR`,
+      });
+    }
+    if (Math.abs(mixShift) > 0.5) {
+      contributors.push({
+        campaign: label, currS: r.currS, currC: r.currC,
+        aboveAvg, prevCvr: r.prevCvr, blendedCvr: tPrevCvr,
+        typeLabel: mixShift >= 0 ? 'Mix Improvement' : 'Mix Drag',
+        isMixShift: true,
+        value: mixShift,
+        detail: `CVR ${(r.prevCvr*100).toFixed(2)}% vs avg ${(tPrevCvr*100).toFixed(2)}% · ${fmtS(Math.round(d.dS))} sessions`,
+      });
+    }
+  });
+  contributors.sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
+
+  const campaignGroups = [];
+  const cMap = new Map();
+  contributors.forEach(c => {
+    let g = cMap.get(c.campaign);
+    if (!g) {
+      g = { campaign: c.campaign, currS: c.currS, currC: c.currC, effects: [], netValue: 0 };
+      cMap.set(c.campaign, g);
+      campaignGroups.push(g);
+    }
+    g.effects.push(c);
+    g.netValue += c.value;
+  });
+  campaignGroups.sort((a, b) => Math.abs(b.netValue) - Math.abs(a.netValue));
+  campaignGroups.forEach(g => {
+    g.primaryEffect = g.effects.reduce((best, e) => Math.abs(e.value) > Math.abs(best.value) ? e : best);
+  });
+
+  // Headline
+  const topGroup = campaignGroups[0];
+  const headlineCard = document.getElementById('headline-card');
+  const direction = tDelta >= 0 ? 'increased' : 'decreased';
+  headlineCard.className = 'card headline-card ' + (tDelta >= 0 ? 'up' : 'down');
+  const topDesc = topGroup
+    ? `Largest driver: ${topGroup.primaryEffect.typeLabel} from ${topGroup.campaign} (Conv. Δ: ${fmtS(Math.round(topGroup.netValue))}).`
+    : '';
+  headlineCard.innerHTML = `
+    <h3>Meta paid-social transactions ${direction} by ${fmtS(Math.round(tDelta))} (${fmtP(txnPct, 1)})</h3>
+    <p>${esc(topDesc)}</p>
+  `;
+
+  // Panels
+  renderCvrMovement('cvr-movement-card', campaignRows, {
+    title: 'CVR Movement by Campaign',
+    sub: "Each row shows how a campaign's CVR changed. Sorted by transactions (highest first). Bar length = magnitude of CVR change.",
+    labelName: 'Campaign',
+    color: CAMPAIGN_COLOR,
+    minSess: 20,
+  });
+  renderCvrMovement('cvr-movement-lp-card', lpRows, {
+    title: 'CVR Movement by Landing Page',
+    sub: "Each row is a landing page path. Sorted by transactions (highest first). Bar length = magnitude of CVR change.",
+    labelName: 'Landing Page',
+    color: LP_COLOR,
+    minSess: 20,
+  });
+  renderMixShift(campaignRows, tPrevS, tCurrS, tPrevCvr, tCurrCvr);
+  renderSessionVolume('session-volume-card', campaignRows, {
+    title: 'Session Volume by Campaign',
+    sub: 'Campaigns ordered by current sessions (highest first). Gray = previous, colored = current.',
+    labelName: 'Campaign',
+    color: CAMPAIGN_COLOR,
+  });
+  renderSessionVolume('session-volume-lp-card', lpRows, {
+    title: 'Session Volume by Landing Page',
+    sub: 'Landing pages ordered by current sessions. Gray = previous, colored = current.',
+    labelName: 'Landing Page',
+    color: LP_COLOR,
+  });
+  renderCvrBuckets(campaignRows);
+  renderCorrelation(lpRows);
+
+  // Contributors list
+  const maxNetAbs = campaignGroups.length > 0 ? Math.abs(campaignGroups[0].netValue) : 1;
+  const contribList = document.getElementById('contributors-list');
+  contribList.innerHTML = '';
+  campaignGroups.forEach(g => {
+    const barPct = Math.round(Math.abs(g.netValue) / maxNetAbs * 100);
+    const netColor = g.netValue >= 0 ? 'var(--positive)' : 'var(--negative)';
+    const pctOfDelta = tDelta !== 0 ? (g.netValue / tDelta * 100) : 0;
+
+    const cvrVsAvg = g.currC - tCurrCvr;
+    const cvrBadge = isFinite(cvrVsAvg) && Math.abs(cvrVsAvg) > 0.0001
+      ? `<span class="cvr-badge ${cvrVsAvg > 0 ? 'cvr-badge--hi' : 'cvr-badge--lo'}" title="CVR vs avg ${(tCurrCvr*100).toFixed(2)}%">${cvrVsAvg > 0 ? '↑' : '↓'} ${Math.abs(cvrVsAvg*100).toFixed(2)}pp vs avg</span>`
+      : '';
+
+    const shortLabel = g.campaign.length > 30 ? g.campaign.slice(0, 28) + '…' : g.campaign;
+    const wrap = document.createElement('div');
+    wrap.className = 'source-wrap';
+    const row = document.createElement('div');
+    row.className = 'source-row';
+    row.title = 'Click to see effect breakdown';
+    row.innerHTML = `
+      <div class="source-label" title="${esc(g.campaign)}">
+        <span class="ch-dot" style="background:${CAMPAIGN_COLOR}"></span>
+        <div>
+          <div>${esc(shortLabel)}${cvrBadge}</div>
+          <div class="source-driver">${esc(g.primaryEffect.typeLabel)}</div>
+        </div>
+      </div>
+      <div class="contrib-stat"><strong>${esc(fmtK(g.currS))}</strong>sess</div>
+      <div class="contrib-stat"><strong>${(g.currC*100).toFixed(2)}%</strong>CVR</div>
+      <div class="contrib-stat"><strong>${esc(fmtK(Math.round(g.currS * g.currC)))}</strong>txns</div>
+      <div>
+        <div class="contrib-bar-wrap">
+          <div class="contrib-bar" style="width:${barPct}%;background:${netColor}"></div>
+        </div>
+      </div>
+      <div class="contrib-val ${cls(g.netValue)}" title="Conv. Δ: this campaign's net contribution to the overall change in conversions">${fmtS(Math.round(g.netValue))}</div>
+      <div class="contrib-pct ${cls(g.netValue)}">${fmtP(pctOfDelta, 1)} of Δ</div>
+      <div class="contrib-chevron">▶</div>
+    `;
+
+    const effectsPanel = document.createElement('div');
+    effectsPanel.className = 'effects-panel';
+
+    row.addEventListener('click', () => {
+      const open = wrap.classList.toggle('open');
+      row.querySelector('.contrib-chevron').textContent = open ? '▼' : '▶';
+      if (open && !effectsPanel.dataset.loaded) {
+        effectsPanel.dataset.loaded = '1';
+        renderEffects(effectsPanel, g, tDelta, tPrevConv);
+      }
+    });
+
+    wrap.appendChild(row);
+    wrap.appendChild(effectsPanel);
+    contribList.appendChild(wrap);
+  });
+
+  // Campaign breakdown table — sorted by |Δ Conv|
+  const tbody = document.getElementById('breakdown-tbody');
+  tbody.innerHTML = '';
+  const sortedCampaigns = [...campaignRows]
+    .map(r => ({ r, d: decompose(r.prevSess, r.prevCvr, r.currS, r.currC) }))
+    .sort((a, b) => Math.abs(b.d.totalDelta) - Math.abs(a.d.totalDelta));
+  sortedCampaigns.forEach(({ r, d }) => {
+    const prevCvrPct = r.prevCvr * 100;
+    const currCvrPct = r.currC * 100;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>
+        <span class="ch-dot" style="background:${CAMPAIGN_COLOR}"></span>
+        <strong title="${esc(r.key)}">${esc(r.key || '(empty)')}</strong>
+      </td>
+      <td class="r">${fmtN(r.prevSess)}</td>
+      <td class="r">${fmtN(r.currS)}</td>
+      <td class="r ${cls(d.dS)}">${fmtS(Math.round(d.dS))}</td>
+      <td class="r">${prevCvrPct.toFixed(2)}%</td>
+      <td class="r">${currCvrPct.toFixed(2)}%</td>
+      <td class="r ${cls(d.dC)}">${fmtPP(d.dC*100)}</td>
+      <td class="r">${fmtN(Math.round(d.prevConv))}</td>
+      <td class="r">${fmtN(Math.round(d.currConv))}</td>
+      <td class="r ${cls(d.totalDelta)}"><strong>${fmtS(Math.round(d.totalDelta))}</strong></td>
+      <td class="r ${cls(d.sessEffect)}">${fmtS(Math.round(d.sessEffect))}</td>
+      <td class="r ${cls(d.cvrEffect)}">${fmtS(Math.round(d.cvrEffect))}</td>
+      <td class="r ${cls(d.interaction)}">${fmtS(Math.round(d.interaction))}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  document.getElementById('breakdown-tfoot').innerHTML = `
+    <tr>
+      <td>Total</td>
+      <td class="r">${fmtN(tPrevS)}</td>
+      <td class="r">${fmtN(tCurrS)}</td>
+      <td class="r ${cls(tCurrS-tPrevS)}">${fmtS(Math.round(tCurrS-tPrevS))}</td>
+      <td class="r">${(tPrevCvr*100).toFixed(2)}%</td>
+      <td class="r">${(tCurrCvr*100).toFixed(2)}%</td>
+      <td class="r ${cls(tCurrCvr-tPrevCvr)}">${fmtPP((tCurrCvr-tPrevCvr)*100)}</td>
+      <td class="r">${fmtN(Math.round(tPrevConv))}</td>
+      <td class="r">${fmtN(Math.round(tCurrConv))}</td>
+      <td class="r ${cls(tDelta)}"><strong>${fmtS(Math.round(tDelta))}</strong></td>
+      <td class="r ${cls(tSessEff)}">${fmtS(Math.round(tSessEff))}</td>
+      <td class="r ${cls(tCvrEff)}">${fmtS(Math.round(tCvrEff))}</td>
+      <td class="r ${cls(tInteract)}">${fmtS(Math.round(tInteract))}</td>
+    </tr>
+  `;
+
+  makeCardsCollapsible();
+
+  document.getElementById('upload-screen').style.display = 'none';
+  document.getElementById('results-screen').style.display = 'block';
+}
+
+// ─────────────────────────────────────────────
+// COLLAPSIBLE CARDS
+// ─────────────────────────────────────────────
+function makeCardsCollapsible() {
+  const titles = {
+    'headline-card':          { title: 'Headline Insight',            hint: 'One-line summary of what drove the change' },
+    'cvr-movement-card':      { title: 'CVR Movement by Campaign',    hint: "How each campaign's conversion rate shifted" },
+    'cvr-movement-lp-card':   { title: 'CVR Movement by Landing Page',hint: "How each landing page's CVR shifted" },
+    'mix-shift-card':         { title: 'Mix-Shift Counterfactual',    hint: 'Blended CVR if only campaign mix changed' },
+    'session-volume-card':    { title: 'Session Volume by Campaign',  hint: 'Which campaigns gained or lost traffic' },
+    'session-volume-lp-card': { title: 'Session Volume by Landing Page', hint: 'Which landing pages gained or lost traffic' },
+    'cvr-bucket-card':        { title: 'CVR Bucket Summary',          hint: 'Campaigns grouped by CVR tier' },
+    'correlation-card':       { title: 'Duration ↔ CVR Correlation',  hint: 'Does time on page predict conversion?' },
+  };
+
+  document.querySelectorAll('#results-screen .card').forEach(card => {
+    if (card.dataset.collapsibleDone === '1') return;
+    const innerH3 = card.querySelector(':scope > h3, :scope > div > h3');
+    const innerSub = card.querySelector(':scope > p.card__sub, :scope > div > p.card__sub');
+
+    let title, hint;
+    if (innerH3) {
+      title = innerH3.textContent.trim();
+      hint = innerSub ? innerSub.textContent.trim() : '';
+    } else {
+      const override = titles[card.id];
+      if (!override) return;
+      title = override.title;
+      hint = override.hint || '';
+    }
+
+    const header = document.createElement('div');
+    header.className = 'card-toggle';
+    header.innerHTML = `
+      <span class="card-toggle__chevron">&#9660;</span>
+      <span class="card-toggle__title">${esc(title)}</span>
+      ${hint ? `<span class="card-toggle__hint">${esc(hint.length > 80 ? hint.slice(0, 77) + '…' : hint)}</span>` : ''}
+    `;
+
+    const body = document.createElement('div');
+    body.className = 'card-toggle__body';
+    while (card.firstChild) body.appendChild(card.firstChild);
+    body.querySelectorAll(':scope > h3, :scope > p.card__sub').forEach(el => el.remove());
+
+    card.appendChild(header);
+    card.appendChild(body);
+    card.classList.add('collapsible', 'collapsed');
+    card.dataset.collapsibleDone = '1';
+
+    header.addEventListener('click', () => card.classList.toggle('collapsed'));
+  });
+}
+
+// ─────────────────────────────────────────────
+// CVR MOVEMENT (reusable: by campaign OR by LP)
+// ─────────────────────────────────────────────
+function renderCvrMovement(cardId, rows, opts) {
+  const card = document.getElementById(cardId);
+  const minSess = opts.minSess ?? 20;
+  const qualified = rows.filter(r => r.prevSess >= minSess || r.currS >= minSess);
+  const sorted = [...qualified].sort((a, b) => (b.currS * b.currC) - (a.currS * a.currC));
+  const maxAbsDelta = Math.max(...sorted.map(r => Math.abs(r.currC - r.prevCvr)), 0.001);
+
+  let html = `
+    <h3>${esc(opts.title)}</h3>
+    <p class="card__sub">${opts.sub}</p>
+    <div class="cvr-chart">
+      <div class="cvr-chart-row cvr-chart-row--header">
+        <div>${esc(opts.labelName)}</div>
+        <div class="r">Prev CVR</div>
+        <div style="text-align:center">CVR Change</div>
+        <div class="r">Curr CVR</div>
+        <div class="r">Txns</div>
+      </div>`;
+
+  sorted.forEach(r => {
+    const label = r.key || '(empty)';
+    const shortLabel = label.length > 28 ? label.slice(0, 26) + '…' : label;
+    const delta = r.currC - r.prevCvr;
+    const deltaPP = delta * 100;
+    const barWidthPct = Math.round(Math.abs(delta) / maxAbsDelta * 45);
+    const isPositive = delta >= 0;
+    const barColor = isPositive ? 'var(--positive)' : 'var(--negative)';
+    const barStyle = isPositive
+      ? `left:50%;width:${barWidthPct}%`
+      : `right:50%;width:${barWidthPct}%`;
+    const labelStyle = isPositive
+      ? `left:calc(50% + ${barWidthPct}% + 4px);color:${barColor}`
+      : `right:calc(50% + ${barWidthPct}% + 4px);color:${barColor}`;
+
+    html += `
+      <div class="cvr-chart-row">
+        <div class="cvr-src-label" title="${esc(label)}">
+          <span class="ch-dot" style="background:${opts.color}"></span>
+          ${esc(shortLabel)}
+        </div>
+        <div class="r" style="font-size:0.78rem">${(r.prevCvr * 100).toFixed(2)}%</div>
+        <div class="cvr-bar-cell">
+          <div class="cvr-divider" style="left:50%"></div>
+          <div class="cvr-bar-track" style="${barStyle}">
+            <div class="cvr-bar-fill" style="width:100%;background:${barColor};border-radius:${isPositive ? '0 3px 3px 0' : '3px 0 0 3px'}"></div>
+          </div>
+          <div class="cvr-bar-label" style="${labelStyle}">${fmtPP(deltaPP)}</div>
+        </div>
+        <div class="r" style="font-size:0.78rem">${(r.currC * 100).toFixed(2)}%</div>
+        <div class="r" style="font-size:0.78rem;font-weight:600">${fmtN(Math.round(r.currS * r.currC))}</div>
+      </div>`;
+  });
+
+  html += '</div>';
+  card.innerHTML = html;
+}
+
+// ─────────────────────────────────────────────
+// MIX-SHIFT COUNTERFACTUAL (by campaign)
+// ─────────────────────────────────────────────
+function renderMixShift(rows, tPrevS, tCurrS, tPrevCvr, tCurrCvr) {
+  const card = document.getElementById('mix-shift-card');
+  let cfWeightedConv = 0;
+  let cfTotalSess = 0;
+  rows.forEach(r => {
+    cfWeightedConv += r.currS * r.prevCvr;
+    cfTotalSess   += r.currS;
+  });
+  const counterfactualCvr = cfTotalSess > 0 ? cfWeightedConv / cfTotalSess : 0;
+
+  const actualDelta = tCurrCvr - tPrevCvr;
+  const mixComponent = counterfactualCvr - tPrevCvr;
+  const pureComponent = tCurrCvr - counterfactualCvr;
+  const mixPctOfDelta = actualDelta !== 0 ? (mixComponent / actualDelta * 100) : 0;
+  const purePctOfDelta = actualDelta !== 0 ? (pureComponent / actualDelta * 100) : 0;
+
+  const vals = [tPrevCvr, counterfactualCvr, tCurrCvr];
+  const maxCvr = Math.max(...vals) * 100;
+  const minCvr = Math.min(...vals) * 100;
+  const range = Math.max(maxCvr - minCvr, 0.1);
+  const barBase = Math.max(0, minCvr - range * 0.3);
+  const barMax = maxCvr + range * 0.3;
+  const barRange = barMax - barBase;
+  const barH = v => Math.max(2, ((v * 100 - barBase) / barRange) * 110);
+
+  const dirWord = actualDelta >= 0 ? 'increase' : 'drop';
+  const mixDirWord = mixComponent >= 0 ? 'increase' : 'decrease';
+
+  card.innerHTML = `
+    <h3>Mix-Shift Counterfactual</h3>
+    <p class="card__sub">If every campaign's CVR held constant and <em>only</em> the session distribution across campaigns changed, what would the blended CVR be?</p>
+
+    <div class="mix-summary">
+      <div class="mix-stat">
+        <div class="mix-stat__label">Previous Blended CVR</div>
+        <div class="mix-stat__value">${(tPrevCvr * 100).toFixed(2)}%</div>
+        <div class="mix-stat__sub">Baseline</div>
+      </div>
+      <div class="mix-stat">
+        <div class="mix-stat__label">Counterfactual CVR</div>
+        <div class="mix-stat__value ${cls(mixComponent)}">${(counterfactualCvr * 100).toFixed(2)}%</div>
+        <div class="mix-stat__sub">${fmtPP(mixComponent * 100)} from mix shift alone</div>
+      </div>
+      <div class="mix-stat">
+        <div class="mix-stat__label">Actual Current CVR</div>
+        <div class="mix-stat__value ${cls(actualDelta)}">${(tCurrCvr * 100).toFixed(2)}%</div>
+        <div class="mix-stat__sub">${fmtPP(actualDelta * 100)} total change</div>
+      </div>
+    </div>
+
+    <div class="mix-waterfall">
+      <div class="mix-wf-bar">
+        <div class="mix-wf-val">${(tPrevCvr * 100).toFixed(2)}%</div>
+        <div class="mix-wf-fill" style="height:${barH(tPrevCvr)}px;background:var(--fb-blue)"></div>
+        <div class="mix-wf-label">Prev CVR</div>
+      </div>
+      <div class="mix-wf-bar">
+        <div class="mix-wf-val ${cls(mixComponent)}">${fmtPP(mixComponent * 100)}</div>
+        <div class="mix-wf-fill" style="height:${barH(counterfactualCvr)}px;background:${mixComponent >= 0 ? 'var(--positive)' : 'var(--amber)'}"></div>
+        <div class="mix-wf-label">+ Mix Shift</div>
+      </div>
+      <div class="mix-wf-bar">
+        <div class="mix-wf-val ${cls(pureComponent)}">${fmtPP(pureComponent * 100)}</div>
+        <div class="mix-wf-fill" style="height:${barH(tCurrCvr)}px;background:${pureComponent >= 0 ? 'var(--positive)' : 'var(--negative)'}"></div>
+        <div class="mix-wf-label">+ Pure CVR Δ</div>
+      </div>
+      <div class="mix-wf-bar">
+        <div class="mix-wf-val">${(tCurrCvr * 100).toFixed(2)}%</div>
+        <div class="mix-wf-fill" style="height:${barH(tCurrCvr)}px;background:var(--text-secondary)"></div>
+        <div class="mix-wf-label">Actual CVR</div>
+      </div>
+    </div>
+
+    <div class="mix-insight">
+      <strong>Summary:</strong> The total CVR ${dirWord} was <strong>${fmtPP(Math.abs(actualDelta) * 100)}</strong>.<br>
+      <br>
+      <strong>Mix shift</strong> (sessions redistributing across campaigns with different CVRs) accounts for
+      <strong>${fmtPP(Math.abs(mixComponent) * 100)}</strong> — that's <strong>${Math.abs(mixPctOfDelta).toFixed(1)}%</strong> of the total ${dirWord}.
+      ${mixComponent !== 0 ? `The campaign mix alone would have caused a <strong>${mixDirWord}</strong> in blended CVR.` : ''}<br>
+      <br>
+      <strong>Pure CVR changes</strong> (campaigns actually converting better or worse) account for
+      <strong>${fmtPP(Math.abs(pureComponent) * 100)}</strong> — that's <strong>${Math.abs(purePctOfDelta).toFixed(1)}%</strong> of the total ${dirWord}.
+    </div>
+  `;
+}
+
+// ─────────────────────────────────────────────
+// CVR BUCKETS (by campaign)
+// ─────────────────────────────────────────────
+function renderCvrBuckets(rows) {
+  const card = document.getElementById('cvr-bucket-card');
+  const minSess = 50;
+  const qualified = rows.filter(r => r.currS >= minSess);
+
+  const BUCKETS = [
+    { key: 'extreme_low', label: 'Extremely Low',  range: '0 – 0.30%', min: 0,     max: 0.003,  color: '#dc2626' },
+    { key: 'low',         label: 'Low',             range: '0.30 – 1%', min: 0.003, max: 0.01,   color: '#f87171' },
+    { key: 'average',     label: 'Average',         range: '1 – 2%',    min: 0.01,  max: 0.02,   color: '#e5e7eb' },
+    { key: 'high',        label: 'High',            range: '2 – 3%',    min: 0.02,  max: 0.03,   color: '#4ade80' },
+    { key: 'very_high',   label: 'Very High',       range: '3%+',       min: 0.03,  max: Infinity, color: '#15803d' },
+  ];
+
+  const bucketData = BUCKETS.map(b => ({ ...b, prevS: 0, currS: 0, entries: [] }));
+  qualified.forEach(r => {
+    for (const bd of bucketData) {
+      if (r.currC >= bd.min && r.currC < bd.max) {
+        bd.prevS += r.prevSess;
+        bd.currS += r.currS;
+        bd.entries.push({
+          name:   r.key || '(empty)',
+          cvr:    r.currC,
+          currS:  r.currS,
+          prevS:  r.prevSess,
+          delta:  r.currS - r.prevSess,
+        });
+        break;
+      }
+    }
+  });
+
+  const maxSess = Math.max(...bucketData.map(b => Math.max(b.currS, b.prevS)), 1);
+
+  let html = `
+    <h3>Session Changes by CVR Bucket</h3>
+    <p class="card__sub">Campaigns with 50+ current sessions bucketed by current CVR. Shows how sessions shifted between conversion tiers.</p>
+    <div>
+      <div class="bucket-row bucket-row--header">
+        <div>Bucket</div>
+        <div class="r">Prev Sess</div>
+        <div class="r">Curr Sess</div>
+        <div>Prev vs Curr Sessions</div>
+        <div class="r">Sess Δ</div>
+        <div class="r">Δ %</div>
+      </div>`;
+
+  const invertedBuckets = new Set(['extreme_low', 'low']);
+  const normalBuckets = new Set(['high', 'very_high']);
+  function impactCls(delta, bucketKey) {
+    if (delta === 0) return '';
+    if (invertedBuckets.has(bucketKey)) return delta > 0 ? 'neg' : 'pos';
+    if (normalBuckets.has(bucketKey))   return delta > 0 ? 'pos' : 'neg';
+    return cls(delta);
+  }
+  function impactBarColor(delta, bucketKey) {
+    if (invertedBuckets.has(bucketKey)) return delta >= 0 ? 'var(--negative)' : 'var(--positive)';
+    if (normalBuckets.has(bucketKey))   return delta >= 0 ? 'var(--positive)' : 'var(--negative)';
+    return delta >= 0 ? 'var(--positive)' : 'var(--negative)';
+  }
+
+  bucketData.forEach(b => {
+    const delta = b.currS - b.prevS;
+    const deltaPct = b.prevS > 0 ? (delta / b.prevS * 100) : (b.currS > 0 ? 100 : 0);
+    const prevBarW = Math.max(1, Math.round(b.prevS / maxSess * 100));
+    const currBarW = Math.max(1, Math.round(b.currS / maxSess * 100));
+    const barColor = impactBarColor(delta, b.key);
+    const deltaClass = impactCls(delta, b.key);
+    const sortedEntries = [...b.entries].sort((a, c) => Math.abs(c.delta) - Math.abs(a.delta));
+
+    let entryRows = '';
+    sortedEntries.forEach(s => {
+      const sDeltaClass = impactCls(s.delta, b.key);
+      entryRows += `
+        <div style="display:grid;grid-template-columns:180px 55px 55px 50px 50px;gap:6px;padding:2px 0;font-size:0.73rem;color:var(--text-secondary)">
+          <div style="font-weight:500;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(s.name)}">${esc(s.name)}</div>
+          <div class="r">${fmtN(s.prevS)}</div>
+          <div class="r">${fmtN(s.currS)}</div>
+          <div class="r ${sDeltaClass}" style="font-weight:600">${fmtS(Math.round(s.delta))}</div>
+          <div class="r" style="font-size:0.68rem">${(s.cvr * 100).toFixed(2)}%</div>
+        </div>`;
+    });
+
+    html += `
+      <div class="bucket-row">
+        <div class="bucket-label">
+          <span class="bucket-color" style="background:${b.color}"></span>
+          <div class="bucket-name">${esc(b.label)}<small>${esc(b.range)} · ${b.entries.length} campaign${b.entries.length !== 1 ? 's' : ''}</small></div>
+        </div>
+        <div class="r" style="font-size:0.78rem">${fmtN(b.prevS)}</div>
+        <div class="r" style="font-size:0.78rem;font-weight:600">${fmtN(b.currS)}</div>
+        <div class="bucket-bars">
+          <div class="bucket-bar-prev" style="width:${prevBarW}%"></div>
+          <div class="bucket-bar-curr" style="width:${currBarW}%;background:${barColor}"></div>
+        </div>
+        <div class="r sess-delta-tag ${deltaClass}" style="font-weight:700">${fmtS(Math.round(delta))}</div>
+        <div class="r sess-delta-tag ${deltaClass}">${fmtP(deltaPct, 0)}</div>
+      </div>
+      <details style="padding:0 0 4px 40px">
+        <summary style="font-size:0.72rem;color:var(--fb-blue);cursor:pointer;padding:4px 0;user-select:none">Show ${b.entries.length} campaign${b.entries.length !== 1 ? 's' : ''}</summary>
+        <div style="padding:2px 0 4px">
+          <div style="display:grid;grid-template-columns:180px 55px 55px 50px 50px;gap:6px;padding:2px 0;font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);border-bottom:1px solid var(--border)">
+            <div>Campaign</div><div class="r">Prev</div><div class="r">Curr</div><div class="r">Δ</div><div class="r">CVR</div>
+          </div>
+          ${entryRows || '<div style="font-size:0.73rem;color:var(--text-secondary);padding:4px 0">—</div>'}
+        </div>
+      </details>`;
+  });
+
+  html += '</div>';
+  card.innerHTML = html;
+}
+
+// ─────────────────────────────────────────────
+// SESSION VOLUME (reusable: by campaign OR by LP)
+// ─────────────────────────────────────────────
+function cvrHeatColor(cvr) {
+  const pct = cvr * 100;
+  if (pct <= 0.3) {
+    return { bg: '#dc2626', text: '#fff' };
+  } else if (pct < 1.0) {
+    const t = (pct - 0.3) / 0.7;
+    const r = Math.round(220 + t * 35);
+    const g = Math.round(38 + t * 217);
+    const b = Math.round(38 + t * 217);
+    return {
+      bg: `rgb(${r},${g},${b})`,
+      text: t < 0.5 ? '#fff' : `rgb(${Math.round(180 - t * 60)},${Math.round(50 + t * 20)},${Math.round(50 + t * 20)})`
+    };
+  } else if (pct <= 2.0) {
+    const t = (pct - 1.0) / 1.0;
+    const r = Math.round(255 - t * 221);
+    const g = Math.round(255 - t * 95);
+    const b = Math.round(255 - t * 181);
+    return {
+      bg: `rgb(${r},${g},${b})`,
+      text: t < 0.4 ? '#555' : '#fff'
+    };
+  } else if (pct < 3.0) {
+    const t = (pct - 2.0) / 1.0;
+    const r = Math.round(34 - t * 13);
+    const g = Math.round(160 - t * 32);
+    const b = Math.round(74 - t * 13);
+    return { bg: `rgb(${r},${g},${b})`, text: '#fff' };
+  } else {
+    return { bg: '#15803d', text: '#fff' };
+  }
+}
+
+function renderSessionVolume(cardId, rows, opts) {
+  const card = document.getElementById(cardId);
+  const sorted = [...rows].sort((a, b) => b.currS - a.currS);
+  const maxSess = Math.max(...sorted.map(r => Math.max(r.currS, r.prevSess)), 1);
+
+  let html = `
+    <h3>${esc(opts.title)}</h3>
+    <p class="card__sub">${opts.sub} CVR pill: <span style="color:#dc2626;font-weight:600">red</span> ≤0.3% → white at 1% → <span style="color:#15803d;font-weight:600">green</span> ≥3%.</p>
+    <div class="cvr-chart">
+      <div class="sess-chart-row sess-chart-row--header">
+        <div>${esc(opts.labelName)}</div>
+        <div class="r">Sessions</div>
+        <div>Prev vs Curr Sessions</div>
+        <div class="r">Sess Δ</div>
+        <div class="r">CVR</div>
+      </div>`;
+
+  sorted.forEach(r => {
+    const label = r.key || '(empty)';
+    const shortLabel = label.length > 28 ? label.slice(0, 26) + '…' : label;
+    const sessDelta = r.currS - r.prevSess;
+    const sessPct = r.prevSess > 0 ? (sessDelta / r.prevSess * 100) : (r.currS > 0 ? 100 : 0);
+    const prevBarW = Math.max(1, Math.round(r.prevSess / maxSess * 100));
+    const currBarW = Math.max(1, Math.round(r.currS / maxSess * 100));
+    const currBarColor = sessDelta >= 0 ? 'var(--positive)' : 'var(--negative)';
+    const heat = cvrHeatColor(r.currC);
+
+    html += `
+      <div class="sess-chart-row">
+        <div class="cvr-src-label" title="${esc(label)}">
+          <span class="ch-dot" style="background:${opts.color}"></span>
+          ${esc(shortLabel)}
+        </div>
+        <div class="r" style="font-size:0.78rem;font-weight:600">${fmtK(r.currS)}</div>
+        <div class="sess-bars">
+          <div class="sess-bar-prev" style="width:${prevBarW}%"></div>
+          <div class="sess-bar-curr" style="width:${currBarW}%;background:${currBarColor}"></div>
+        </div>
+        <div class="r sess-delta-tag ${cls(sessDelta)}">${fmtS(Math.round(sessDelta))}<br><span style="font-size:0.65rem;color:var(--text-secondary)">${fmtP(sessPct, 0)}</span></div>
+        <div class="r"><span class="cvr-pill" style="background:${heat.bg};color:${heat.text}">${(r.currC * 100).toFixed(2)}%</span></div>
+      </div>`;
+  });
+
+  html += '</div>';
+  card.innerHTML = html;
+}
+
+// ─────────────────────────────────────────────
+// EFFECTS PANEL + LP DRILL-DOWN
+// ─────────────────────────────────────────────
+function renderEffects(container, group, tDelta, tPrevConv) {
+  const maxEffAbs = group.effects.length > 0 ? Math.abs(group.effects[0].value) : 1;
+  group.effects.forEach(e => {
+    const barPct = Math.round(Math.abs(e.value) / maxEffAbs * 100);
+    const barColor = e.mixHarmful
+      ? 'var(--amber)'
+      : e.isMixShift
+        ? (e.value >= 0 ? 'var(--positive)' : 'var(--amber)')
+        : (e.value >= 0 ? 'var(--positive)' : 'var(--negative)');
+    const valCls = e.mixHarmful ? 'amb' : e.isMixShift ? (e.value >= 0 ? 'pos' : 'amb') : cls(e.value);
+    const pctOfDelta = tDelta !== 0 ? (e.value / tDelta * 100) : 0;
+    const row = document.createElement('div');
+    row.className = 'effect-row';
+    row.innerHTML = `
+      <div class="effect-type ${valCls}">${esc(e.typeLabel)}</div>
+      <div class="effect-detail">${esc(e.detail)}</div>
+      <div><div class="contrib-bar-wrap"><div class="contrib-bar" style="width:${barPct}%;background:${barColor}"></div></div></div>
+      <div class="contrib-val ${valCls}">${fmtS(Math.round(e.value))}</div>
+      <div class="contrib-pct">${fmtP(pctOfDelta, 1)} of total Δ</div>
+    `;
+    container.appendChild(row);
+  });
+
+  const lpBtn = document.createElement('button');
+  lpBtn.className = 'lp-btn';
+  lpBtn.textContent = '↳ Break down by landing page';
+  const drillDiv = document.createElement('div');
+  drillDiv.className = 'drill-panel';
+  lpBtn.addEventListener('click', () => {
+    const open = drillDiv.classList.toggle('open');
+    lpBtn.textContent = open ? '↑ Hide landing pages' : '↳ Break down by landing page';
+    if (open && !drillDiv.dataset.loaded) {
+      drillDiv.dataset.loaded = '1';
+      renderDrillDown(drillDiv, group.campaign, tDelta, tPrevConv);
+    }
+  });
+  container.appendChild(lpBtn);
+  container.appendChild(drillDiv);
+}
+
+function renderDrillDown(container, campaign, tDelta, tPrevConv) {
+  const filtered = _rawRows.filter(r => (r.campaign || '(empty)') === campaign);
+  const lpRows = aggregateBy(filtered, r => r.lp);
+  if (lpRows.length === 0) {
+    container.innerHTML = '<p style="padding:10px 12px;font-size:0.8rem;color:var(--text-secondary)">No landing page data available.</p>';
+    return;
+  }
+
+  const contribs = [];
+  lpRows.forEach(r => {
+    const d = decompose(r.prevSess, r.prevCvr, r.currS, r.currC);
+    const lpLabel = r.key || '(no path)';
+    const shortLpL = lpLabel.length > 45 ? lpLabel.slice(0, 43) + '…' : lpLabel;
+    if (d.sessEffect !== 0) contribs.push({ lp: lpLabel, shortLp: shortLpL, currS: r.currS, currC: r.currC, typeLabel: d.dS >= 0 ? 'Sessions Increase' : 'Sessions Decrease', value: d.sessEffect, detail: `${fmtS(Math.round(d.dS))} sessions (${fmtP(r.prevSess > 0 ? d.dS/r.prevSess*100 : 0, 1)})` });
+    if (d.cvrEffect !== 0) contribs.push({ lp: lpLabel, shortLp: shortLpL, currS: r.currS, currC: r.currC, typeLabel: d.dC >= 0 ? 'CVR Increase' : 'CVR Decrease', value: d.cvrEffect, detail: `${fmtPP(d.dC*100)} (${(r.prevCvr*100).toFixed(2)}% → ${(r.currC*100).toFixed(2)}%)` });
+    if (Math.abs(d.interaction) > 0.5) contribs.push({ lp: lpLabel, shortLp: shortLpL, currS: r.currS, currC: r.currC, typeLabel: 'Interaction Effect', value: d.interaction, detail: `${fmtS(Math.round(d.dS))} sessions × ${fmtPP(d.dC*100)} CVR` });
+  });
+  contribs.sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
+
+  const maxAbs = contribs.length > 0 ? Math.abs(contribs[0].value) : 1;
+  const html = contribs.map(c => {
+    const barPct = Math.round(Math.abs(c.value) / maxAbs * 100);
+    const barColor = c.value >= 0 ? 'var(--positive)' : 'var(--negative)';
+    const pctOfDelta = tDelta !== 0 ? (c.value / tDelta * 100) : 0;
+    return `
+      <div class="drill-row">
+        <div class="drill-lp" title="${esc(c.lp)}">${esc(c.shortLp)}<div style="font-size:0.7rem;color:var(--text-secondary)">${esc(c.typeLabel)}</div></div>
+        <div class="contrib-stat"><strong>${esc(fmtK(c.currS))}</strong>sess</div>
+        <div class="contrib-stat"><strong>${(c.currC*100).toFixed(2)}%</strong>CVR</div>
+        <div>
+          <div class="contrib-bar-wrap"><div class="contrib-bar" style="width:${barPct}%;background:${barColor}"></div></div>
+          <div style="font-size:0.7rem;color:var(--text-secondary);margin-top:2px">${esc(c.detail)}</div>
+        </div>
+        <div class="contrib-val ${cls(c.value)}">${fmtS(Math.round(c.value))}</div>
+        <div class="contrib-pct">${fmtP(pctOfDelta, 1)} of total Δ</div>
+      </div>`;
+  }).join('');
+  container.innerHTML = `<div class="drill-header">Landing page breakdown · ${contribs.length} row${contribs.length !== 1 ? 's' : ''}</div>${html}`;
+}
+
+// ─────────────────────────────────────────────
+// DURATION ↔ CVR CORRELATION (LP-level)
+// ─────────────────────────────────────────────
+function pearson(points) {
+  const n = points.length;
+  if (n < 2) return { r: null, n };
+  let sx=0, sy=0, sxx=0, syy=0, sxy=0, tw=0;
+  for (const p of points) {
+    const w = p.w || 1;
+    sx  += p.x * w;
+    sy  += p.y * w;
+    sxx += p.x * p.x * w;
+    syy += p.y * p.y * w;
+    sxy += p.x * p.y * w;
+    tw  += w;
+  }
+  const mx = sx / tw, my = sy / tw;
+  const vxx = sxx / tw - mx * mx;
+  const vyy = syy / tw - my * my;
+  const cxy = sxy / tw - mx * my;
+  const denom = Math.sqrt(vxx * vyy);
+  if (denom === 0) return { r: null, n };
+  return { r: cxy / denom, n, meanX: mx, meanY: my };
+}
+
+function renderCorrelation(lpRows) {
+  const card = document.getElementById('correlation-card');
+  const MIN_SESS = 30;
+  const parsed = lpRows
+    .filter(r => r.currS >= MIN_SESS && r.key && r.currDur > 0)
+    .map(r => ({ lp: r.key, sessions: r.currS, cvr: r.currC, duration: r.currDur }));
+
+  if (parsed.length < 3) {
+    card.innerHTML = `<h3>Session Duration ↔ Conversion Rate Correlation</h3>
+      <p class="card__sub">Not enough landing pages with ≥${MIN_SESS} sessions and duration data (${parsed.length} qualifying).</p>`;
+    return;
+  }
+
+  const allPoints = parsed.map(r => ({ x: r.duration, y: r.cvr, w: r.sessions }));
+  const overall = pearson(allPoints);
+
+  const maxDur = Math.max(...parsed.map(r => r.duration));
+  const maxCvr = Math.max(...parsed.map(r => r.cvr));
+  const maxSess = Math.max(...parsed.map(r => r.sessions));
+  const W = 720, H = 360, PAD_L = 56, PAD_R = 16, PAD_T = 16, PAD_B = 48;
+  const plotW = W - PAD_L - PAD_R;
+  const plotH = H - PAD_T - PAD_B;
+  const xScale = d => PAD_L + (d / maxDur) * plotW;
+  const yScale = c => PAD_T + plotH - (c / maxCvr) * plotH;
+  const rScale = s => 4 + Math.sqrt(s / maxSess) * 14;
+
+  const shortLp = p => {
+    if (!p || p === '/') return '/';
+    const parts = p.replace(/\/$/, '').split('/').filter(Boolean);
+    const last = parts[parts.length - 1] || '/';
+    return last.length > 22 ? last.slice(0, 20) + '…' : last;
+  };
+
+  const sorted = parsed.slice().sort((a, b) => b.sessions - a.sessions);
+  const labelCount = Math.min(5, sorted.length);
+  const color = LP_COLOR;
+
+  const dots = sorted.map(r => {
+    const cx = xScale(r.duration);
+    const cy = yScale(r.cvr);
+    const rad = rScale(r.sessions);
+    const dataAttrs =
+      `data-lp="${esc(r.lp)}" ` +
+      `data-sessions="${Math.round(r.sessions)}" ` +
+      `data-cvr="${(r.cvr*100).toFixed(2)}" ` +
+      `data-dur="${r.duration.toFixed(0)}"`;
+    return `<circle class="corr-dot" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${rad.toFixed(1)}"
+              fill="${color}" fill-opacity="0.6" stroke="${color}" stroke-width="1.2"
+              ${dataAttrs} />`;
+  }).join('');
+
+  const labels = sorted.slice(0, labelCount).map(r => {
+    const cx = xScale(r.duration);
+    const cy = yScale(r.cvr);
+    const rad = rScale(r.sessions);
+    const tx = cx + rad + 4;
+    const ty = cy + 3;
+    return `<text x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" font-size="10" fill="#1c1e21" font-weight="600" pointer-events="none">${esc(shortLp(r.lp))}</text>`;
+  }).join('');
+
+  const xTicks = [0, 0.25, 0.5, 0.75, 1].map(t => {
+    const x = PAD_L + t * plotW;
+    const v = t * maxDur;
+    return `<line x1="${x}" y1="${PAD_T}" x2="${x}" y2="${PAD_T+plotH}" stroke="#eef0f4"/>
+      <line x1="${x}" y1="${PAD_T+plotH}" x2="${x}" y2="${PAD_T+plotH+4}" stroke="#999"/>
+      <text x="${x}" y="${PAD_T+plotH+18}" text-anchor="middle" font-size="11" fill="#65676b">${v.toFixed(0)}s</text>`;
+  }).join('');
+  const yTicks = [0, 0.25, 0.5, 0.75, 1].map(t => {
+    const y = PAD_T + plotH - t * plotH;
+    const v = t * maxCvr * 100;
+    return `<line x1="${PAD_L}" y1="${y}" x2="${PAD_L+plotW}" y2="${y}" stroke="#eef0f4"/>
+      <line x1="${PAD_L-4}" y1="${y}" x2="${PAD_L}" y2="${y}" stroke="#999"/>
+      <text x="${PAD_L-8}" y="${y+3}" text-anchor="end" font-size="11" fill="#65676b">${v.toFixed(1)}%</text>`;
+  }).join('');
+
+  const overallR = overall.r == null ? '—' : overall.r.toFixed(3);
+  const overallClass = overall.r == null ? '' : (overall.r > 0.2 ? 'pos' : overall.r < -0.2 ? 'neg' : '');
+  const overallStrength =
+    overall.r == null ? '—'
+    : Math.abs(overall.r) >= 0.6 ? 'Strong'
+    : Math.abs(overall.r) >= 0.3 ? 'Moderate'
+    : Math.abs(overall.r) >= 0.1 ? 'Weak'
+    : 'None';
+
+  card.innerHTML = `
+    <h3>Session Duration ↔ Conversion Rate Correlation</h3>
+    <p class="card__sub">Each dot is one landing page with ≥${MIN_SESS} sessions. Size = session volume. Top 5 LPs by volume are labeled. <strong>Hover for details.</strong></p>
+
+    <div class="corr-summary">
+      <div class="corr-kpi">
+        <div class="corr-kpi__label">Overall Pearson r</div>
+        <div class="corr-kpi__value ${overallClass}">${overallR}</div>
+        <div class="corr-kpi__sub">${overallStrength} · n=${overall.n} LPs</div>
+      </div>
+      <div class="corr-kpi">
+        <div class="corr-kpi__label">Interpretation</div>
+        <div class="corr-kpi__sub" style="font-size:0.82rem;padding-top:4px">${
+          overall.r == null ? 'Insufficient variance.'
+          : overall.r > 0.1 ? 'Pages that hold visitors longer tend to convert better — invest in engagement on weaker LPs.'
+          : overall.r < -0.1 ? 'Longer sessions correlate with <em>lower</em> CVR — high duration may indicate confusion or indecision.'
+          : 'No meaningful linear relationship — other factors (offer, audience) matter more than on-page time.'
+        }</div>
+      </div>
+    </div>
+
+    <div class="corr-scatter-wrap">
+      <svg class="corr-scatter" viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet">
+        <rect x="${PAD_L}" y="${PAD_T}" width="${plotW}" height="${plotH}" fill="#fafbfc" stroke="#e4e6eb"/>
+        ${xTicks}
+        ${yTicks}
+        <text x="${PAD_L + plotW/2}" y="${H-6}" text-anchor="middle" font-size="12" fill="#65676b">Avg. Session Duration (seconds)</text>
+        <text x="14" y="${PAD_T + plotH/2}" text-anchor="middle" font-size="12" fill="#65676b" transform="rotate(-90, 14, ${PAD_T + plotH/2})">Conversion Rate</text>
+        ${dots}
+        ${labels}
+      </svg>
+      <div class="corr-tooltip" id="corr-tooltip"></div>
+    </div>
+  `;
+
+  const wrap = card.querySelector('.corr-scatter-wrap');
+  const tip = card.querySelector('#corr-tooltip');
+  wrap.addEventListener('mousemove', (e) => {
+    const target = e.target.closest('.corr-dot');
+    if (!target) { tip.style.display = 'none'; return; }
+    const d = target.dataset;
+    tip.innerHTML = `
+      <div class="corr-tooltip__lp">${d.lp}</div>
+      <div class="corr-tooltip__stats">
+        <span>${(+d.sessions).toLocaleString()} sessions</span>
+        <span>${d.cvr}% CVR</span>
+        <span>${d.dur}s avg</span>
+      </div>`;
+    const rect = wrap.getBoundingClientRect();
+    tip.style.display = 'block';
+    tip.style.left = (e.clientX - rect.left + 14) + 'px';
+    tip.style.top  = (e.clientY - rect.top  + 14) + 'px';
+  });
+  wrap.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+}
+
+// ─────────────────────────────────────────────
+// SHOPIFY QL PARSING
+// ─────────────────────────────────────────────
+function parseShopifyQL(data) {
+  const { columns, rows } = data;
+  if (!columns || !rows || !rows.length) throw new Error('No data returned from Shopify.');
+
+  const colNames = columns.map(c => (c.name || '').toLowerCase());
+  const getVal = (row, idx) => {
+    if (idx < 0) return undefined;
+    return Array.isArray(row) ? row[idx] : row[columns[idx].name];
+  };
+
+  const findPrior = (metric) => colNames.findIndex(s =>
+    s === `comparison_${metric}__previous_period` || s === `comparison_${metric}__yesterday`
+  );
+  const findTotalPrior = (metric) => colNames.findIndex(s =>
+    s === `comparison_${metric}__previous_period__totals` || s === `comparison_${metric}__yesterday__totals`
+  );
+
+  const iCampaign = colNames.findIndex(s => s === 'utm_campaign');
+  const iLp       = colNames.findIndex(s => s === 'landing_page_path');
+  const iSess     = colNames.findIndex(s => s === 'sessions');
+  const iCvr      = colNames.findIndex(s => s === 'conversion_rate');
+  const iDur      = colNames.findIndex(s => s === 'average_session_duration');
+  const iPrevS    = findPrior('sessions');
+  const iPrevCvr  = findPrior('conversion_rate');
+
+  const iTotS       = colNames.findIndex(s => s === 'sessions__totals');
+  const iTotCvr     = colNames.findIndex(s => s === 'conversion_rate__totals');
+  const iTotPrevS   = findTotalPrior('sessions');
+  const iTotPrevCvr = findTotalPrior('conversion_rate');
+
+  if (iCampaign < 0) throw new Error('Missing "utm_campaign" column. Columns: ' + colNames.join(', '));
+  if (iSess < 0)     throw new Error('Missing "sessions" column.');
+  if (iCvr  < 0)     throw new Error('Missing "conversion_rate" column.');
+  if (iPrevS < 0)    throw new Error('Missing previous-period sessions column.');
+  if (iPrevCvr < 0)  throw new Error('Missing previous-period conversion_rate column.');
+
+  if (iTotS >= 0 && rows[0]) {
+    const N = (idx) => idx >= 0 ? (parseFloat(getVal(rows[0], idx)) || 0) : null;
+    _shopifyTotals = {
+      currS:   N(iTotS),
+      currCvr: normCvr(N(iTotCvr)) ?? 0,
+      prevS:   N(iTotPrevS),
+      prevCvr: normCvr(N(iTotPrevCvr)) ?? 0,
+    };
+  } else {
+    _shopifyTotals = null;
+  }
+
+  const parsed = [];
+  for (const row of rows) {
+    const rawC  = getVal(row, iCampaign);
+    const rawLp = iLp >= 0 ? getVal(row, iLp) : '';
+    const campaign = (rawC == null ? '' : String(rawC)).trim();
+    const lp       = (rawLp == null ? '' : String(rawLp)).trim();
+
+    // Skip totals row (both dimensions empty)
+    if (!campaign && !lp) continue;
+    // Skip post-conversion pages
+    if (/^\/(checkout|checkouts|orders|payment-methods|gift_cards)(\/|$)/i.test(lp)) continue;
+
+    const sessRaw    = parseFloat(getVal(row, iSess)) || 0;
+    const cvrRaw     = parseFloat(getVal(row, iCvr))  || 0;
+    const durRaw     = iDur >= 0 ? (parseFloat(getVal(row, iDur)) || 0) : 0;
+    const prevSRaw   = parseFloat(getVal(row, iPrevS)) || 0;
+    const prevCvrRaw = parseFloat(getVal(row, iPrevCvr)) || 0;
+
+    parsed.push({
+      campaign,
+      lp,
+      currS:    Math.round(sessRaw),
+      currC:    normCvr(cvrRaw) ?? 0,
+      currDur:  durRaw,
+      prevSess: Math.round(prevSRaw),
+      prevCvr:  normCvr(prevCvrRaw) ?? 0,
+    });
+  }
+
+  if (parsed.length === 0) throw new Error('No valid rows in Shopify response.');
+  return parsed;
+}
+
+async function loadFromShopify() {
+  const btn    = document.getElementById('btn-shopify-load');
+  const status = document.getElementById('shopify-status');
+  const errEl  = document.getElementById('upload-error');
+  const startDate = document.getElementById('date-start').value;
+  const endDate   = document.getElementById('date-end').value;
+  const source    = document.getElementById('filter-source').value.trim() || 'facebook';
+  const medium    = document.getElementById('filter-medium').value.trim() || 'paid_social';
+
+  if (!startDate || !endDate) {
+    status.className = 'shopify-status error';
+    status.textContent = 'Please select a start and end date.';
+    return;
+  }
+
+  btn.disabled = true;
+  status.className = 'shopify-status';
+  status.textContent = 'Querying Shopify…';
+  errEl.className = 'upload-error';
+
+  try {
+    const params = new URLSearchParams({ start: startDate, end: endDate, source, medium });
+    const resp = await fetch(`/api/meta-cvr-impact-data?${params.toString()}`);
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${resp.status}`);
+    }
+    const data = await resp.json();
+    if (data.query) console.log('[ShopifyQL]\n' + data.query);
+    status.textContent = 'Parsing response…';
+    const rows = parseShopifyQL(data);
+    render(rows, `Shopify · ${source}/${medium} · ${startDate} → ${endDate} vs previous period`);
+
+    const info = document.getElementById('top-bar-info');
+    if (info) {
+      info.innerHTML += ` &nbsp;·&nbsp; <a href="#" id="show-query-link" style="color:var(--fb-blue)">Show ShopifyQL</a>`;
+      document.getElementById('show-query-link').addEventListener('click', (e) => {
+        e.preventDefault();
+        alert(data.query);
+      });
+    }
+  } catch (err) {
+    status.className = 'shopify-status error';
+    status.textContent = err.message;
+    btn.disabled = false;
+  }
+}
+
+// ─────────────────────────────────────────────
+// SHOPIFY REPORT LINK (header)
+// ─────────────────────────────────────────────
+function setShopifyReportLink() {
+  const ql = `FROM sessions
+  SHOW sessions, conversion_rate
+  WHERE utm_source = 'facebook' AND utm_medium = 'paid_social'
+  GROUP BY ONLY TOP 20 utm_campaign, ONLY TOP 20 landing_page_path WITH
+    GROUP_TOTALS, TOTALS, PERCENT_CHANGE
+  SINCE startOfDay(-2d) UNTIL endOfDay(-1d)
+  COMPARE TO previous_period
+  ORDER BY conversion_rate__utm_campaign_totals DESC, conversion_rate DESC,
+    utm_campaign ASC, landing_page_path ASC
+VISUALIZE conversion_rate`;
+  document.getElementById('shopify-report-link').href =
+    `https://admin.shopify.com/store/first-day-inc/analytics/reports/275054690?ql=${encodeURIComponent(ql)}`;
+}
+
+// ─────────────────────────────────────────────
+// WIRE UP
+// ─────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  setShopifyReportLink();
+
+  document.getElementById('btn-reset').addEventListener('click', () => {
+    document.getElementById('results-screen').style.display = 'none';
+    document.getElementById('upload-screen').style.display = 'block';
+    document.getElementById('btn-shopify-load').disabled = false;
+    document.getElementById('shopify-status').textContent = '';
+  });
+
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const fmt = d => d.toISOString().slice(0, 10);
+  document.getElementById('date-start').value = fmt(yesterday);
+  document.getElementById('date-end').value = fmt(yesterday);
+
+  document.getElementById('btn-shopify-load').addEventListener('click', loadFromShopify);
+});
+</script>
+</body>
+</html>
