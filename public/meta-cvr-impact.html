@@ -538,24 +538,45 @@
     .mix-stat__value { font-size: 1.3rem; font-weight: 700; }
     .mix-stat__sub { font-size: 0.78rem; color: var(--text-secondary); margin-top: 2px; }
     .mix-waterfall {
-      display: flex; align-items: flex-end; gap: 0;
-      height: 120px; border-bottom: 2px solid var(--border);
-      margin-bottom: 8px; position: relative;
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr 1fr;
+      height: 140px;
+      border-bottom: 2px solid var(--border);
+      position: relative;
     }
     .mix-wf-bar {
-      flex: 1; display: flex; flex-direction: column;
-      align-items: center; justify-content: flex-end; position: relative;
+      position: relative;
     }
     .mix-wf-fill {
-      width: 60%; border-radius: 3px 3px 0 0; min-height: 2px;
-      transition: height 0.3s;
+      position: absolute;
+      left: 20%; right: 20%;
+      border-radius: 3px;
+      min-height: 2px;
+      transition: all 0.3s;
     }
-    .mix-wf-label {
-      font-size: 0.68rem; font-weight: 600; margin-top: 6px;
-      text-align: center; color: var(--text-secondary);
+    .mix-wf-fill--grounded {
+      border-radius: 3px 3px 0 0;
     }
     .mix-wf-val {
-      font-size: 0.72rem; font-weight: 700; margin-bottom: 3px;
+      position: absolute;
+      left: 0; right: 0;
+      text-align: center;
+      font-size: 0.72rem; font-weight: 700;
+      white-space: nowrap;
+      line-height: 1;
+    }
+    .mix-wf-connector {
+      position: absolute;
+      border-top: 1px dashed rgba(120, 128, 145, 0.5);
+      pointer-events: none;
+    }
+    .mix-wf-labels {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr 1fr;
+      font-size: 0.68rem; font-weight: 600;
+      text-align: center;
+      color: var(--text-secondary);
+      margin: 8px 0 4px;
     }
     .mix-insight {
       background: #f7f9ff;
@@ -1148,7 +1169,7 @@ function render(rawRows, filename) {
 
     const cvrVsAvg = g.currC - tCurrCvr;
     const cvrBadge = isFinite(cvrVsAvg) && Math.abs(cvrVsAvg) > 0.0001
-      ? `<span class="cvr-badge ${cvrVsAvg > 0 ? 'cvr-badge--hi' : 'cvr-badge--lo'}" title="CVR vs avg ${(tCurrCvr*100).toFixed(2)}%">${cvrVsAvg > 0 ? '↑' : '↓'} ${Math.abs(cvrVsAvg*100).toFixed(2)}pp vs avg</span>`
+      ? `<span class="cvr-badge ${cvrVsAvg > 0 ? 'cvr-badge--hi' : 'cvr-badge--lo'}" title="CVR vs avg ${(tCurrCvr*100).toFixed(2)}%">CVR: ${cvrVsAvg > 0 ? '↑' : '↓'} ${Math.abs(cvrVsAvg*100).toFixed(2)}pp vs avg</span>`
       : '';
 
     const shortLabel = g.campaign.length > 30 ? g.campaign.slice(0, 28) + '…' : g.campaign;
@@ -1382,14 +1403,30 @@ function renderMixShift(rows, tPrevS, tCurrS, tPrevCvr, tCurrCvr) {
   const mixPctOfDelta = actualDelta !== 0 ? (mixComponent / actualDelta * 100) : 0;
   const purePctOfDelta = actualDelta !== 0 ? (pureComponent / actualDelta * 100) : 0;
 
+  // Waterfall geometry — Prev & Actual are grounded columns; Mix Shift and
+  // Pure CVR Δ float between the cumulative CVR levels, so negative deltas
+  // visibly extend DOWNWARD from the prior level instead of growing from 0.
   const vals = [tPrevCvr, counterfactualCvr, tCurrCvr];
   const maxCvr = Math.max(...vals) * 100;
   const minCvr = Math.min(...vals) * 100;
   const range = Math.max(maxCvr - minCvr, 0.1);
   const barBase = Math.max(0, minCvr - range * 0.3);
-  const barMax = maxCvr + range * 0.3;
+  const barMax  = maxCvr + range * 0.3;
   const barRange = barMax - barBase;
-  const barH = v => Math.max(2, ((v * 100 - barBase) / barRange) * 110);
+  const chartH = 110;
+  const yFromBase = v => Math.max(0, Math.min(chartH, ((v * 100 - barBase) / barRange) * chartH));
+
+  const yPrev    = yFromBase(tPrevCvr);
+  const yCounter = yFromBase(counterfactualCvr);
+  const yCurr    = yFromBase(tCurrCvr);
+
+  const mixBottom  = Math.min(yPrev, yCounter);
+  const mixH       = Math.max(2, Math.abs(yPrev - yCounter));
+  const mixColor   = mixComponent >= 0 ? 'var(--positive)' : 'var(--negative)';
+
+  const pureBottom = Math.min(yCounter, yCurr);
+  const pureH      = Math.max(2, Math.abs(yCounter - yCurr));
+  const pureColor  = pureComponent >= 0 ? 'var(--positive)' : 'var(--negative)';
 
   const dirWord = actualDelta >= 0 ? 'increase' : 'drop';
   const mixDirWord = mixComponent >= 0 ? 'increase' : 'decrease';
@@ -1418,25 +1455,27 @@ function renderMixShift(rows, tPrevS, tCurrS, tPrevCvr, tCurrCvr) {
 
     <div class="mix-waterfall">
       <div class="mix-wf-bar">
-        <div class="mix-wf-val">${(tPrevCvr * 100).toFixed(2)}%</div>
-        <div class="mix-wf-fill" style="height:${barH(tPrevCvr)}px;background:var(--fb-blue)"></div>
-        <div class="mix-wf-label">Prev CVR</div>
+        <div class="mix-wf-fill mix-wf-fill--grounded" style="bottom:0;height:${yPrev.toFixed(1)}px;background:var(--fb-blue)"></div>
+        <div class="mix-wf-val" style="bottom:${(yPrev + 4).toFixed(1)}px">${(tPrevCvr * 100).toFixed(2)}%</div>
       </div>
       <div class="mix-wf-bar">
-        <div class="mix-wf-val ${cls(mixComponent)}">${fmtPP(mixComponent * 100)}</div>
-        <div class="mix-wf-fill" style="height:${barH(counterfactualCvr)}px;background:${mixComponent >= 0 ? 'var(--positive)' : 'var(--amber)'}"></div>
-        <div class="mix-wf-label">+ Mix Shift</div>
+        <div class="mix-wf-fill" style="bottom:${mixBottom.toFixed(1)}px;height:${mixH.toFixed(1)}px;background:${mixColor}"></div>
+        <div class="mix-wf-val ${cls(mixComponent)}" style="bottom:${(mixBottom + mixH + 4).toFixed(1)}px">${fmtPP(mixComponent * 100)}</div>
       </div>
       <div class="mix-wf-bar">
-        <div class="mix-wf-val ${cls(pureComponent)}">${fmtPP(pureComponent * 100)}</div>
-        <div class="mix-wf-fill" style="height:${barH(tCurrCvr)}px;background:${pureComponent >= 0 ? 'var(--positive)' : 'var(--negative)'}"></div>
-        <div class="mix-wf-label">+ Pure CVR Δ</div>
+        <div class="mix-wf-fill" style="bottom:${pureBottom.toFixed(1)}px;height:${pureH.toFixed(1)}px;background:${pureColor}"></div>
+        <div class="mix-wf-val ${cls(pureComponent)}" style="bottom:${(pureBottom + pureH + 4).toFixed(1)}px">${fmtPP(pureComponent * 100)}</div>
       </div>
       <div class="mix-wf-bar">
-        <div class="mix-wf-val">${(tCurrCvr * 100).toFixed(2)}%</div>
-        <div class="mix-wf-fill" style="height:${barH(tCurrCvr)}px;background:var(--text-secondary)"></div>
-        <div class="mix-wf-label">Actual CVR</div>
+        <div class="mix-wf-fill mix-wf-fill--grounded" style="bottom:0;height:${yCurr.toFixed(1)}px;background:var(--text-secondary)"></div>
+        <div class="mix-wf-val" style="bottom:${(yCurr + 4).toFixed(1)}px">${(tCurrCvr * 100).toFixed(2)}%</div>
       </div>
+    </div>
+    <div class="mix-wf-labels">
+      <div>Prev CVR</div>
+      <div>+ Mix Shift</div>
+      <div>+ Pure CVR Δ</div>
+      <div>Actual CVR</div>
     </div>
 
     <div class="mix-insight">
