@@ -698,6 +698,27 @@
       font-family: inherit;
       width: 140px;
     }
+
+    /* Custom floating tooltip (fast, reads title/data-tt from any element) */
+    #floating-tt {
+      position: fixed;
+      display: none;
+      background: #1c1e21;
+      color: #fff;
+      padding: 6px 10px;
+      border-radius: 4px;
+      font-size: 0.78rem;
+      line-height: 1.4;
+      max-width: 440px;
+      word-break: break-word;
+      white-space: pre-wrap;
+      pointer-events: none;
+      z-index: 10000;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+    }
+    [data-tt], [title] { cursor: help; }
+    .btn-reset[title], .shopify-load-btn[title], button[title],
+    a[title], input[title] { cursor: pointer; }
   </style>
 </head>
 <body>
@@ -811,6 +832,59 @@
 </div>
 
 <script>
+// ─────────────────────────────────────────────
+// FLOATING TOOLTIP
+// ─────────────────────────────────────────────
+// Replaces slow native `title` tooltips. Any element with `title` or
+// `data-tt` shows an instant tooltip that follows the cursor. Handles
+// truncated campaign / landing-page labels throughout the dashboard.
+(function setupFloatingTooltip() {
+  const tt = document.createElement('div');
+  tt.id = 'floating-tt';
+  document.body.appendChild(tt);
+
+  let showing = false;
+  const hide = () => { if (showing) { tt.style.display = 'none'; showing = false; } };
+
+  // Strip native title→data-tt on hover so the OS tooltip doesn't race with
+  // ours. Walk up the tree so ancestor titles get converted too — otherwise
+  // the browser would still fall back to an ancestor's native title.
+  document.addEventListener('mouseover', (e) => {
+    let el = e.target;
+    while (el && el.nodeType === 1) {
+      if (el.hasAttribute && el.hasAttribute('title')) {
+        const t = el.getAttribute('title');
+        if (t && !el.hasAttribute('data-tt')) el.setAttribute('data-tt', t);
+        el.removeAttribute('title');
+      }
+      el = el.parentElement;
+    }
+  }, true);
+
+  document.addEventListener('mousemove', (e) => {
+    const el = e.target.closest && e.target.closest('[data-tt]');
+    if (!el) { hide(); return; }
+    const text = el.getAttribute('data-tt');
+    if (!text) { hide(); return; }
+    if (tt.textContent !== text) tt.textContent = text;
+    tt.style.display = 'block';
+    showing = true;
+    const pad = 14;
+    let x = e.clientX + pad;
+    let y = e.clientY + pad;
+    const rect = tt.getBoundingClientRect();
+    if (x + rect.width  > window.innerWidth  - 8) x = e.clientX - rect.width  - pad;
+    if (y + rect.height > window.innerHeight - 8) y = e.clientY - rect.height - pad;
+    if (x < 4) x = 4;
+    if (y < 4) y = 4;
+    tt.style.left = x + 'px';
+    tt.style.top  = y + 'px';
+  });
+  document.addEventListener('mouseleave', hide);
+  window.addEventListener('blur', hide);
+  window.addEventListener('scroll', hide, true);
+})();
+
 // ─────────────────────────────────────────────
 // CONSTANTS
 // ─────────────────────────────────────────────
