@@ -578,15 +578,74 @@
       color: var(--text-secondary);
       margin: 8px 0 4px;
     }
+    .mix-wf-axisnote {
+      font-size: 0.68rem;
+      color: var(--text-secondary);
+      text-align: right;
+      font-style: italic;
+      margin: 2px 0 12px;
+      opacity: 0.75;
+    }
     .mix-insight {
       background: #f7f9ff;
       border: 1px solid #dde4f7;
       border-radius: 6px;
-      padding: 14px 16px;
-      font-size: 0.85rem;
-      line-height: 1.6;
+      padding: 14px 18px;
+      font-size: 0.88rem;
+      line-height: 1.55;
     }
     .mix-insight strong { color: var(--text-primary); }
+    .mix-insight__headline {
+      font-size: 1.02rem;
+      margin-bottom: 10px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #dde4f7;
+    }
+    .mix-insight__headline strong { font-weight: 700; }
+    .mix-insight__range {
+      color: var(--text-secondary);
+      font-weight: 500;
+      margin-left: 6px;
+    }
+    .mix-insight__forces { margin-bottom: 6px; }
+    .mix-insight__list {
+      list-style: none;
+      padding: 0;
+      margin: 0 0 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .mix-insight__list li {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 8px 10px;
+      background: #fff;
+      border-radius: 5px;
+      border: 1px solid #e6ebf5;
+    }
+    .mix-insight__list em {
+      color: var(--text-secondary);
+      font-style: normal;
+    }
+    .mix-insight__pill {
+      flex-shrink: 0;
+      min-width: 78px;
+      text-align: center;
+      font-weight: 700;
+      font-size: 0.82rem;
+      padding: 3px 8px;
+      border-radius: 4px;
+      background: #eef1f8;
+    }
+    .mix-insight__pill.pos { background: #e8f5ea; color: var(--positive); }
+    .mix-insight__pill.neg { background: #fdecec; color: var(--negative); }
+    .mix-insight__takeaway {
+      padding-top: 8px;
+      border-top: 1px solid #dde4f7;
+      color: var(--text-primary);
+    }
 
     .corr-summary {
       display: grid;
@@ -1400,8 +1459,6 @@ function renderMixShift(rows, tPrevS, tCurrS, tPrevCvr, tCurrCvr) {
   const actualDelta = tCurrCvr - tPrevCvr;
   const mixComponent = counterfactualCvr - tPrevCvr;
   const pureComponent = tCurrCvr - counterfactualCvr;
-  const mixPctOfDelta = actualDelta !== 0 ? (mixComponent / actualDelta * 100) : 0;
-  const purePctOfDelta = actualDelta !== 0 ? (pureComponent / actualDelta * 100) : 0;
 
   // Waterfall geometry — Prev & Actual are grounded columns; Mix Shift and
   // Pure CVR Δ float between the cumulative CVR levels, so negative deltas
@@ -1428,12 +1485,17 @@ function renderMixShift(rows, tPrevS, tCurrS, tPrevCvr, tCurrCvr) {
   const pureH      = Math.max(2, Math.abs(yCounter - yCurr));
   const pureColor  = pureComponent >= 0 ? 'var(--positive)' : 'var(--negative)';
 
-  const dirWord = actualDelta >= 0 ? 'increase' : 'drop';
-  const mixDirWord = mixComponent >= 0 ? 'increase' : 'decrease';
+  const totalDirWord = actualDelta >= 0 ? 'rose' : 'fell';
+  const totalMag = (Math.abs(actualDelta) * 100).toFixed(2) + 'pp';
+  const mixArrow = mixComponent > 0 ? '↑ ' : mixComponent < 0 ? '↓ ' : '';
+  const pureArrow = pureComponent > 0 ? '↑ ' : pureComponent < 0 ? '↓ ' : '';
+  const opposing = mixComponent !== 0 && pureComponent !== 0 &&
+                   (mixComponent > 0) !== (pureComponent > 0);
+  const pureDominant = Math.abs(pureComponent) >= Math.abs(mixComponent);
 
   card.innerHTML = `
     <h3>Mix-Shift Counterfactual</h3>
-    <p class="card__sub">If every campaign's CVR held constant and <em>only</em> the session distribution across campaigns changed, what would the blended CVR be?</p>
+    <p class="card__sub">Splits the blended-CVR change into two pieces: the part caused by <em>which campaigns got the sessions</em> (mix shift) and the part caused by <em>each campaign converting differently</em> (pure CVR change).</p>
 
     <div class="mix-summary">
       <div class="mix-stat">
@@ -1442,7 +1504,7 @@ function renderMixShift(rows, tPrevS, tCurrS, tPrevCvr, tCurrCvr) {
         <div class="mix-stat__sub">Baseline</div>
       </div>
       <div class="mix-stat">
-        <div class="mix-stat__label">Counterfactual CVR</div>
+        <div class="mix-stat__label">If Only Mix Changed</div>
         <div class="mix-stat__value ${cls(mixComponent)}">${(counterfactualCvr * 100).toFixed(2)}%</div>
         <div class="mix-stat__sub">${fmtPP(mixComponent * 100)} from mix shift alone</div>
       </div>
@@ -1460,33 +1522,61 @@ function renderMixShift(rows, tPrevS, tCurrS, tPrevCvr, tCurrCvr) {
       </div>
       <div class="mix-wf-bar">
         <div class="mix-wf-fill" style="bottom:${mixBottom.toFixed(1)}px;height:${mixH.toFixed(1)}px;background:${mixColor}"></div>
-        <div class="mix-wf-val ${cls(mixComponent)}" style="bottom:${(mixBottom + mixH + 4).toFixed(1)}px">${fmtPP(mixComponent * 100)}</div>
+        <div class="mix-wf-val ${cls(mixComponent)}" style="bottom:${(mixBottom + mixH + 4).toFixed(1)}px">${mixArrow}${fmtPP(mixComponent * 100)}</div>
       </div>
       <div class="mix-wf-bar">
         <div class="mix-wf-fill" style="bottom:${pureBottom.toFixed(1)}px;height:${pureH.toFixed(1)}px;background:${pureColor}"></div>
-        <div class="mix-wf-val ${cls(pureComponent)}" style="bottom:${(pureBottom + pureH + 4).toFixed(1)}px">${fmtPP(pureComponent * 100)}</div>
+        <div class="mix-wf-val ${cls(pureComponent)}" style="bottom:${(pureBottom + pureH + 4).toFixed(1)}px">${pureArrow}${fmtPP(pureComponent * 100)}</div>
       </div>
       <div class="mix-wf-bar">
         <div class="mix-wf-fill mix-wf-fill--grounded" style="bottom:0;height:${yCurr.toFixed(1)}px;background:var(--text-secondary)"></div>
         <div class="mix-wf-val" style="bottom:${(yCurr + 4).toFixed(1)}px">${(tCurrCvr * 100).toFixed(2)}%</div>
       </div>
+      <div class="mix-wf-connector" style="left:20%;right:70%;bottom:${yPrev.toFixed(1)}px"></div>
+      <div class="mix-wf-connector" style="left:45%;right:45%;bottom:${yCounter.toFixed(1)}px"></div>
+      <div class="mix-wf-connector" style="left:70%;right:20%;bottom:${yCurr.toFixed(1)}px"></div>
     </div>
     <div class="mix-wf-labels">
       <div>Prev CVR</div>
-      <div>+ Mix Shift</div>
-      <div>+ Pure CVR Δ</div>
+      <div>Mix Shift Effect</div>
+      <div>Pure CVR Change</div>
       <div>Actual CVR</div>
     </div>
+    <div class="mix-wf-axisnote">Y-axis zoomed — bar heights exaggerate small pp differences</div>
 
     <div class="mix-insight">
-      <strong>Summary:</strong> The total CVR ${dirWord} was <strong>${fmtPP(Math.abs(actualDelta) * 100)}</strong>.<br>
-      <br>
-      <strong>Mix shift</strong> (sessions redistributing across campaigns with different CVRs) accounts for
-      <strong>${fmtPP(Math.abs(mixComponent) * 100)}</strong> — that's <strong>${Math.abs(mixPctOfDelta).toFixed(1)}%</strong> of the total ${dirWord}.
-      ${mixComponent !== 0 ? `The campaign mix alone would have caused a <strong>${mixDirWord}</strong> in blended CVR.` : ''}<br>
-      <br>
-      <strong>Pure CVR changes</strong> (campaigns actually converting better or worse) account for
-      <strong>${fmtPP(Math.abs(pureComponent) * 100)}</strong> — that's <strong>${Math.abs(purePctOfDelta).toFixed(1)}%</strong> of the total ${dirWord}.
+      <div class="mix-insight__headline">
+        Blended CVR <strong>${totalDirWord} ${totalMag}</strong>
+        <span class="mix-insight__range">(${(tPrevCvr * 100).toFixed(2)}% → ${(tCurrCvr * 100).toFixed(2)}%)</span>
+      </div>
+      <div class="mix-insight__forces">This breaks into two independent forces:</div>
+      <ul class="mix-insight__list">
+        <li>
+          <span class="mix-insight__pill ${cls(mixComponent)}">${mixArrow}${fmtPP(mixComponent * 100)}</span>
+          <strong>Mix shift</strong> — sessions flowed toward
+          ${mixComponent >= 0 ? 'higher-CVR' : 'lower-CVR'} campaigns.
+          <em>${mixComponent >= 0 ? 'Helped blended CVR.' : 'Hurt blended CVR.'}</em>
+        </li>
+        <li>
+          <span class="mix-insight__pill ${cls(pureComponent)}">${pureArrow}${fmtPP(pureComponent * 100)}</span>
+          <strong>Pure CVR change</strong> — campaigns themselves converted
+          ${pureComponent >= 0 ? 'better' : 'worse'} on average.
+          <em>${pureComponent >= 0 ? 'Helped blended CVR.' : 'Hurt blended CVR.'}</em>
+        </li>
+      </ul>
+      ${opposing ? `
+        <div class="mix-insight__takeaway">
+          <strong>Takeaway:</strong> The two forces pulled in opposite directions.
+          ${pureDominant
+            ? `Without the mix-shift ${mixComponent >= 0 ? 'tailwind' : 'headwind'}, blended CVR would have ${pureComponent >= 0 ? 'risen' : 'fallen'} <strong>${(Math.abs(pureComponent) * 100).toFixed(2)}pp</strong> instead of ${totalMag} — so <strong>campaign-level CVR is the dominant driver</strong> of the change.`
+            : `If every campaign's CVR had held constant, blended CVR would still have ${mixComponent >= 0 ? 'risen' : 'fallen'} <strong>${(Math.abs(mixComponent) * 100).toFixed(2)}pp</strong> from traffic redistribution alone — so <strong>mix shift is the dominant driver</strong> of the change.`}
+        </div>
+      ` : `
+        <div class="mix-insight__takeaway">
+          <strong>Takeaway:</strong> Both forces pushed in the same direction, so the ${totalDirWord === 'rose' ? 'gain' : 'drop'} reflects both
+          traffic redistribution and genuine per-campaign CVR movement.
+        </div>
+      `}
     </div>
   `;
 }
