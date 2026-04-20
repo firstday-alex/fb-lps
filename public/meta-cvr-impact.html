@@ -292,6 +292,8 @@
       text-align: right; font-size: 0.78rem; color: var(--text-secondary); white-space: nowrap;
     }
     .contrib-stat strong { display: block; font-size: 0.82rem; color: var(--text-primary); font-weight: 600; }
+    .contrib-stat.pos strong { color: var(--positive); }
+    .contrib-stat.neg strong { color: var(--negative); }
     .contrib-bar-wrap { height: 8px; background: var(--neutral-bg); border-radius: 4px; overflow: hidden; }
     .contrib-bar { height: 100%; border-radius: 4px; min-width: 2px; }
     .contrib-val { text-align: right; font-weight: 700; font-size: 0.9rem; }
@@ -300,8 +302,8 @@
 
     .contrib-header {
       display: grid;
-      grid-template-columns: 210px 52px 52px 52px 1fr 90px 80px 20px;
-      gap: 10px;
+      grid-template-columns: 200px 50px 50px 58px 50px 1fr 84px 72px 18px;
+      gap: 8px;
       padding: 6px 4px;
       font-size: 0.68rem;
       font-weight: 700;
@@ -315,14 +317,32 @@
       z-index: 10;
     }
     .contrib-header .r { text-align: right; }
+    .contrib-header .sort-h {
+      cursor: pointer;
+      user-select: none;
+      border-radius: 3px;
+      padding: 2px 4px;
+      transition: background 0.12s, color 0.12s;
+    }
+    .contrib-header .sort-h:hover { background: #eef3ff; color: var(--fb-blue); }
+    .contrib-header .sort-h--active {
+      color: var(--fb-blue);
+      background: #e7effe;
+    }
+    .contrib-header .sort-arrow {
+      display: inline-block;
+      margin-left: 2px;
+      font-size: 0.62rem;
+      vertical-align: baseline;
+    }
 
     .source-wrap { border-bottom: 1px solid var(--border); }
     .source-wrap:last-child { border-bottom: none; }
     .source-row {
       display: grid;
-      grid-template-columns: 210px 52px 52px 52px 1fr 90px 80px 20px;
+      grid-template-columns: 200px 50px 50px 58px 50px 1fr 84px 72px 18px;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
       padding: 11px 4px;
       cursor: pointer;
       user-select: none;
@@ -1035,14 +1055,15 @@
     <!-- Ranked contributors (by campaign) -->
     <div class="card breakdown-card">
       <h3>Top Contributors to Conversion Change</h3>
-      <p class="card__sub">Each row is one utm_campaign, ranked by absolute impact on transactions. <strong>Txns</strong> = this campaign's current-period transactions. <strong>Conv. Δ</strong> = this campaign's net contribution to the overall conversion delta (sessions + CVR + mix-shift effects).</p>
+      <p class="card__sub">Each row is one utm_campaign. <strong>Txns</strong> = current-period transactions. <strong>Conv. Δ</strong> = the campaign's net contribution to the overall conversion delta (session-effect + CVR-effect + interaction — sums to the total Δ). <em>Click a column header to sort.</em></p>
       <div class="contrib-header">
-        <div>Campaign</div>
-        <div class="r">Sessions</div>
-        <div class="r">CVR</div>
-        <div class="r">Txns</div>
+        <div class="sort-h" data-sort="campaign">Campaign</div>
+        <div class="r sort-h" data-sort="sessions">Sessions</div>
+        <div class="r sort-h" data-sort="cvr">CVR</div>
+        <div class="r sort-h" data-sort="cvrDelta" title="Absolute CVR change in pp (current − previous)">CVR Δ</div>
+        <div class="r sort-h" data-sort="txns">Txns</div>
         <div>Impact</div>
-        <div class="r" title="Contribution to overall change in conversions. Not the same as current Txns.">Conv. Δ ⓘ</div>
+        <div class="r sort-h" data-sort="netValue" title="Contribution to overall change in conversions. Not the same as current Txns.">Conv. Δ ⓘ</div>
         <div class="r">% of Δ</div>
         <div></div>
       </div>
@@ -1276,16 +1297,19 @@ function render(rawRows, filename) {
   `;
 
   // ── Contributors (by campaign) ───────────────
-  const contributors = [];
-  campaignRows.forEach(r => {
+  // netValue is the campaign's TRUE net contribution to the overall conversion
+  // delta: sessEffect + cvrEffect + interaction = (currS*currC) − (prevS*prevCvr).
+  // Σ netValues over campaigns = tDelta. Mix-shift is a CVR-space reframing of
+  // the session effect and is surfaced separately in the Mix-Shift Counterfactual
+  // card — including it here would double-count.
+  const campaignGroups = campaignRows.map(r => {
     const d = decompose(r.prevSess, r.prevCvr, r.currS, r.currC);
     const label = r.key || '(empty)';
     const aboveAvg = r.prevCvr > tPrevCvr;
-    const mixShift = d.dS * (r.prevCvr - tPrevCvr);
-
+    const effects = [];
     if (d.sessEffect !== 0) {
       const mixHarmful = (aboveAvg && d.dS < 0) || (!aboveAvg && d.dS > 0);
-      contributors.push({
+      effects.push({
         campaign: label, currS: r.currS, currC: r.currC,
         aboveAvg, prevCvr: r.prevCvr, blendedCvr: tPrevCvr,
         typeLabel: d.dS >= 0 ? 'Sessions Increase' : 'Sessions Decrease',
@@ -1295,7 +1319,7 @@ function render(rawRows, filename) {
       });
     }
     if (d.cvrEffect !== 0) {
-      contributors.push({
+      effects.push({
         campaign: label, currS: r.currS, currC: r.currC,
         aboveAvg, prevCvr: r.prevCvr, blendedCvr: tPrevCvr,
         typeLabel: d.dC >= 0 ? 'CVR Increase' : 'CVR Decrease',
@@ -1304,7 +1328,7 @@ function render(rawRows, filename) {
       });
     }
     if (Math.abs(d.interaction) > 0.5) {
-      contributors.push({
+      effects.push({
         campaign: label, currS: r.currS, currC: r.currC,
         aboveAvg, prevCvr: r.prevCvr, blendedCvr: tPrevCvr,
         typeLabel: 'Interaction Effect',
@@ -1312,38 +1336,28 @@ function render(rawRows, filename) {
         detail: `${fmtS(Math.round(d.dS))} sessions × ${fmtPP(d.dC*100)} CVR`,
       });
     }
-    if (Math.abs(mixShift) > 0.5) {
-      contributors.push({
-        campaign: label, currS: r.currS, currC: r.currC,
-        aboveAvg, prevCvr: r.prevCvr, blendedCvr: tPrevCvr,
-        typeLabel: mixShift >= 0 ? 'Mix Improvement' : 'Mix Drag',
-        isMixShift: true,
-        value: mixShift,
-        detail: `CVR ${(r.prevCvr*100).toFixed(2)}% vs avg ${(tPrevCvr*100).toFixed(2)}% · ${fmtS(Math.round(d.dS))} sessions`,
-      });
-    }
-  });
-  contributors.sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
-
-  const campaignGroups = [];
-  const cMap = new Map();
-  contributors.forEach(c => {
-    let g = cMap.get(c.campaign);
-    if (!g) {
-      g = { campaign: c.campaign, currS: c.currS, currC: c.currC, effects: [], netValue: 0 };
-      cMap.set(c.campaign, g);
-      campaignGroups.push(g);
-    }
-    g.effects.push(c);
-    g.netValue += c.value;
-  });
-  campaignGroups.sort((a, b) => Math.abs(b.netValue) - Math.abs(a.netValue));
-  campaignGroups.forEach(g => {
-    g.primaryEffect = g.effects.reduce((best, e) => Math.abs(e.value) > Math.abs(best.value) ? e : best);
+    effects.sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
+    const primaryEffect = effects[0] || { typeLabel: 'No change', value: 0 };
+    return {
+      campaign: label,
+      currS: r.currS,
+      currC: r.currC,
+      prevSess: r.prevSess,
+      prevCvr: r.prevCvr,
+      deltaCvr: d.dC,
+      cvrEffect: d.cvrEffect,
+      sessEffect: d.sessEffect,
+      netValue: d.totalDelta,
+      effects,
+      primaryEffect,
+    };
   });
 
-  // Headline
-  const topGroup = campaignGroups[0];
+  // Headline — always uses the campaign with the largest |netValue|, regardless
+  // of the current contributor-list sort order.
+  const topGroup = campaignGroups.length > 0
+    ? campaignGroups.reduce((best, g) => Math.abs(g.netValue) > Math.abs(best.netValue) ? g : best)
+    : null;
   const headlineCard = document.getElementById('headline-card');
   const direction = tDelta >= 0 ? 'increased' : 'decreased';
   headlineCard.className = 'card headline-card ' + (tDelta >= 0 ? 'up' : 'down');
@@ -1388,63 +1402,120 @@ function render(rawRows, filename) {
   renderCvrBuckets(campaignRows);
   renderCorrelation(lpRows);
 
-  // Contributors list
-  const maxNetAbs = campaignGroups.length > 0 ? Math.abs(campaignGroups[0].netValue) : 1;
+  // Contributors list — supports clickable header sorting.
   const contribList = document.getElementById('contributors-list');
-  contribList.innerHTML = '';
-  campaignGroups.forEach(g => {
-    const barPct = Math.round(Math.abs(g.netValue) / maxNetAbs * 100);
-    const netColor = g.netValue >= 0 ? 'var(--positive)' : 'var(--negative)';
-    const pctOfDelta = tDelta !== 0 ? (g.netValue / tDelta * 100) : 0;
+  const sortKeyFns = {
+    campaign: g => g.campaign.toLowerCase(),
+    sessions: g => g.currS,
+    cvr:      g => g.currC,
+    cvrDelta: g => Math.abs(g.deltaCvr),
+    txns:     g => g.currS * g.currC,
+    netValue: g => Math.abs(g.netValue),
+  };
+  const defaultDir = { campaign: 'asc', sessions: 'desc', cvr: 'desc', cvrDelta: 'desc', txns: 'desc', netValue: 'desc' };
+  let sortKey = 'netValue';
+  let sortDir = 'desc';
 
-    const cvrVsAvg = g.currC - tCurrCvr;
-    const cvrBadge = isFinite(cvrVsAvg) && Math.abs(cvrVsAvg) > 0.0001
-      ? `<span class="cvr-badge ${cvrVsAvg > 0 ? 'cvr-badge--hi' : 'cvr-badge--lo'}" title="CVR vs avg ${(tCurrCvr*100).toFixed(2)}%">CVR: ${cvrVsAvg > 0 ? '↑' : '↓'} ${Math.abs(cvrVsAvg*100).toFixed(2)}pp vs avg</span>`
-      : '';
-
-    const shortLabel = g.campaign.length > 30 ? g.campaign.slice(0, 28) + '…' : g.campaign;
-    const wrap = document.createElement('div');
-    wrap.className = 'source-wrap';
-    const row = document.createElement('div');
-    row.className = 'source-row';
-    row.title = 'Click to see effect breakdown';
-    row.innerHTML = `
-      <div class="source-label" title="${esc(g.campaign)}">
-        <span class="ch-dot" style="background:${CAMPAIGN_COLOR}"></span>
-        <div>
-          <div>${esc(shortLabel)}${cvrBadge}</div>
-          <div class="source-driver">${esc(g.primaryEffect.typeLabel)}</div>
-        </div>
-      </div>
-      <div class="contrib-stat"><strong>${esc(fmtK(g.currS))}</strong>sess</div>
-      <div class="contrib-stat"><strong>${(g.currC*100).toFixed(2)}%</strong>CVR</div>
-      <div class="contrib-stat"><strong>${esc(fmtK(Math.round(g.currS * g.currC)))}</strong>txns</div>
-      <div>
-        <div class="contrib-bar-wrap">
-          <div class="contrib-bar" style="width:${barPct}%;background:${netColor}"></div>
-        </div>
-      </div>
-      <div class="contrib-val ${cls(g.netValue)}" title="Conv. Δ: this campaign's net contribution to the overall change in conversions">${fmtS(Math.round(g.netValue))}</div>
-      <div class="contrib-pct ${cls(g.netValue)}">${fmtP(pctOfDelta, 1)} of Δ</div>
-      <div class="contrib-chevron">▶</div>
-    `;
-
-    const effectsPanel = document.createElement('div');
-    effectsPanel.className = 'effects-panel';
-
-    row.addEventListener('click', () => {
-      const open = wrap.classList.toggle('open');
-      row.querySelector('.contrib-chevron').textContent = open ? '▼' : '▶';
-      if (open && !effectsPanel.dataset.loaded) {
-        effectsPanel.dataset.loaded = '1';
-        renderEffects(effectsPanel, g, tDelta, tPrevConv);
-      }
+  const renderContributorsList = () => {
+    const keyFn = sortKeyFns[sortKey] || sortKeyFns.netValue;
+    const dirMul = sortDir === 'desc' ? -1 : 1;
+    const sorted = [...campaignGroups].sort((a, b) => {
+      const va = keyFn(a), vb = keyFn(b);
+      if (typeof va === 'string') return va.localeCompare(vb) * dirMul;
+      return (va - vb) * dirMul;
     });
 
-    wrap.appendChild(row);
-    wrap.appendChild(effectsPanel);
-    contribList.appendChild(wrap);
+    const maxNetAbs = sorted.reduce((m, g) => Math.max(m, Math.abs(g.netValue)), 1);
+    contribList.innerHTML = '';
+
+    sorted.forEach(g => {
+      const barPct = Math.round(Math.abs(g.netValue) / maxNetAbs * 100);
+      const netColor = g.netValue >= 0 ? 'var(--positive)' : 'var(--negative)';
+      const pctOfDelta = tDelta !== 0 ? (g.netValue / tDelta * 100) : 0;
+
+      const cvrVsAvg = g.currC - tCurrCvr;
+      const cvrBadge = isFinite(cvrVsAvg) && Math.abs(cvrVsAvg) > 0.0001
+        ? `<span class="cvr-badge ${cvrVsAvg > 0 ? 'cvr-badge--hi' : 'cvr-badge--lo'}" title="CVR vs avg ${(tCurrCvr*100).toFixed(2)}%">CVR: ${cvrVsAvg > 0 ? '↑' : '↓'} ${Math.abs(cvrVsAvg*100).toFixed(2)}pp vs avg</span>`
+        : '';
+
+      const shortLabel = g.campaign.length > 30 ? g.campaign.slice(0, 28) + '…' : g.campaign;
+      const wrap = document.createElement('div');
+      wrap.className = 'source-wrap';
+      const row = document.createElement('div');
+      row.className = 'source-row';
+      row.title = 'Click to see effect breakdown';
+      row.innerHTML = `
+        <div class="source-label" title="${esc(g.campaign)}">
+          <span class="ch-dot" style="background:${CAMPAIGN_COLOR}"></span>
+          <div>
+            <div>${esc(shortLabel)}${cvrBadge}</div>
+            <div class="source-driver">${esc(g.primaryEffect.typeLabel)}</div>
+          </div>
+        </div>
+        <div class="contrib-stat"><strong>${esc(fmtK(g.currS))}</strong>sess</div>
+        <div class="contrib-stat"><strong>${(g.currC*100).toFixed(2)}%</strong>CVR</div>
+        <div class="contrib-stat ${cls(g.deltaCvr)}" title="CVR change vs previous period (${(g.prevCvr*100).toFixed(2)}% → ${(g.currC*100).toFixed(2)}%)"><strong>${fmtPP(g.deltaCvr*100)}</strong></div>
+        <div class="contrib-stat"><strong>${esc(fmtK(Math.round(g.currS * g.currC)))}</strong>txns</div>
+        <div>
+          <div class="contrib-bar-wrap">
+            <div class="contrib-bar" style="width:${barPct}%;background:${netColor}"></div>
+          </div>
+        </div>
+        <div class="contrib-val ${cls(g.netValue)}" title="Conv. Δ: this campaign's net contribution to the overall change in conversions (sessEffect + cvrEffect + interaction)">${fmtS(Math.round(g.netValue))}</div>
+        <div class="contrib-pct ${cls(g.netValue)}">${fmtP(pctOfDelta, 1)} of Δ</div>
+        <div class="contrib-chevron">▶</div>
+      `;
+
+      const effectsPanel = document.createElement('div');
+      effectsPanel.className = 'effects-panel';
+
+      row.addEventListener('click', () => {
+        const open = wrap.classList.toggle('open');
+        row.querySelector('.contrib-chevron').textContent = open ? '▼' : '▶';
+        if (open && !effectsPanel.dataset.loaded) {
+          effectsPanel.dataset.loaded = '1';
+          renderEffects(effectsPanel, g, tDelta, tPrevConv);
+        }
+      });
+
+      wrap.appendChild(row);
+      wrap.appendChild(effectsPanel);
+      contribList.appendChild(wrap);
+    });
+
+    document.querySelectorAll('.contrib-header .sort-h').forEach(h => {
+      const active = h.dataset.sort === sortKey;
+      h.classList.toggle('sort-h--active', active);
+      const existingArrow = h.querySelector('.sort-arrow');
+      if (existingArrow) existingArrow.remove();
+      if (active) {
+        const arrow = document.createElement('span');
+        arrow.className = 'sort-arrow';
+        arrow.textContent = sortDir === 'desc' ? '▼' : '▲';
+        h.appendChild(arrow);
+      }
+    });
+  };
+
+  // Clone header cells so any listeners bound by a previous render are dropped,
+  // then attach fresh handlers closed over the current campaignGroups.
+  document.querySelectorAll('.contrib-header .sort-h').forEach(oldH => {
+    const h = oldH.cloneNode(true);
+    oldH.replaceWith(h);
+    h.addEventListener('click', () => {
+      const key = h.dataset.sort;
+      if (!sortKeyFns[key]) return;
+      if (sortKey === key) {
+        sortDir = sortDir === 'desc' ? 'asc' : 'desc';
+      } else {
+        sortKey = key;
+        sortDir = defaultDir[key] || 'desc';
+      }
+      renderContributorsList();
+    });
   });
+
+  renderContributorsList();
 
   // Campaign breakdown table — sorted by |Δ Conv|
   const tbody = document.getElementById('breakdown-tbody');
