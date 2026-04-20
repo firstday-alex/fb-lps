@@ -302,7 +302,7 @@
 
     .contrib-header {
       display: grid;
-      grid-template-columns: 200px 50px 50px 58px 50px 1fr 84px 72px 18px;
+      grid-template-columns: 180px 46px 46px 54px 58px 46px 1fr 78px 66px 16px;
       gap: 8px;
       padding: 6px 4px;
       font-size: 0.68rem;
@@ -340,7 +340,7 @@
     .source-wrap:last-child { border-bottom: none; }
     .source-row {
       display: grid;
-      grid-template-columns: 200px 50px 50px 58px 50px 1fr 84px 72px 18px;
+      grid-template-columns: 180px 46px 46px 54px 58px 46px 1fr 78px 66px 16px;
       align-items: center;
       gap: 8px;
       padding: 11px 4px;
@@ -1055,12 +1055,13 @@
     <!-- Ranked contributors (by campaign) -->
     <div class="card breakdown-card">
       <h3>Top Contributors to Conversion Change</h3>
-      <p class="card__sub">Each row is one utm_campaign. <strong>Txns</strong> = current-period transactions. <strong>Conv. Δ</strong> = the campaign's net contribution to the overall conversion delta (session-effect + CVR-effect + interaction — sums to the total Δ). <em>Click a column header to sort.</em></p>
+      <p class="card__sub">Each row is one utm_campaign. <strong>Txns</strong> = current-period transactions. <strong>Conv. Δ</strong> = this campaign's net contribution to the total transaction change (session-effect + CVR-effect + interaction — sums to total Δ). <strong>CVR Drag</strong> = this campaign's contribution to the change in blended CVR, in pp (negative = dragging blended CVR down). <em>Click a column header to sort.</em></p>
       <div class="contrib-header">
         <div class="sort-h" data-sort="campaign">Campaign</div>
         <div class="r sort-h" data-sort="sessions">Sessions</div>
         <div class="r sort-h" data-sort="cvr">CVR</div>
         <div class="r sort-h" data-sort="cvrDelta" title="Absolute CVR change in pp (current − previous)">CVR Δ</div>
+        <div class="r sort-h" data-sort="cvrDrag" title="Contribution to blended CVR change in pp: (currShare × currC) − (prevShare × prevCvr). Sums to total blended CVR Δ. Negative = dragging blended CVR down.">CVR Drag</div>
         <div class="r sort-h" data-sort="txns">Txns</div>
         <div>Impact</div>
         <div class="r sort-h" data-sort="netValue" title="Contribution to overall change in conversions. Not the same as current Txns.">Conv. Δ ⓘ</div>
@@ -1306,25 +1307,30 @@ function render(rawRows, filename) {
     const d = decompose(r.prevSess, r.prevCvr, r.currS, r.currC);
     const label = r.key || '(empty)';
     const aboveAvg = r.prevCvr > tPrevCvr;
+    // Contribution to blended CVR change (pp): (currShare × currC) − (prevShare × prevCvr).
+    // Σ over campaigns = tCurrCvr − tPrevCvr. Negative = dragged blended CVR down.
+    const currShare = tCurrS > 0 ? r.currS / tCurrS : 0;
+    const prevShare = tPrevS > 0 ? r.prevSess / tPrevS : 0;
+    const cvrDrag = (currShare * r.currC) - (prevShare * r.prevCvr);
     const effects = [];
     if (d.sessEffect !== 0) {
       const mixHarmful = (aboveAvg && d.dS < 0) || (!aboveAvg && d.dS > 0);
       effects.push({
         campaign: label, currS: r.currS, currC: r.currC,
         aboveAvg, prevCvr: r.prevCvr, blendedCvr: tPrevCvr,
-        typeLabel: d.dS >= 0 ? 'Sessions Increase' : 'Sessions Decrease',
+        typeLabel: d.dS >= 0 ? 'Sessions Effect (↑ volume)' : 'Sessions Effect (↓ volume)',
         mixHarmful,
         value: d.sessEffect,
-        detail: `${fmtS(Math.round(d.dS))} sessions (${fmtP(r.prevSess > 0 ? d.dS / r.prevSess * 100 : 0, 1)})`,
+        detail: `${fmtS(Math.round(d.dS))} sessions × ${(r.prevCvr*100).toFixed(2)}% baseline CVR`,
       });
     }
     if (d.cvrEffect !== 0) {
       effects.push({
         campaign: label, currS: r.currS, currC: r.currC,
         aboveAvg, prevCvr: r.prevCvr, blendedCvr: tPrevCvr,
-        typeLabel: d.dC >= 0 ? 'CVR Increase' : 'CVR Decrease',
+        typeLabel: d.dC >= 0 ? 'CVR Effect (↑ rate)' : 'CVR Effect (↓ rate)',
         value: d.cvrEffect,
-        detail: `${fmtPP(d.dC*100)} (${(r.prevCvr*100).toFixed(2)}% → ${(r.currC*100).toFixed(2)}%)`,
+        detail: `${fmtPP(d.dC*100)} CVR × ${fmtN(r.prevSess)} baseline sessions (${(r.prevCvr*100).toFixed(2)}% → ${(r.currC*100).toFixed(2)}%)`,
       });
     }
     if (Math.abs(d.interaction) > 0.5) {
@@ -1333,7 +1339,7 @@ function render(rawRows, filename) {
         aboveAvg, prevCvr: r.prevCvr, blendedCvr: tPrevCvr,
         typeLabel: 'Interaction Effect',
         value: d.interaction,
-        detail: `${fmtS(Math.round(d.dS))} sessions × ${fmtPP(d.dC*100)} CVR`,
+        detail: `${fmtS(Math.round(d.dS))} Δ sessions × ${fmtPP(d.dC*100)} Δ CVR (cross-term)`,
       });
     }
     effects.sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
@@ -1347,6 +1353,7 @@ function render(rawRows, filename) {
       deltaCvr: d.dC,
       cvrEffect: d.cvrEffect,
       sessEffect: d.sessEffect,
+      cvrDrag,
       netValue: d.totalDelta,
       effects,
       primaryEffect,
@@ -1409,10 +1416,12 @@ function render(rawRows, filename) {
     sessions: g => g.currS,
     cvr:      g => g.currC,
     cvrDelta: g => Math.abs(g.deltaCvr),
+    cvrDrag:  g => g.cvrDrag,
     txns:     g => g.currS * g.currC,
     netValue: g => Math.abs(g.netValue),
   };
-  const defaultDir = { campaign: 'asc', sessions: 'desc', cvr: 'desc', cvrDelta: 'desc', txns: 'desc', netValue: 'desc' };
+  // cvrDrag default 'asc' so the biggest draggers (most negative) surface first.
+  const defaultDir = { campaign: 'asc', sessions: 'desc', cvr: 'desc', cvrDelta: 'desc', cvrDrag: 'asc', txns: 'desc', netValue: 'desc' };
   let sortKey = 'netValue';
   let sortDir = 'desc';
 
@@ -1455,6 +1464,7 @@ function render(rawRows, filename) {
         <div class="contrib-stat"><strong>${esc(fmtK(g.currS))}</strong>sess</div>
         <div class="contrib-stat"><strong>${(g.currC*100).toFixed(2)}%</strong>CVR</div>
         <div class="contrib-stat ${cls(g.deltaCvr)}" title="CVR change vs previous period (${(g.prevCvr*100).toFixed(2)}% → ${(g.currC*100).toFixed(2)}%)"><strong>${fmtPP(g.deltaCvr*100)}</strong></div>
+        <div class="contrib-stat ${cls(g.cvrDrag)}" title="Contribution to blended CVR change (pp). Negative = dragging blended CVR down."><strong>${fmtPP(g.cvrDrag*100)}</strong></div>
         <div class="contrib-stat"><strong>${esc(fmtK(Math.round(g.currS * g.currC)))}</strong>txns</div>
         <div>
           <div class="contrib-bar-wrap">
