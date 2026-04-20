@@ -363,7 +363,7 @@
     .source-wrap.open .effects-panel { display: block; }
     .effect-row {
       display: grid;
-      grid-template-columns: 150px 1fr 130px 65px 80px;
+      grid-template-columns: 180px 1fr 130px 65px 80px;
       align-items: center;
       gap: 10px;
       padding: 5px 0;
@@ -371,8 +371,8 @@
       font-size: 0.78rem;
     }
     .effect-row:first-child { border-top: none; }
-    .effect-type { font-weight: 600; white-space: nowrap; }
-    .effect-detail { font-size: 0.73rem; color: var(--text-secondary); }
+    .effect-type { font-weight: 600; line-height: 1.25; }
+    .effect-detail { font-size: 0.73rem; color: var(--text-secondary); line-height: 1.3; }
     .effect-summary {
       margin-top: 6px;
       padding: 8px 12px;
@@ -1336,9 +1336,9 @@ function render(rawRows, filename) {
     const effects = [];
     if (Math.abs(withinCvr) > 1e-7) {
       effects.push({
-        typeLabel: d.dC > 0 ? 'Own CVR improved' : 'Own CVR dropped',
+        typeLabel: d.dC > 0 ? 'Own CVR ↑' : 'Own CVR ↓',
         value: withinCvr,
-        detail: `${(prevShare*100).toFixed(2)}% prev share × ${fmtPP(d.dC*100)} campaign CVR Δ (${(r.prevCvr*100).toFixed(2)}% → ${(r.currC*100).toFixed(2)}%)`,
+        detail: `${(prevShare*100).toFixed(1)}% share × ${fmtPP(d.dC*100)} (${(r.prevCvr*100).toFixed(2)}% → ${(r.currC*100).toFixed(2)}%)`,
       });
     }
     if (Math.abs(betweenCvr) > 1e-7) {
@@ -1346,11 +1346,11 @@ function render(rawRows, filename) {
       const belowCurrAvg = cvrGapToCurrAvg < 0;
       const harmful = (gainedShare && belowCurrAvg) || (!gainedShare && !belowCurrAvg);
       const direction = gainedShare ? 'Gained' : 'Lost';
-      const position = belowCurrAvg ? 'below-avg CVR' : 'above-avg CVR';
+      const position = belowCurrAvg ? 'below-avg' : 'above-avg';
       effects.push({
-        typeLabel: `${direction} share (${position})${harmful ? ' ⚠' : ''}`,
+        typeLabel: `${direction} ${position} share${harmful ? ' ⚠' : ''}`,
         value: betweenCvr,
-        detail: `${fmtPP(dShare*100)} share Δ × (${(r.currC*100).toFixed(2)}% campaign curr CVR − ${(tCurrCvr*100).toFixed(2)}% blended curr avg)`,
+        detail: `${fmtPP(dShare*100)} share Δ × (${(r.currC*100).toFixed(2)}% − ${(tCurrCvr*100).toFixed(2)}% avg)`,
       });
     }
     effects.sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
