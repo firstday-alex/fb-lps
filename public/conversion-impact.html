@@ -1437,7 +1437,7 @@ function render(rawRows, filename) {
       effects.push({
         typeLabel: d.dC > 0 ? 'Own CVR ↑' : 'Own CVR ↓',
         value: withinCvr,
-        detail: `${(prevShare*100).toFixed(1)}% share × ${fmtPP(d.dC*100)} (${(r.prevCvr*100).toFixed(2)}% → ${(r.currC*100).toFixed(2)}%)`,
+        detail: `CVR ${(r.prevCvr*100).toFixed(2)}% → ${(r.currC*100).toFixed(2)}% (${fmtPP(d.dC*100)}) · sessions ${fmtN(r.prevSess)} → ${fmtN(r.currS)} (${(prevShare*100).toFixed(2)}% of prev total)`,
       });
     }
     if (Math.abs(betweenCvr) > 1e-7) {
@@ -1449,7 +1449,7 @@ function render(rawRows, filename) {
       effects.push({
         typeLabel: `${direction} ${position} share${harmful ? ' ⚠' : ''}`,
         value: betweenCvr,
-        detail: `${fmtPP(dShare*100)} share Δ × (${(r.currC*100).toFixed(2)}% − ${(tCurrCvr*100).toFixed(2)}% avg)`,
+        detail: `Sessions ${fmtN(r.prevSess)} → ${fmtN(r.currS)} (${fmtS(Math.round(d.dS))}) · share of total ${(prevShare*100).toFixed(2)}% → ${(currShare*100).toFixed(2)}% (${fmtPP(dShare*100)}) · CVR ${(r.currC*100).toFixed(2)}% is ${fmtPP(cvrGapToCurrAvg*100)} vs ${(tCurrCvr*100).toFixed(2)}% avg`,
       });
     }
     effects.sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
