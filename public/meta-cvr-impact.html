@@ -436,6 +436,60 @@
       position: absolute; top: -2px; bottom: -2px; width: 1px;
       background: var(--text-secondary); opacity: 0.3;
     }
+    .cvr-chart-row--clickable {
+      cursor: pointer;
+      transition: background 0.12s;
+    }
+    .cvr-chart-row--clickable:hover { background: #f4f7fb; }
+    .cvr-chev {
+      display: inline-block;
+      width: 10px;
+      font-size: 0.62rem;
+      color: var(--text-secondary);
+      flex-shrink: 0;
+      user-select: none;
+    }
+    .cvr-chart-row--open { background: #f4f7fb; }
+    .cvr-chart-row--open .cvr-chev { color: var(--fb-blue); }
+    .cvr-drill-panel {
+      display: none;
+      border-bottom: 1px solid var(--border);
+      background: #fafbfd;
+      padding: 4px 0 10px 28px;
+    }
+    .cvr-drill-panel.open { display: block; }
+    .cvr-drill-heading {
+      font-size: 0.68rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-secondary);
+      padding: 8px 0 6px;
+    }
+    .cvr-drill-row {
+      display: grid;
+      grid-template-columns: 200px 60px 1fr 60px 60px;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 0;
+      border-top: 1px solid #e8edf5;
+      font-size: 0.76rem;
+    }
+    .cvr-drill-row .r { text-align: right; }
+    .cvr-drill-lp {
+      font-family: Menlo, Monaco, monospace;
+      font-size: 0.72rem;
+      color: var(--text-primary);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .cvr-drill-empty {
+      font-size: 0.78rem;
+      color: var(--text-secondary);
+      padding: 12px 4px;
+      font-style: italic;
+    }
 
     .sess-chart-row {
       display: grid;
@@ -512,6 +566,118 @@
     }
     .bucket-bar-prev { top: 1px; background: var(--border); opacity: 0.7; }
     .bucket-bar-curr { top: 12px; }
+
+    .test-vs-nontest-card { padding: 20px; }
+    .test-vs-nontest-card h3 {
+      font-size: 0.82rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--text-secondary); margin-bottom: 4px;
+    }
+    .test-vs-nontest-card .card__sub { margin-bottom: 16px; }
+    .tvn-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+    @media (max-width: 700px) { .tvn-grid { grid-template-columns: 1fr; } }
+    .tvn-group {
+      background: var(--bg);
+      border-radius: 8px;
+      padding: 14px 16px;
+      border-left: 4px solid transparent;
+    }
+    .tvn-group--test { border-left-color: #f59e0b; }
+    .tvn-group--nontest { border-left-color: var(--fb-blue); }
+    .tvn-group__label {
+      font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--text-secondary); margin-bottom: 2px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .tvn-group__count {
+      font-size: 0.72rem; color: var(--text-secondary); font-weight: 500;
+    }
+    .tvn-group__cvr { font-size: 1.6rem; font-weight: 700; line-height: 1.1; margin-top: 4px; }
+    .tvn-group__delta { font-size: 0.82rem; font-weight: 600; margin-top: 2px; }
+    .tvn-group__stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid var(--border);
+    }
+    .tvn-stat__label {
+      font-size: 0.66rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--text-secondary);
+    }
+    .tvn-stat__value { font-size: 0.98rem; font-weight: 700; margin-top: 2px; }
+    .tvn-stat__sub { font-size: 0.72rem; color: var(--text-secondary); margin-top: 1px; }
+    .tvn-bars {
+      padding: 14px 16px;
+      background: var(--bg);
+      border-radius: 8px;
+      margin-bottom: 14px;
+    }
+    .tvn-bar-row {
+      display: grid;
+      grid-template-columns: 110px 1fr 70px;
+      align-items: center;
+      gap: 12px;
+      padding: 6px 0;
+      font-size: 0.82rem;
+    }
+    .tvn-bar-row + .tvn-bar-row { border-top: 1px dashed var(--border); }
+    .tvn-bar-label { font-weight: 600; display: flex; align-items: center; gap: 6px; }
+    .tvn-bar-track {
+      position: relative;
+      height: 14px;
+      background: #edf0f6;
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .tvn-bar-fill {
+      position: absolute; left: 0; top: 0; bottom: 0;
+      border-radius: 3px;
+      transition: width 0.3s;
+    }
+    .tvn-bar-val { text-align: right; font-weight: 700; font-size: 0.85rem; }
+    .tvn-swatch {
+      display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+    }
+    .tvn-insight {
+      background: #f7f9ff;
+      border: 1px solid #dde4f7;
+      border-radius: 6px;
+      padding: 12px 16px;
+      font-size: 0.85rem;
+      line-height: 1.55;
+    }
+    .tvn-insight strong { color: var(--text-primary); }
+    .tvn-campaigns-toggle {
+      margin-top: 10px;
+      background: none;
+      border: none;
+      color: var(--fb-blue);
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+      padding: 4px 0;
+    }
+    .tvn-campaigns-toggle:hover { text-decoration: underline; }
+    .tvn-campaigns-list {
+      display: none;
+      margin-top: 8px;
+      font-size: 0.74rem;
+      color: var(--text-secondary);
+      padding: 8px 10px;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      max-height: 220px;
+      overflow-y: auto;
+    }
+    .tvn-campaigns-list.open { display: block; }
+    .tvn-campaigns-list div { padding: 2px 0; word-break: break-all; }
 
     .mix-shift-card { padding: 20px; }
     .mix-shift-card h3 {
@@ -844,6 +1010,9 @@
 
     <!-- CVR Movement by Campaign -->
     <div class="card cvr-movement-card" id="cvr-movement-card"></div>
+
+    <!-- Test vs Non-Test Campaigns -->
+    <div class="card test-vs-nontest-card" id="test-vs-nontest-card"></div>
 
     <!-- CVR Movement by Landing Page -->
     <div class="card cvr-movement-card" id="cvr-movement-lp-card"></div>
@@ -1193,6 +1362,7 @@ function render(rawRows, filename) {
     labelName: 'Campaign',
     color: CAMPAIGN_COLOR,
     minSess: 20,
+    drillBy: 'lp',
   });
   renderCvrMovement('cvr-movement-lp-card', lpRows, {
     title: 'CVR Movement by Landing Page',
@@ -1202,6 +1372,7 @@ function render(rawRows, filename) {
     minSess: 20,
   });
   renderMixShift(campaignRows, tPrevS, tCurrS, tPrevCvr, tCurrCvr);
+  renderTestVsNonTest(campaignRows);
   renderSessionVolume('session-volume-card', campaignRows, {
     title: 'Session Volume by Campaign',
     sub: 'Campaigns ordered by current sessions (highest first). Gray = previous, colored = current.',
@@ -1339,6 +1510,7 @@ function makeCardsCollapsible() {
     'cvr-movement-card':      { title: 'CVR Movement by Campaign',    hint: "How each campaign's conversion rate shifted" },
     'cvr-movement-lp-card':   { title: 'CVR Movement by Landing Page',hint: "How each landing page's CVR shifted" },
     'mix-shift-card':         { title: 'Mix-Shift Counterfactual',    hint: 'Blended CVR if only campaign mix changed' },
+    'test-vs-nontest-card':   { title: 'Test vs Non-Test Campaigns',  hint: 'Compares CVR of campaigns whose name contains "test" vs those that don\'t' },
     'session-volume-card':    { title: 'Session Volume by Campaign',  hint: 'Which campaigns gained or lost traffic' },
     'session-volume-lp-card': { title: 'Session Volume by Landing Page', hint: 'Which landing pages gained or lost traffic' },
     'cvr-bucket-card':        { title: 'CVR Bucket Summary',          hint: 'Campaigns grouped by CVR tier' },
@@ -1392,10 +1564,11 @@ function renderCvrMovement(cardId, rows, opts) {
   const qualified = rows.filter(r => r.prevSess >= minSess || r.currS >= minSess);
   const sorted = [...qualified].sort((a, b) => (b.currS * b.currC) - (a.currS * a.currC));
   const maxAbsDelta = Math.max(...sorted.map(r => Math.abs(r.currC - r.prevCvr)), 0.001);
+  const drillByLp = opts.drillBy === 'lp';
 
   let html = `
     <h3>${esc(opts.title)}</h3>
-    <p class="card__sub">${opts.sub}</p>
+    <p class="card__sub">${opts.sub}${drillByLp ? ' <em style="color:var(--text-secondary)">· click a row to break down by landing page</em>' : ''}</p>
     <div class="cvr-chart">
       <div class="cvr-chart-row cvr-chart-row--header">
         <div>${esc(opts.labelName)}</div>
@@ -1405,7 +1578,7 @@ function renderCvrMovement(cardId, rows, opts) {
         <div class="r">Txns</div>
       </div>`;
 
-  sorted.forEach(r => {
+  sorted.forEach((r, idx) => {
     const label = r.key || '(empty)';
     const shortLabel = label.length > 28 ? label.slice(0, 26) + '…' : label;
     const delta = r.currC - r.prevCvr;
@@ -1419,10 +1592,13 @@ function renderCvrMovement(cardId, rows, opts) {
     const labelStyle = isPositive
       ? `left:calc(50% + ${barWidthPct}% + 4px);color:${barColor}`
       : `right:calc(50% + ${barWidthPct}% + 4px);color:${barColor}`;
+    const rowCls = drillByLp ? 'cvr-chart-row cvr-chart-row--clickable' : 'cvr-chart-row';
+    const dataAttr = drillByLp ? ` data-drill-idx="${idx}"` : '';
 
     html += `
-      <div class="cvr-chart-row">
+      <div class="${rowCls}"${dataAttr}>
         <div class="cvr-src-label" title="${esc(label)}">
+          ${drillByLp ? '<span class="cvr-chev">▶</span>' : ''}
           <span class="ch-dot" style="background:${opts.color}"></span>
           ${esc(shortLabel)}
         </div>
@@ -1436,11 +1612,75 @@ function renderCvrMovement(cardId, rows, opts) {
         </div>
         <div class="r" style="font-size:0.78rem">${(r.currC * 100).toFixed(2)}%</div>
         <div class="r" style="font-size:0.78rem;font-weight:600">${fmtN(Math.round(r.currS * r.currC))}</div>
-      </div>`;
+      </div>
+      ${drillByLp ? `<div class="cvr-drill-panel" data-drill-panel="${idx}"></div>` : ''}`;
   });
 
   html += '</div>';
   card.innerHTML = html;
+
+  if (drillByLp) {
+    card.querySelectorAll('.cvr-chart-row--clickable').forEach(row => {
+      row.addEventListener('click', () => {
+        const idx = row.dataset.drillIdx;
+        const panel = card.querySelector(`.cvr-drill-panel[data-drill-panel="${idx}"]`);
+        if (!panel) return;
+        const isOpen = panel.classList.toggle('open');
+        row.classList.toggle('cvr-chart-row--open', isOpen);
+        const chev = row.querySelector('.cvr-chev');
+        if (chev) chev.textContent = isOpen ? '▼' : '▶';
+        if (isOpen && !panel.dataset.loaded) {
+          panel.dataset.loaded = '1';
+          panel.innerHTML = buildLpDrilldownHtml(sorted[idx].key);
+        }
+      });
+    });
+  }
+}
+
+function buildLpDrilldownHtml(campaignKey) {
+  const campaign = campaignKey || '(empty)';
+  const filtered = _rawRows.filter(r => (r.campaign || '(empty)') === campaign);
+  const lpRows = aggregateBy(filtered, r => r.lp)
+    .filter(r => r.prevSess >= 5 || r.currS >= 5);
+  const sorted = [...lpRows].sort((a, b) => (b.currS * b.currC) - (a.currS * a.currC));
+
+  if (sorted.length === 0) {
+    return '<div class="cvr-drill-empty">No landing pages with ≥5 sessions in this campaign.</div>';
+  }
+
+  const maxAbsDelta = Math.max(...sorted.map(r => Math.abs(r.currC - r.prevCvr)), 0.001);
+  const rowsHtml = sorted.map(r => {
+    const label = r.key || '(no path)';
+    const shortLabel = label.length > 32 ? label.slice(0, 30) + '…' : label;
+    const delta = r.currC - r.prevCvr;
+    const deltaPP = delta * 100;
+    const barWidthPct = Math.round(Math.abs(delta) / maxAbsDelta * 45);
+    const isPositive = delta >= 0;
+    const barColor = isPositive ? 'var(--positive)' : 'var(--negative)';
+    const barStyle = isPositive
+      ? `left:50%;width:${barWidthPct}%`
+      : `right:50%;width:${barWidthPct}%`;
+    const labelStyle = isPositive
+      ? `left:calc(50% + ${barWidthPct}% + 4px);color:${barColor}`
+      : `right:calc(50% + ${barWidthPct}% + 4px);color:${barColor}`;
+    return `
+      <div class="cvr-drill-row">
+        <div class="cvr-drill-lp" title="${esc(label)}">${esc(shortLabel)}</div>
+        <div class="r">${(r.prevCvr * 100).toFixed(2)}%</div>
+        <div class="cvr-bar-cell">
+          <div class="cvr-divider" style="left:50%"></div>
+          <div class="cvr-bar-track" style="${barStyle}">
+            <div class="cvr-bar-fill" style="width:100%;background:${barColor};border-radius:${isPositive ? '0 3px 3px 0' : '3px 0 0 3px'}"></div>
+          </div>
+          <div class="cvr-bar-label" style="${labelStyle}">${fmtPP(deltaPP)}</div>
+        </div>
+        <div class="r">${(r.currC * 100).toFixed(2)}%</div>
+        <div class="r" style="font-weight:600">${fmtN(Math.round(r.currS * r.currC))}</div>
+      </div>`;
+  }).join('');
+
+  return `<div class="cvr-drill-heading">Landing pages within this campaign · ${sorted.length}</div>${rowsHtml}`;
 }
 
 // ─────────────────────────────────────────────
@@ -1579,6 +1819,166 @@ function renderMixShift(rows, tPrevS, tCurrS, tPrevCvr, tCurrCvr) {
       `}
     </div>
   `;
+}
+
+// ─────────────────────────────────────────────
+// TEST vs NON-TEST CAMPAIGN CVR
+// ─────────────────────────────────────────────
+function renderTestVsNonTest(rows) {
+  const card = document.getElementById('test-vs-nontest-card');
+  const isTest = name => /test/i.test(name || '');
+
+  const buildGroup = () => ({ names: [], currS: 0, prevS: 0, currWC: 0, prevWC: 0 });
+  const tg = buildGroup();
+  const ng = buildGroup();
+
+  rows.forEach(r => {
+    const g = isTest(r.key) ? tg : ng;
+    g.names.push(r.key || '(empty)');
+    g.currS  += r.currS;
+    g.prevS  += r.prevSess;
+    g.currWC += r.currS * r.currC;
+    g.prevWC += r.prevSess * r.prevCvr;
+  });
+
+  const stats = g => {
+    const currCvr = g.currS > 0 ? g.currWC / g.currS : 0;
+    const prevCvr = g.prevS > 0 ? g.prevWC / g.prevS : 0;
+    return {
+      ...g,
+      currCvr, prevCvr,
+      cvrDelta: currCvr - prevCvr,
+      currTxns: g.currWC,
+      prevTxns: g.prevWC,
+    };
+  };
+
+  const t = stats(tg);
+  const n = stats(ng);
+  const totalCurrS    = t.currS + n.currS;
+  const totalPrevS    = t.prevS + n.prevS;
+  const totalCurrTxns = t.currTxns + n.currTxns;
+  const totalPrevTxns = t.prevTxns + n.prevTxns;
+
+  if (t.names.length === 0 && n.names.length === 0) {
+    card.innerHTML = `<h3>Test vs Non-Test Campaigns</h3><p class="card__sub">No campaign data.</p>`;
+    return;
+  }
+
+  const pct = (a, b) => b > 0 ? (a / b * 100) : 0;
+  const maxCvr = Math.max(t.currCvr, n.currCvr, t.prevCvr, n.prevCvr, 0.001);
+  const barPct = v => Math.min(100, (v / maxCvr) * 100);
+
+  const cvrGap = t.currCvr - n.currCvr;
+  const cvrGapPctRel = n.currCvr > 0 ? ((t.currCvr / n.currCvr) - 1) * 100 : 0;
+  const testSessShare = pct(t.currS, totalCurrS);
+  const testTxnShare = pct(t.currTxns, totalCurrTxns);
+  const efficiency = testSessShare > 0 ? testTxnShare / testSessShare : 0;
+
+  const renderCampaignList = (g, cls) => g.names.length === 0 ? '' : `
+    <button class="tvn-campaigns-toggle" data-tvn-toggle="${cls}">Show ${g.names.length} campaign${g.names.length !== 1 ? 's' : ''} ▾</button>
+    <div class="tvn-campaigns-list" data-tvn-list="${cls}">
+      ${g.names.map(n => `<div>${esc(n)}</div>`).join('')}
+    </div>`;
+
+  const renderGroup = (s, variant, label) => {
+    const empty = s.names.length === 0;
+    return `
+      <div class="tvn-group tvn-group--${variant}">
+        <div class="tvn-group__label">
+          ${label}
+          <span class="tvn-group__count">· ${s.names.length} campaign${s.names.length !== 1 ? 's' : ''}</span>
+        </div>
+        ${empty ? '<div class="tvn-group__cvr" style="color:var(--text-secondary);font-size:0.95rem;font-weight:500">No campaigns in this group</div>' : `
+          <div class="tvn-group__cvr">${(s.currCvr * 100).toFixed(2)}%</div>
+          <div class="tvn-group__delta ${cls(s.cvrDelta)}">${fmtPP(s.cvrDelta * 100)} vs prev (${(s.prevCvr * 100).toFixed(2)}%)</div>
+          <div class="tvn-group__stats">
+            <div>
+              <div class="tvn-stat__label">Sessions</div>
+              <div class="tvn-stat__value">${fmtN(s.currS)}</div>
+              <div class="tvn-stat__sub">${pct(s.currS, totalCurrS).toFixed(1)}% of total</div>
+            </div>
+            <div>
+              <div class="tvn-stat__label">Transactions</div>
+              <div class="tvn-stat__value">${fmtN(Math.round(s.currTxns))}</div>
+              <div class="tvn-stat__sub">${pct(s.currTxns, totalCurrTxns).toFixed(1)}% of total</div>
+            </div>
+          </div>
+          ${renderCampaignList(s, variant)}
+        `}
+      </div>`;
+  };
+
+  const bothHaveData = t.names.length > 0 && n.names.length > 0;
+  const testWorse = cvrGap < 0;
+  const insight = bothHaveData ? `
+    <div class="tvn-insight">
+      <strong>Test campaigns convert ${testWorse ? 'lower' : 'higher'} than non-test by
+      ${Math.abs(cvrGap * 100).toFixed(2)}pp</strong>
+      (${Math.abs(cvrGapPctRel).toFixed(1)}% ${testWorse ? 'below' : 'above'} non-test CVR).
+      They take <strong>${testSessShare.toFixed(1)}%</strong> of sessions but produce
+      <strong>${testTxnShare.toFixed(1)}%</strong> of transactions
+      — an efficiency ratio of <strong>${efficiency.toFixed(2)}×</strong>
+      (${efficiency < 0.9 ? 'underperforming' : efficiency > 1.1 ? 'overperforming' : 'roughly proportional to'} traffic share).
+      ${t.cvrDelta !== 0 && n.cvrDelta !== 0 ? `
+        Period-over-period: test
+        ${t.cvrDelta >= 0 ? 'improved' : 'dropped'} <strong class="${cls(t.cvrDelta)}">${fmtPP(t.cvrDelta * 100)}</strong>
+        while non-test
+        ${n.cvrDelta >= 0 ? 'improved' : 'dropped'} <strong class="${cls(n.cvrDelta)}">${fmtPP(n.cvrDelta * 100)}</strong>.
+      ` : ''}
+    </div>
+  ` : `
+    <div class="tvn-insight">
+      <strong>Only one group has data</strong> — cannot compare test vs non-test this period.
+    </div>`;
+
+  card.innerHTML = `
+    <h3>Test vs Non-Test Campaigns</h3>
+    <p class="card__sub">Splits utm_campaigns into two buckets by whether the name contains <code>test</code> (case-insensitive substring match — includes "Testing", "Creative-Testing", etc.). Compares CVR, traffic share, and conversion share.</p>
+
+    <div class="tvn-grid">
+      ${renderGroup(t, 'test', '<span class="tvn-swatch" style="background:#f59e0b"></span> Test Campaigns')}
+      ${renderGroup(n, 'nontest', '<span class="tvn-swatch" style="background:var(--fb-blue)"></span> Non-Test Campaigns')}
+    </div>
+
+    ${bothHaveData ? `
+      <div class="tvn-bars">
+        <div class="tvn-bar-row">
+          <div class="tvn-bar-label"><span class="tvn-swatch" style="background:#f59e0b"></span> Test · Prev</div>
+          <div class="tvn-bar-track"><div class="tvn-bar-fill" style="width:${barPct(t.prevCvr)}%;background:#fcd34d"></div></div>
+          <div class="tvn-bar-val">${(t.prevCvr * 100).toFixed(2)}%</div>
+        </div>
+        <div class="tvn-bar-row">
+          <div class="tvn-bar-label"><span class="tvn-swatch" style="background:#f59e0b"></span> Test · Curr</div>
+          <div class="tvn-bar-track"><div class="tvn-bar-fill" style="width:${barPct(t.currCvr)}%;background:#f59e0b"></div></div>
+          <div class="tvn-bar-val">${(t.currCvr * 100).toFixed(2)}%</div>
+        </div>
+        <div class="tvn-bar-row">
+          <div class="tvn-bar-label"><span class="tvn-swatch" style="background:var(--fb-blue)"></span> Non-Test · Prev</div>
+          <div class="tvn-bar-track"><div class="tvn-bar-fill" style="width:${barPct(n.prevCvr)}%;background:#93bafd"></div></div>
+          <div class="tvn-bar-val">${(n.prevCvr * 100).toFixed(2)}%</div>
+        </div>
+        <div class="tvn-bar-row">
+          <div class="tvn-bar-label"><span class="tvn-swatch" style="background:var(--fb-blue)"></span> Non-Test · Curr</div>
+          <div class="tvn-bar-track"><div class="tvn-bar-fill" style="width:${barPct(n.currCvr)}%;background:var(--fb-blue)"></div></div>
+          <div class="tvn-bar-val">${(n.currCvr * 100).toFixed(2)}%</div>
+        </div>
+      </div>
+    ` : ''}
+
+    ${insight}
+  `;
+
+  card.querySelectorAll('.tvn-campaigns-toggle').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.tvnToggle;
+      const list = card.querySelector(`.tvn-campaigns-list[data-tvn-list="${key}"]`);
+      if (!list) return;
+      const open = list.classList.toggle('open');
+      const count = list.children.length;
+      btn.textContent = `${open ? 'Hide' : 'Show'} ${count} campaign${count !== 1 ? 's' : ''} ${open ? '▴' : '▾'}`;
+    });
+  });
 }
 
 // ─────────────────────────────────────────────
