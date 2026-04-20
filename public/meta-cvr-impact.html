@@ -302,7 +302,7 @@
 
     .contrib-header {
       display: grid;
-      grid-template-columns: 180px 46px 46px 54px 58px 46px 1fr 78px 66px 16px;
+      grid-template-columns: 200px 50px 50px 58px 50px 1fr 84px 72px 18px;
       gap: 8px;
       padding: 6px 4px;
       font-size: 0.68rem;
@@ -340,7 +340,7 @@
     .source-wrap:last-child { border-bottom: none; }
     .source-row {
       display: grid;
-      grid-template-columns: 180px 46px 46px 54px 58px 46px 1fr 78px 66px 16px;
+      grid-template-columns: 200px 50px 50px 58px 50px 1fr 84px 72px 18px;
       align-items: center;
       gap: 8px;
       padding: 11px 4px;
@@ -373,6 +373,22 @@
     .effect-row:first-child { border-top: none; }
     .effect-type { font-weight: 600; white-space: nowrap; }
     .effect-detail { font-size: 0.73rem; color: var(--text-secondary); }
+    .effect-summary {
+      margin-top: 6px;
+      padding: 8px 12px;
+      background: #eef3ff;
+      border-radius: 5px;
+      font-size: 0.8rem;
+      color: var(--text-primary);
+    }
+    .effect-summary strong { font-weight: 700; }
+    .effect-summary__sub { color: var(--text-secondary); margin-left: 4px; }
+    .effect-summary__txn {
+      display: block;
+      font-size: 0.74rem;
+      color: var(--text-secondary);
+      margin-top: 3px;
+    }
 
     .lp-btn {
       margin-top: 8px;
@@ -1054,18 +1070,17 @@
 
     <!-- Ranked contributors (by campaign) -->
     <div class="card breakdown-card">
-      <h3>Top Contributors to Conversion Change</h3>
-      <p class="card__sub">Each row is one utm_campaign. <strong>Txns</strong> = current-period transactions. <strong>Conv. Δ</strong> = this campaign's net contribution to the total transaction change (session-effect + CVR-effect + interaction — sums to total Δ). <strong>CVR Drag</strong> = this campaign's contribution to the change in blended CVR, in pp (negative = dragging blended CVR down). <em>Click a column header to sort.</em></p>
+      <h3>Top Contributors to Blended CVR Change</h3>
+      <p class="card__sub">Each row is one utm_campaign. <strong>CVR Impact</strong> = this campaign's contribution (in pp) to the total blended CVR change for this data pull. Decomposed into: (a) <strong>own CVR effect</strong> — <em>prevShare × ΔCvr</em> (the campaign's own CVR movement, weighted by its baseline traffic share); plus (b) <strong>share-shift effect</strong> — <em>ΔShare × (currCvr − blended avg)</em> (gaining/losing share at a CVR above or below the blended average). Sums across all campaigns to the overall blended ΔCvr. Negative = dragged blended CVR down. So a below-average campaign whose CVR drops <em>and</em> gains share compounds on both terms. <em>Click a column header to sort.</em></p>
       <div class="contrib-header">
         <div class="sort-h" data-sort="campaign">Campaign</div>
         <div class="r sort-h" data-sort="sessions">Sessions</div>
         <div class="r sort-h" data-sort="cvr">CVR</div>
-        <div class="r sort-h" data-sort="cvrDelta" title="Absolute CVR change in pp (current − previous)">CVR Δ</div>
-        <div class="r sort-h" data-sort="cvrDrag" title="Contribution to blended CVR change in pp: (currShare × currC) − (prevShare × prevCvr). Sums to total blended CVR Δ. Negative = dragging blended CVR down.">CVR Drag</div>
+        <div class="r sort-h" data-sort="cvrDelta" title="Campaign's own CVR change in pp (current − previous)">CVR Δ</div>
         <div class="r sort-h" data-sort="txns">Txns</div>
         <div>Impact</div>
-        <div class="r sort-h" data-sort="netValue" title="Contribution to overall change in conversions. Not the same as current Txns.">Conv. Δ ⓘ</div>
-        <div class="r">% of Δ</div>
+        <div class="r sort-h" data-sort="cvrImpact" title="Contribution to blended CVR change (pp). Own CVR effect + share-shift effect. Sums to total blended ΔCvr. Negative = dragged blended CVR down.">CVR Impact ⓘ</div>
+        <div class="r">% of ΔCvr</div>
         <div></div>
       </div>
       <div id="contributors-list"></div>
@@ -1085,9 +1100,9 @@
               <th class="r">Prev CVR</th>
               <th class="r">Curr CVR</th>
               <th class="r">Δ CVR (pp)</th>
-              <th class="r">Prev Conv.</th>
-              <th class="r">Curr Conv.</th>
-              <th class="r">Δ Conv.</th>
+              <th class="r">Prev Txns</th>
+              <th class="r">Curr Txns</th>
+              <th class="r">Δ Txn</th>
               <th class="r">Sess Effect</th>
               <th class="r">CVR Effect</th>
               <th class="r">Interaction</th>
@@ -1297,49 +1312,45 @@ function render(rawRows, filename) {
     </div>
   `;
 
-  // ── Contributors (by campaign) ───────────────
-  // netValue is the campaign's TRUE net contribution to the overall conversion
-  // delta: sessEffect + cvrEffect + interaction = (currS*currC) − (prevS*prevCvr).
-  // Σ netValues over campaigns = tDelta. Mix-shift is a CVR-space reframing of
-  // the session effect and is surfaced separately in the Mix-Shift Counterfactual
-  // card — including it here would double-count.
+  // ── Contributors (by campaign) — CVR-impact decomposition ──
+  // Each campaign's contribution to the TOTAL BLENDED CVR change splits cleanly
+  // into two parts that SUM across campaigns to the overall blended ΔCvr:
+  //   within  = prevShare × ΔCvr                   (own-CVR effect)
+  //   between = ΔShare × (currCvr − blendedCurr)   (share-shift vs current avg)
+  // This is the Paasche-style shift-share decomposition. It gives the
+  // "compounding" behaviour: a campaign that converts below the CURRENT blended
+  // average AND gains share AND whose own CVR drops contributes twice — once
+  // through a negative within, once through a negative between.
+  const tCvrDelta = tCurrCvr - tPrevCvr;
   const campaignGroups = campaignRows.map(r => {
     const d = decompose(r.prevSess, r.prevCvr, r.currS, r.currC);
     const label = r.key || '(empty)';
-    const aboveAvg = r.prevCvr > tPrevCvr;
-    // Contribution to blended CVR change (pp): (currShare × currC) − (prevShare × prevCvr).
-    // Σ over campaigns = tCurrCvr − tPrevCvr. Negative = dragged blended CVR down.
     const currShare = tCurrS > 0 ? r.currS / tCurrS : 0;
     const prevShare = tPrevS > 0 ? r.prevSess / tPrevS : 0;
-    const cvrDrag = (currShare * r.currC) - (prevShare * r.prevCvr);
+    const dShare = currShare - prevShare;
+    const cvrGapToCurrAvg = r.currC - tCurrCvr;
+    const withinCvr  = prevShare * d.dC;
+    const betweenCvr = dShare * cvrGapToCurrAvg;
+    const cvrImpact  = withinCvr + betweenCvr;
+
     const effects = [];
-    if (d.sessEffect !== 0) {
-      const mixHarmful = (aboveAvg && d.dS < 0) || (!aboveAvg && d.dS > 0);
+    if (Math.abs(withinCvr) > 1e-7) {
       effects.push({
-        campaign: label, currS: r.currS, currC: r.currC,
-        aboveAvg, prevCvr: r.prevCvr, blendedCvr: tPrevCvr,
-        typeLabel: d.dS >= 0 ? 'Sessions Effect (↑ volume)' : 'Sessions Effect (↓ volume)',
-        mixHarmful,
-        value: d.sessEffect,
-        detail: `${fmtS(Math.round(d.dS))} sessions × ${(r.prevCvr*100).toFixed(2)}% baseline CVR`,
+        typeLabel: d.dC > 0 ? 'Own CVR improved' : 'Own CVR dropped',
+        value: withinCvr,
+        detail: `${(prevShare*100).toFixed(2)}% prev share × ${fmtPP(d.dC*100)} campaign CVR Δ (${(r.prevCvr*100).toFixed(2)}% → ${(r.currC*100).toFixed(2)}%)`,
       });
     }
-    if (d.cvrEffect !== 0) {
+    if (Math.abs(betweenCvr) > 1e-7) {
+      const gainedShare = dShare > 0;
+      const belowCurrAvg = cvrGapToCurrAvg < 0;
+      const harmful = (gainedShare && belowCurrAvg) || (!gainedShare && !belowCurrAvg);
+      const direction = gainedShare ? 'Gained' : 'Lost';
+      const position = belowCurrAvg ? 'below-avg CVR' : 'above-avg CVR';
       effects.push({
-        campaign: label, currS: r.currS, currC: r.currC,
-        aboveAvg, prevCvr: r.prevCvr, blendedCvr: tPrevCvr,
-        typeLabel: d.dC >= 0 ? 'CVR Effect (↑ rate)' : 'CVR Effect (↓ rate)',
-        value: d.cvrEffect,
-        detail: `${fmtPP(d.dC*100)} CVR × ${fmtN(r.prevSess)} baseline sessions (${(r.prevCvr*100).toFixed(2)}% → ${(r.currC*100).toFixed(2)}%)`,
-      });
-    }
-    if (Math.abs(d.interaction) > 0.5) {
-      effects.push({
-        campaign: label, currS: r.currS, currC: r.currC,
-        aboveAvg, prevCvr: r.prevCvr, blendedCvr: tPrevCvr,
-        typeLabel: 'Interaction Effect',
-        value: d.interaction,
-        detail: `${fmtS(Math.round(d.dS))} Δ sessions × ${fmtPP(d.dC*100)} Δ CVR (cross-term)`,
+        typeLabel: `${direction} share (${position})${harmful ? ' ⚠' : ''}`,
+        value: betweenCvr,
+        detail: `${fmtPP(dShare*100)} share Δ × (${(r.currC*100).toFixed(2)}% campaign curr CVR − ${(tCurrCvr*100).toFixed(2)}% blended curr avg)`,
       });
     }
     effects.sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
@@ -1350,27 +1361,31 @@ function render(rawRows, filename) {
       currC: r.currC,
       prevSess: r.prevSess,
       prevCvr: r.prevCvr,
+      currShare,
+      prevShare,
       deltaCvr: d.dC,
-      cvrEffect: d.cvrEffect,
-      sessEffect: d.sessEffect,
-      cvrDrag,
-      netValue: d.totalDelta,
+      withinCvr,
+      betweenCvr,
+      cvrImpact,
+      txnDelta: d.totalDelta,
       effects,
       primaryEffect,
     };
   });
 
-  // Headline — always uses the campaign with the largest |netValue|, regardless
-  // of the current contributor-list sort order.
+  // Headline — transaction-focused top-level summary. "Largest driver" picks
+  // the campaign that moved transactions the most (|txnDelta|), independent of
+  // the CVR-impact sort the contributors card uses.
   const topGroup = campaignGroups.length > 0
-    ? campaignGroups.reduce((best, g) => Math.abs(g.netValue) > Math.abs(best.netValue) ? g : best)
+    ? campaignGroups.reduce((best, g) => Math.abs(g.txnDelta) > Math.abs(best.txnDelta) ? g : best)
     : null;
   const headlineCard = document.getElementById('headline-card');
   const direction = tDelta >= 0 ? 'increased' : 'decreased';
   headlineCard.className = 'card headline-card ' + (tDelta >= 0 ? 'up' : 'down');
-  const topDesc = topGroup
-    ? `Largest driver: ${topGroup.primaryEffect.typeLabel} from ${topGroup.campaign} (Conv. Δ: ${fmtS(Math.round(topGroup.netValue))}).`
+  const topTxnDriver = topGroup && Math.abs(topGroup.txnDelta) > 0.5
+    ? `${topGroup.campaign} (Txn Δ: ${fmtS(Math.round(topGroup.txnDelta))})`
     : '';
+  const topDesc = topTxnDriver ? `Largest transaction driver: ${topTxnDriver}.` : '';
   headlineCard.innerHTML = `
     <h3>Meta paid-social transactions ${direction} by ${fmtS(Math.round(tDelta))} (${fmtP(txnPct, 1)})</h3>
     <p>${esc(topDesc)}</p>
@@ -1412,21 +1427,20 @@ function render(rawRows, filename) {
   // Contributors list — supports clickable header sorting.
   const contribList = document.getElementById('contributors-list');
   const sortKeyFns = {
-    campaign: g => g.campaign.toLowerCase(),
-    sessions: g => g.currS,
-    cvr:      g => g.currC,
-    cvrDelta: g => Math.abs(g.deltaCvr),
-    cvrDrag:  g => g.cvrDrag,
-    txns:     g => g.currS * g.currC,
-    netValue: g => Math.abs(g.netValue),
+    campaign:  g => g.campaign.toLowerCase(),
+    sessions:  g => g.currS,
+    cvr:       g => g.currC,
+    cvrDelta:  g => Math.abs(g.deltaCvr),
+    txns:      g => g.currS * g.currC,
+    cvrImpact: g => g.cvrImpact,
   };
-  // cvrDrag default 'asc' so the biggest draggers (most negative) surface first.
-  const defaultDir = { campaign: 'asc', sessions: 'desc', cvr: 'desc', cvrDelta: 'desc', cvrDrag: 'asc', txns: 'desc', netValue: 'desc' };
-  let sortKey = 'netValue';
-  let sortDir = 'desc';
+  // cvrImpact default 'asc' so the biggest blended-CVR draggers surface at top.
+  const defaultDir = { campaign: 'asc', sessions: 'desc', cvr: 'desc', cvrDelta: 'desc', txns: 'desc', cvrImpact: 'asc' };
+  let sortKey = 'cvrImpact';
+  let sortDir = 'asc';
 
   const renderContributorsList = () => {
-    const keyFn = sortKeyFns[sortKey] || sortKeyFns.netValue;
+    const keyFn = sortKeyFns[sortKey] || sortKeyFns.cvrImpact;
     const dirMul = sortDir === 'desc' ? -1 : 1;
     const sorted = [...campaignGroups].sort((a, b) => {
       const va = keyFn(a), vb = keyFn(b);
@@ -1434,13 +1448,13 @@ function render(rawRows, filename) {
       return (va - vb) * dirMul;
     });
 
-    const maxNetAbs = sorted.reduce((m, g) => Math.max(m, Math.abs(g.netValue)), 1);
+    const maxImpactAbs = sorted.reduce((m, g) => Math.max(m, Math.abs(g.cvrImpact)), 1e-9);
     contribList.innerHTML = '';
 
     sorted.forEach(g => {
-      const barPct = Math.round(Math.abs(g.netValue) / maxNetAbs * 100);
-      const netColor = g.netValue >= 0 ? 'var(--positive)' : 'var(--negative)';
-      const pctOfDelta = tDelta !== 0 ? (g.netValue / tDelta * 100) : 0;
+      const barPct = Math.round(Math.abs(g.cvrImpact) / maxImpactAbs * 100);
+      const impactColor = g.cvrImpact >= 0 ? 'var(--positive)' : 'var(--negative)';
+      const pctOfDelta = tCvrDelta !== 0 ? (g.cvrImpact / tCvrDelta * 100) : 0;
 
       const cvrVsAvg = g.currC - tCurrCvr;
       const cvrBadge = isFinite(cvrVsAvg) && Math.abs(cvrVsAvg) > 0.0001
@@ -1452,7 +1466,7 @@ function render(rawRows, filename) {
       wrap.className = 'source-wrap';
       const row = document.createElement('div');
       row.className = 'source-row';
-      row.title = 'Click to see effect breakdown';
+      row.title = 'Click to see within/between decomposition';
       row.innerHTML = `
         <div class="source-label" title="${esc(g.campaign)}">
           <span class="ch-dot" style="background:${CAMPAIGN_COLOR}"></span>
@@ -1463,16 +1477,15 @@ function render(rawRows, filename) {
         </div>
         <div class="contrib-stat"><strong>${esc(fmtK(g.currS))}</strong>sess</div>
         <div class="contrib-stat"><strong>${(g.currC*100).toFixed(2)}%</strong>CVR</div>
-        <div class="contrib-stat ${cls(g.deltaCvr)}" title="CVR change vs previous period (${(g.prevCvr*100).toFixed(2)}% → ${(g.currC*100).toFixed(2)}%)"><strong>${fmtPP(g.deltaCvr*100)}</strong></div>
-        <div class="contrib-stat ${cls(g.cvrDrag)}" title="Contribution to blended CVR change (pp). Negative = dragging blended CVR down."><strong>${fmtPP(g.cvrDrag*100)}</strong></div>
+        <div class="contrib-stat ${cls(g.deltaCvr)}" title="This campaign's own CVR change (${(g.prevCvr*100).toFixed(2)}% → ${(g.currC*100).toFixed(2)}%)"><strong>${fmtPP(g.deltaCvr*100)}</strong></div>
         <div class="contrib-stat"><strong>${esc(fmtK(Math.round(g.currS * g.currC)))}</strong>txns</div>
         <div>
           <div class="contrib-bar-wrap">
-            <div class="contrib-bar" style="width:${barPct}%;background:${netColor}"></div>
+            <div class="contrib-bar" style="width:${barPct}%;background:${impactColor}"></div>
           </div>
         </div>
-        <div class="contrib-val ${cls(g.netValue)}" title="Conv. Δ: this campaign's net contribution to the overall change in conversions (sessEffect + cvrEffect + interaction)">${fmtS(Math.round(g.netValue))}</div>
-        <div class="contrib-pct ${cls(g.netValue)}">${fmtP(pctOfDelta, 1)} of Δ</div>
+        <div class="contrib-val ${cls(g.cvrImpact)}" title="Within (own CVR): ${fmtPP(g.withinCvr*100)} + Between (share-shift): ${fmtPP(g.betweenCvr*100)} = ${fmtPP(g.cvrImpact*100)}. Sums across all campaigns to total blended ΔCvr of ${fmtPP(tCvrDelta*100)}.">${fmtPP(g.cvrImpact*100)}</div>
+        <div class="contrib-pct ${cls(g.cvrImpact)}">${fmtP(pctOfDelta, 1)} of ΔCvr</div>
         <div class="contrib-chevron">▶</div>
       `;
 
@@ -1484,7 +1497,7 @@ function render(rawRows, filename) {
         row.querySelector('.contrib-chevron').textContent = open ? '▼' : '▶';
         if (open && !effectsPanel.dataset.loaded) {
           effectsPanel.dataset.loaded = '1';
-          renderEffects(effectsPanel, g, tDelta, tPrevConv);
+          renderEffects(effectsPanel, g, tCvrDelta, tDelta, tPrevConv);
         }
       });
 
@@ -2263,37 +2276,44 @@ function renderSessionVolume(cardId, rows, opts) {
 // ─────────────────────────────────────────────
 // EFFECTS PANEL + LP DRILL-DOWN
 // ─────────────────────────────────────────────
-function renderEffects(container, group, tDelta, tPrevConv) {
-  const maxEffAbs = group.effects.length > 0 ? Math.abs(group.effects[0].value) : 1;
+function renderEffects(container, group, tCvrDelta, tDelta, tPrevConv) {
+  const maxEffAbs = group.effects.length > 0 ? Math.abs(group.effects[0].value) : 1e-9;
   group.effects.forEach(e => {
     const barPct = Math.round(Math.abs(e.value) / maxEffAbs * 100);
-    const barColor = e.mixHarmful
-      ? 'var(--amber)'
-      : e.isMixShift
-        ? (e.value >= 0 ? 'var(--positive)' : 'var(--amber)')
-        : (e.value >= 0 ? 'var(--positive)' : 'var(--negative)');
-    const valCls = e.mixHarmful ? 'amb' : e.isMixShift ? (e.value >= 0 ? 'pos' : 'amb') : cls(e.value);
-    const pctOfDelta = tDelta !== 0 ? (e.value / tDelta * 100) : 0;
+    const barColor = e.value >= 0 ? 'var(--positive)' : 'var(--negative)';
+    const valCls = cls(e.value);
+    const pctOfDelta = tCvrDelta !== 0 ? (e.value / tCvrDelta * 100) : 0;
     const row = document.createElement('div');
     row.className = 'effect-row';
     row.innerHTML = `
       <div class="effect-type ${valCls}">${esc(e.typeLabel)}</div>
       <div class="effect-detail">${esc(e.detail)}</div>
       <div><div class="contrib-bar-wrap"><div class="contrib-bar" style="width:${barPct}%;background:${barColor}"></div></div></div>
-      <div class="contrib-val ${valCls}">${fmtS(Math.round(e.value))}</div>
-      <div class="contrib-pct">${fmtP(pctOfDelta, 1)} of total Δ</div>
+      <div class="contrib-val ${valCls}">${fmtPP(e.value * 100)}</div>
+      <div class="contrib-pct">${fmtP(pctOfDelta, 1)} of ΔCvr</div>
     `;
     container.appendChild(row);
   });
 
+  // Summary line — explicit within + between = total for the user
+  const summary = document.createElement('div');
+  summary.className = 'effect-summary';
+  summary.innerHTML = `
+    <strong>Total CVR Impact:</strong>
+    <span class="${cls(group.cvrImpact)}">${fmtPP(group.cvrImpact * 100)}</span>
+    <span class="effect-summary__sub">(within ${fmtPP(group.withinCvr * 100)} + between ${fmtPP(group.betweenCvr * 100)})</span>
+    <span class="effect-summary__txn">· This campaign's txn change was <span class="${cls(group.txnDelta)}">${fmtS(Math.round(group.txnDelta))}</span></span>
+  `;
+  container.appendChild(summary);
+
   const lpBtn = document.createElement('button');
   lpBtn.className = 'lp-btn';
-  lpBtn.textContent = '↳ Break down by landing page';
+  lpBtn.textContent = '↳ Break down by landing page (txn view)';
   const drillDiv = document.createElement('div');
   drillDiv.className = 'drill-panel';
   lpBtn.addEventListener('click', () => {
     const open = drillDiv.classList.toggle('open');
-    lpBtn.textContent = open ? '↑ Hide landing pages' : '↳ Break down by landing page';
+    lpBtn.textContent = open ? '↑ Hide landing pages' : '↳ Break down by landing page (txn view)';
     if (open && !drillDiv.dataset.loaded) {
       drillDiv.dataset.loaded = '1';
       renderDrillDown(drillDiv, group.campaign, tDelta, tPrevConv);
