@@ -389,6 +389,8 @@
       text-align: right; font-size: 0.78rem; color: var(--text-secondary); white-space: nowrap;
     }
     .contrib-stat strong { display: block; font-size: 0.82rem; color: var(--text-primary); font-weight: 600; }
+    .contrib-stat.pos strong { color: var(--positive); }
+    .contrib-stat.neg strong { color: var(--negative); }
     .contrib-bar-wrap { height: 8px; background: var(--neutral-bg); border-radius: 4px; overflow: hidden; }
     .contrib-bar { height: 100%; border-radius: 4px; min-width: 2px; }
     .contrib-val { text-align: right; font-weight: 700; font-size: 0.9rem; }
@@ -398,8 +400,8 @@
     /* Contributors sticky header */
     .contrib-header {
       display: grid;
-      grid-template-columns: 210px 52px 52px 52px 1fr 90px 80px 20px;
-      gap: 10px;
+      grid-template-columns: 200px 50px 50px 58px 50px 1fr 84px 72px 18px;
+      gap: 8px;
       padding: 6px 4px;
       font-size: 0.68rem;
       font-weight: 700;
@@ -413,15 +415,33 @@
       z-index: 10;
     }
     .contrib-header .r { text-align: right; }
+    .contrib-header .sort-h {
+      cursor: pointer;
+      user-select: none;
+      border-radius: 3px;
+      padding: 2px 4px;
+      transition: background 0.12s, color 0.12s;
+    }
+    .contrib-header .sort-h:hover { background: #eef3ff; color: var(--fb-blue); }
+    .contrib-header .sort-h--active {
+      color: var(--fb-blue);
+      background: #e7effe;
+    }
+    .contrib-header .sort-arrow {
+      display: inline-block;
+      margin-left: 2px;
+      font-size: 0.62rem;
+      vertical-align: baseline;
+    }
 
     /* Source rows — one per utm_source */
     .source-wrap { border-bottom: 1px solid var(--border); }
     .source-wrap:last-child { border-bottom: none; }
     .source-row {
       display: grid;
-      grid-template-columns: 210px 52px 52px 52px 1fr 90px 80px 20px;
+      grid-template-columns: 200px 50px 50px 58px 50px 1fr 84px 72px 18px;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
       padding: 11px 4px;
       cursor: pointer;
       user-select: none;
@@ -443,7 +463,7 @@
     .source-wrap.open .effects-panel { display: block; }
     .effect-row {
       display: grid;
-      grid-template-columns: 150px 1fr 130px 65px 80px;
+      grid-template-columns: 180px 1fr 130px 65px 80px;
       align-items: center;
       gap: 10px;
       padding: 5px 0;
@@ -451,8 +471,24 @@
       font-size: 0.78rem;
     }
     .effect-row:first-child { border-top: none; }
-    .effect-type { font-weight: 600; white-space: nowrap; }
-    .effect-detail { font-size: 0.73rem; color: var(--text-secondary); }
+    .effect-type { font-weight: 600; line-height: 1.25; }
+    .effect-detail { font-size: 0.73rem; color: var(--text-secondary); line-height: 1.3; }
+    .effect-summary {
+      margin-top: 6px;
+      padding: 8px 12px;
+      background: #eef3ff;
+      border-radius: 5px;
+      font-size: 0.8rem;
+      color: var(--text-primary);
+    }
+    .effect-summary strong { font-weight: 700; }
+    .effect-summary__sub { color: var(--text-secondary); margin-left: 4px; }
+    .effect-summary__txn {
+      display: block;
+      font-size: 0.74rem;
+      color: var(--text-secondary);
+      margin-top: 3px;
+    }
 
     /* Landing page button & drill-down */
     .lp-btn {
@@ -537,6 +573,60 @@
     .cvr-divider {
       position: absolute; top: -2px; bottom: -2px; width: 1px;
       background: var(--text-secondary); opacity: 0.3;
+    }
+    .cvr-chart-row--clickable {
+      cursor: pointer;
+      transition: background 0.12s;
+    }
+    .cvr-chart-row--clickable:hover { background: #f4f7fb; }
+    .cvr-chev {
+      display: inline-block;
+      width: 10px;
+      font-size: 0.62rem;
+      color: var(--text-secondary);
+      flex-shrink: 0;
+      user-select: none;
+    }
+    .cvr-chart-row--open { background: #f4f7fb; }
+    .cvr-chart-row--open .cvr-chev { color: var(--fb-blue); }
+    .cvr-drill-panel {
+      display: none;
+      border-bottom: 1px solid var(--border);
+      background: #fafbfd;
+      padding: 4px 0 10px 28px;
+    }
+    .cvr-drill-panel.open { display: block; }
+    .cvr-drill-heading {
+      font-size: 0.68rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-secondary);
+      padding: 8px 0 6px;
+    }
+    .cvr-drill-row {
+      display: grid;
+      grid-template-columns: 200px 60px 1fr 60px 60px;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 0;
+      border-top: 1px solid #e8edf5;
+      font-size: 0.76rem;
+    }
+    .cvr-drill-row .r { text-align: right; }
+    .cvr-drill-lp {
+      font-family: Menlo, Monaco, monospace;
+      font-size: 0.72rem;
+      color: var(--text-primary);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .cvr-drill-empty {
+      font-size: 0.78rem;
+      color: var(--text-secondary);
+      padding: 12px 4px;
+      font-style: italic;
     }
 
     /* Session volume chart */
@@ -647,38 +737,112 @@
     .mix-stat__value { font-size: 1.3rem; font-weight: 700; }
     .mix-stat__sub { font-size: 0.78rem; color: var(--text-secondary); margin-top: 2px; }
     .mix-waterfall {
-      display: flex; align-items: flex-end; gap: 0;
-      height: 120px; border-bottom: 2px solid var(--border);
-      margin-bottom: 8px; position: relative;
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr 1fr;
+      height: 140px;
+      border-bottom: 2px solid var(--border);
+      position: relative;
     }
     .mix-wf-bar {
-      flex: 1; display: flex; flex-direction: column;
-      align-items: center; justify-content: flex-end; position: relative;
+      position: relative;
     }
     .mix-wf-fill {
-      width: 60%; border-radius: 3px 3px 0 0; min-height: 2px;
-      transition: height 0.3s;
+      position: absolute;
+      left: 20%; right: 20%;
+      border-radius: 3px;
+      min-height: 2px;
+      transition: all 0.3s;
     }
-    .mix-wf-label {
-      font-size: 0.68rem; font-weight: 600; margin-top: 6px;
-      text-align: center; color: var(--text-secondary);
-    }
+    .mix-wf-fill--grounded { border-radius: 3px 3px 0 0; }
     .mix-wf-val {
-      font-size: 0.72rem; font-weight: 700; margin-bottom: 3px;
+      position: absolute;
+      left: 0; right: 0;
+      text-align: center;
+      font-size: 0.72rem; font-weight: 700;
+      white-space: nowrap;
+      line-height: 1;
     }
     .mix-wf-connector {
-      position: absolute; top: 0; left: 80%; width: 1px;
-      border-left: 1px dashed var(--border);
+      position: absolute;
+      border-top: 1px dashed rgba(120, 128, 145, 0.5);
+      pointer-events: none;
+    }
+    .mix-wf-labels {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr 1fr;
+      font-size: 0.68rem; font-weight: 600;
+      text-align: center;
+      color: var(--text-secondary);
+      margin: 8px 0 4px;
+    }
+    .mix-wf-axisnote {
+      font-size: 0.68rem;
+      color: var(--text-secondary);
+      text-align: right;
+      font-style: italic;
+      margin: 2px 0 12px;
+      opacity: 0.75;
     }
     .mix-insight {
       background: #f7f9ff;
       border: 1px solid #dde4f7;
       border-radius: 6px;
-      padding: 14px 16px;
-      font-size: 0.85rem;
-      line-height: 1.6;
+      padding: 14px 18px;
+      font-size: 0.88rem;
+      line-height: 1.55;
     }
     .mix-insight strong { color: var(--text-primary); }
+    .mix-insight__headline {
+      font-size: 1.02rem;
+      margin-bottom: 10px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #dde4f7;
+    }
+    .mix-insight__headline strong { font-weight: 700; }
+    .mix-insight__range {
+      color: var(--text-secondary);
+      font-weight: 500;
+      margin-left: 6px;
+    }
+    .mix-insight__forces { margin-bottom: 6px; }
+    .mix-insight__list {
+      list-style: none;
+      padding: 0;
+      margin: 0 0 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .mix-insight__list li {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 8px 10px;
+      background: #fff;
+      border-radius: 5px;
+      border: 1px solid #e6ebf5;
+    }
+    .mix-insight__list em {
+      color: var(--text-secondary);
+      font-style: normal;
+    }
+    .mix-insight__pill {
+      flex-shrink: 0;
+      min-width: 78px;
+      text-align: center;
+      font-weight: 700;
+      font-size: 0.82rem;
+      padding: 3px 8px;
+      border-radius: 4px;
+      background: #eef1f8;
+    }
+    .mix-insight__pill.pos { background: #e8f5ea; color: var(--positive); }
+    .mix-insight__pill.neg { background: #fdecec; color: var(--negative); }
+    .mix-insight__takeaway {
+      padding-top: 8px;
+      border-top: 1px solid #dde4f7;
+      color: var(--text-primary);
+    }
 
     /* Correlation card */
     .corr-summary {
@@ -891,16 +1055,17 @@
 
     <!-- Ranked contributors -->
     <div class="card breakdown-card">
-      <h3>Top Contributors to Conversion Change</h3>
-      <p class="card__sub">Each row is one utm_source, ranked by absolute impact on transactions. <strong>Txns</strong> = this source's actual current-period transactions. <strong>Conv. Δ</strong> = how much this source's changes contributed to the <em>overall</em> conversion delta (can differ significantly from Txns). Dot = channel group.</p>
+      <h3>Top Contributors to Blended CVR Change</h3>
+      <p class="card__sub">Each row is one utm_source. <strong>CVR Impact</strong> = this source's contribution (in pp) to the total blended CVR change for this data pull. Decomposed into: (a) <strong>own CVR effect</strong> — <em>prevShare × ΔCvr</em> (the source's own CVR movement, weighted by its baseline traffic share); plus (b) <strong>share-shift effect</strong> — <em>ΔShare × (currCvr − blended avg)</em> (gaining/losing share at a CVR above or below the blended average). Sums across all sources to the overall blended ΔCvr. Negative = dragged blended CVR down. So a below-average source whose CVR drops <em>and</em> gains share compounds on both terms. Dot = channel group. <em>Click a column header to sort.</em></p>
       <div class="contrib-header">
-        <div>Source</div>
-        <div class="r">Sessions</div>
-        <div class="r">CVR</div>
-        <div class="r">Txns</div>
+        <div class="sort-h" data-sort="source">Source</div>
+        <div class="r sort-h" data-sort="sessions">Sessions</div>
+        <div class="r sort-h" data-sort="cvr">CVR</div>
+        <div class="r sort-h" data-sort="cvrDelta" title="Source's own CVR change in pp (current − previous)">CVR Δ</div>
+        <div class="r sort-h" data-sort="txns">Txns</div>
         <div>Impact</div>
-        <div class="r" title="Contribution to overall change in conversions (sessions effect + CVR effect + mix-shift). Not the same as current Txns.">Conv. Δ ⓘ</div>
-        <div class="r">% of Δ</div>
+        <div class="r sort-h" data-sort="cvrImpact" title="Contribution to blended CVR change (pp). Own CVR effect + share-shift effect. Sums to total blended ΔCvr. Negative = dragged blended CVR down.">CVR Impact ⓘ</div>
+        <div class="r">% of ΔCvr</div>
         <div></div>
       </div>
       <div id="contributors-list"></div>
@@ -920,9 +1085,9 @@
               <th class="r">Prev CVR</th>
               <th class="r">Curr CVR</th>
               <th class="r">Δ CVR (pp)</th>
-              <th class="r">Prev Conv.</th>
-              <th class="r">Curr Conv.</th>
-              <th class="r">Δ Conv.</th>
+              <th class="r">Prev Txns</th>
+              <th class="r">Curr Txns</th>
+              <th class="r">Δ Txn</th>
               <th class="r">Sessions Effect</th>
               <th class="r">CVR Effect</th>
               <th class="r">Interaction</th>
@@ -945,7 +1110,7 @@
               <th class="r">Curr Sessions</th>
               <th class="r">Prev CVR</th>
               <th class="r">Curr CVR</th>
-              <th class="r">Curr Conv.</th>
+              <th class="r">Curr Txns</th>
             </tr>
           </thead>
           <tbody id="raw-tbody"></tbody>
@@ -1247,91 +1412,80 @@ function render(rawRows, filename) {
     </div>
   `;
 
-  // ── Ranked contributors (per utm_source) ─────
-  const contributors = [];
-  rows.forEach(r => {
+  // ── Contributors (by source) — CVR-impact decomposition ──
+  // Each source's contribution to the TOTAL BLENDED CVR change splits cleanly
+  // into two parts that SUM across sources to the overall blended ΔCvr:
+  //   within  = prevShare × ΔCvr                   (own-CVR effect)
+  //   between = ΔShare × (currCvr − blendedCurr)   (share-shift vs current avg)
+  // Paasche-style shift-share. A source converting below the CURRENT blended
+  // average AND gaining share AND whose own CVR drops contributes twice — once
+  // through a negative within, once through a negative between.
+  const tCvrDelta = tCurrCvr - tPrevCvr;
+  const sourceGroups = rows.map(r => {
     const d = decompose(r.prevSess, r.prevCvr, r.currS, r.currC);
     const srcLabel = r.source || '(direct / none)';
-    // above-average CVR vs blended prev benchmark
-    const aboveAvg = r.prevCvr > tPrevCvr;
-    // mix-shift: how much of this source's sessions change contributed to the
-    // overall CVR moving, purely due to composition (dS × (srcCVR − blendedCVR))
-    const mixShift = d.dS * (r.prevCvr - tPrevCvr);
+    const currShare = tCurrS > 0 ? r.currS / tCurrS : 0;
+    const prevShare = tPrevS > 0 ? r.prevSess / tPrevS : 0;
+    const dShare = currShare - prevShare;
+    const cvrGapToCurrAvg = r.currC - tCurrCvr;
+    const withinCvr  = prevShare * d.dC;
+    const betweenCvr = dShare * cvrGapToCurrAvg;
+    const cvrImpact  = withinCvr + betweenCvr;
 
-    if (d.sessEffect !== 0) {
-      // Amber when a high-CVR source loses sessions (hurts blended CVR via mix)
-      // or a low-CVR source gains sessions (also hurts blended CVR via mix)
-      const mixHarmful = (aboveAvg && d.dS < 0) || (!aboveAvg && d.dS > 0);
-      contributors.push({
-        source: srcLabel, channel: r.channel, currS: r.currS, currC: r.currC,
-        aboveAvg, prevCvr: r.prevCvr, blendedCvr: tPrevCvr,
-        typeLabel: d.dS >= 0 ? 'Sessions Increase' : 'Sessions Decrease',
-        mixHarmful,
-        value: d.sessEffect,
-        detail: `${fmtS(Math.round(d.dS))} sessions (${fmtP(r.prevSess > 0 ? d.dS / r.prevSess * 100 : 0, 1)})`,
+    const effects = [];
+    if (Math.abs(withinCvr) > 1e-7) {
+      effects.push({
+        typeLabel: d.dC > 0 ? 'Own CVR ↑' : 'Own CVR ↓',
+        value: withinCvr,
+        detail: `${(prevShare*100).toFixed(1)}% share × ${fmtPP(d.dC*100)} (${(r.prevCvr*100).toFixed(2)}% → ${(r.currC*100).toFixed(2)}%)`,
       });
     }
-    if (d.cvrEffect !== 0) {
-      contributors.push({
-        source: srcLabel, channel: r.channel, currS: r.currS, currC: r.currC,
-        aboveAvg, prevCvr: r.prevCvr, blendedCvr: tPrevCvr,
-        typeLabel: d.dC >= 0 ? 'CVR Increase' : 'CVR Decrease',
-        value: d.cvrEffect,
-        detail: `${fmtPP(d.dC * 100)} (${(r.prevCvr*100).toFixed(2)}% → ${(r.currC*100).toFixed(2)}%)`,
+    if (Math.abs(betweenCvr) > 1e-7) {
+      const gainedShare = dShare > 0;
+      const belowCurrAvg = cvrGapToCurrAvg < 0;
+      const harmful = (gainedShare && belowCurrAvg) || (!gainedShare && !belowCurrAvg);
+      const direction = gainedShare ? 'Gained' : 'Lost';
+      const position = belowCurrAvg ? 'below-avg' : 'above-avg';
+      effects.push({
+        typeLabel: `${direction} ${position} share${harmful ? ' ⚠' : ''}`,
+        value: betweenCvr,
+        detail: `${fmtPP(dShare*100)} share Δ × (${(r.currC*100).toFixed(2)}% − ${(tCurrCvr*100).toFixed(2)}% avg)`,
       });
     }
-    if (Math.abs(d.interaction) > 0.5) {
-      contributors.push({
-        source: srcLabel, channel: r.channel, currS: r.currS, currC: r.currC,
-        aboveAvg, prevCvr: r.prevCvr, blendedCvr: tPrevCvr,
-        typeLabel: 'Interaction Effect',
-        value: d.interaction,
-        detail: `${fmtS(Math.round(d.dS))} sessions × ${fmtPP(d.dC * 100)} CVR`,
-      });
-    }
-    if (Math.abs(mixShift) > 0.5) {
-      // Positive mixShift = low-CVR source lost sessions (good: shed bad traffic, blended CVR improves)
-      //                   OR high-CVR source gained sessions (good: gained quality traffic)
-      // Negative mixShift = high-CVR source lost sessions (bad: lost quality traffic, blended CVR drops)
-      //                   OR low-CVR source gained sessions (bad: gained bad traffic, dilutes blended CVR)
-      contributors.push({
-        source: srcLabel, channel: r.channel, currS: r.currS, currC: r.currC,
-        aboveAvg, prevCvr: r.prevCvr, blendedCvr: tPrevCvr,
-        typeLabel: mixShift >= 0 ? 'Mix Improvement' : 'Mix Drag',
-        isMixShift: true,
-        value: mixShift,
-        detail: `CVR ${(r.prevCvr*100).toFixed(2)}% vs avg ${(tPrevCvr*100).toFixed(2)}% · ${fmtS(Math.round(d.dS))} sessions`,
-      });
-    }
-  });
-  contributors.sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
-
-  // ── Group contributors by source ─────────────
-  const sourceGroups = [];
-  const sourceMap = new Map();
-  contributors.forEach(c => {
-    let g = sourceMap.get(c.source);
-    if (!g) {
-      g = { source: c.source, channel: c.channel, currS: c.currS, currC: c.currC, effects: [], netValue: 0 };
-      sourceMap.set(c.source, g);
-      sourceGroups.push(g);
-    }
-    g.effects.push(c);
-    g.netValue += c.value;
-  });
-  sourceGroups.sort((a, b) => Math.abs(b.netValue) - Math.abs(a.netValue));
-  sourceGroups.forEach(g => {
-    g.primaryEffect = g.effects.reduce((best, e) => Math.abs(e.value) > Math.abs(best.value) ? e : best);
+    effects.sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
+    const primaryEffect = effects[0] || { typeLabel: 'No change', value: 0 };
+    return {
+      source: srcLabel,
+      channel: r.channel,
+      currS: r.currS,
+      currC: r.currC,
+      prevSess: r.prevSess,
+      prevCvr: r.prevCvr,
+      currShare,
+      prevShare,
+      deltaCvr: d.dC,
+      withinCvr,
+      betweenCvr,
+      cvrImpact,
+      txnDelta: d.totalDelta,
+      effects,
+      primaryEffect,
+    };
   });
 
-  // Headline — reference top source's net impact
-  const topGroup = sourceGroups[0];
+  // Headline — transaction-focused top-level summary. "Largest driver" picks
+  // the source that moved transactions the most (|txnDelta|), independent of
+  // the CVR-impact sort the contributors card uses.
+  const topGroup = sourceGroups.length > 0
+    ? sourceGroups.reduce((best, g) => Math.abs(g.txnDelta) > Math.abs(best.txnDelta) ? g : best)
+    : null;
   const headlineCard = document.getElementById('headline-card');
   const direction = tDelta >= 0 ? 'increased' : 'decreased';
   headlineCard.className = 'card headline-card ' + (tDelta >= 0 ? 'up' : 'down');
-  const topDesc = topGroup
-    ? `Largest driver: ${topGroup.primaryEffect.typeLabel} from ${topGroup.source} (Conv. Δ: ${fmtS(Math.round(topGroup.netValue))}).`
+  const topTxnDriver = topGroup && Math.abs(topGroup.txnDelta) > 0.5
+    ? `${topGroup.source} (Txn Δ: ${fmtS(Math.round(topGroup.txnDelta))})`
     : '';
+  const topDesc = topTxnDriver ? `Largest transaction driver: ${topTxnDriver}.` : '';
   headlineCard.innerHTML = `
     <h3>Overall transactions ${direction} by ${fmtS(Math.round(tDelta))} (${fmtP(txnPct, 1)})</h3>
     <p>${esc(topDesc)}</p>
@@ -1352,65 +1506,121 @@ function render(rawRows, filename) {
   // ── Duration ↔ CVR Correlation (uses LP-level Shopify data) ──
   renderCorrelation(_correlationData);
 
-  // Source rows — one per utm_source, expand to see effect breakdown
-  const maxNetAbs = sourceGroups.length > 0 ? Math.abs(sourceGroups[0].netValue) : 1;
+  // Contributors list — supports clickable header sorting.
   const contribList = document.getElementById('contributors-list');
-  contribList.innerHTML = '';
+  const sortKeyFns = {
+    source:    g => g.source.toLowerCase(),
+    sessions:  g => g.currS,
+    cvr:       g => g.currC,
+    cvrDelta:  g => Math.abs(g.deltaCvr),
+    txns:      g => g.currS * g.currC,
+    cvrImpact: g => g.cvrImpact,
+  };
+  // cvrImpact default 'asc' so the biggest blended-CVR draggers surface at top.
+  const defaultDir = { source: 'asc', sessions: 'desc', cvr: 'desc', cvrDelta: 'desc', txns: 'desc', cvrImpact: 'asc' };
+  let sortKey = 'cvrImpact';
+  let sortDir = 'asc';
 
-  sourceGroups.forEach(g => {
-    const barPct = Math.round(Math.abs(g.netValue) / maxNetAbs * 100);
-    const netColor = g.netValue >= 0 ? 'var(--positive)' : 'var(--negative)';
-    const pctOfDelta = tDelta !== 0 ? (g.netValue / tDelta * 100) : 0;
-
-    const cvrVsAvg = g.currC - tCurrCvr;
-    const cvrBadge = isFinite(cvrVsAvg) && Math.abs(cvrVsAvg) > 0.0001
-      ? `<span class="cvr-badge ${cvrVsAvg > 0 ? 'cvr-badge--hi' : 'cvr-badge--lo'}" title="CVR vs avg ${(tCurrCvr*100).toFixed(2)}%">${cvrVsAvg > 0 ? '↑' : '↓'} ${Math.abs(cvrVsAvg*100).toFixed(2)}pp vs avg</span>`
-      : '';
-
-    const shortSrc = g.source.length > 26 ? g.source.slice(0, 24) + '…' : g.source;
-    const wrap = document.createElement('div');
-    wrap.className = 'source-wrap';
-
-    const row = document.createElement('div');
-    row.className = 'source-row';
-    row.title = 'Click to see effect breakdown';
-    row.innerHTML = `
-      <div class="source-label" title="${esc(g.source)}">
-        <span class="ch-dot" style="background:${esc(chColor(g.channel))}"></span>
-        <div>
-          <div>${esc(shortSrc)}${cvrBadge}</div>
-          <div class="source-driver">${esc(g.primaryEffect.typeLabel)}</div>
-        </div>
-      </div>
-      <div class="contrib-stat"><strong>${esc(fmtK(g.currS))}</strong>sess</div>
-      <div class="contrib-stat"><strong>${(g.currC*100).toFixed(2)}%</strong>CVR</div>
-      <div class="contrib-stat"><strong>${esc(fmtK(Math.round(g.currS * g.currC)))}</strong>txns</div>
-      <div>
-        <div class="contrib-bar-wrap">
-          <div class="contrib-bar" style="width:${barPct}%;background:${netColor}"></div>
-        </div>
-      </div>
-      <div class="contrib-val ${cls(g.netValue)}" title="Conv. Δ: this source's net contribution to the overall change in conversions (≠ current Txns)">${fmtS(Math.round(g.netValue))}</div>
-      <div class="contrib-pct ${cls(g.netValue)}">${fmtP(pctOfDelta, 1)} of Δ</div>
-      <div class="contrib-chevron">▶</div>
-    `;
-
-    const effectsPanel = document.createElement('div');
-    effectsPanel.className = 'effects-panel';
-
-    row.addEventListener('click', () => {
-      const open = wrap.classList.toggle('open');
-      row.querySelector('.contrib-chevron').textContent = open ? '▼' : '▶';
-      if (open && !effectsPanel.dataset.loaded) {
-        effectsPanel.dataset.loaded = '1';
-        renderEffects(effectsPanel, g, tDelta, tPrevConv);
-      }
+  const renderContributorsList = () => {
+    const keyFn = sortKeyFns[sortKey] || sortKeyFns.cvrImpact;
+    const dirMul = sortDir === 'desc' ? -1 : 1;
+    const sorted = [...sourceGroups].sort((a, b) => {
+      const va = keyFn(a), vb = keyFn(b);
+      if (typeof va === 'string') return va.localeCompare(vb) * dirMul;
+      return (va - vb) * dirMul;
     });
 
-    wrap.appendChild(row);
-    wrap.appendChild(effectsPanel);
-    contribList.appendChild(wrap);
+    const maxImpactAbs = sorted.reduce((m, g) => Math.max(m, Math.abs(g.cvrImpact)), 1e-9);
+    contribList.innerHTML = '';
+
+    sorted.forEach(g => {
+      const barPct = Math.round(Math.abs(g.cvrImpact) / maxImpactAbs * 100);
+      const impactColor = g.cvrImpact >= 0 ? 'var(--positive)' : 'var(--negative)';
+      const pctOfDelta = tCvrDelta !== 0 ? (g.cvrImpact / tCvrDelta * 100) : 0;
+
+      const cvrVsAvg = g.currC - tCurrCvr;
+      const cvrBadge = isFinite(cvrVsAvg) && Math.abs(cvrVsAvg) > 0.0001
+        ? `<span class="cvr-badge ${cvrVsAvg > 0 ? 'cvr-badge--hi' : 'cvr-badge--lo'}" title="CVR vs avg ${(tCurrCvr*100).toFixed(2)}%">${cvrVsAvg > 0 ? '↑' : '↓'} ${Math.abs(cvrVsAvg*100).toFixed(2)}pp vs avg</span>`
+        : '';
+
+      const shortSrc = g.source.length > 26 ? g.source.slice(0, 24) + '…' : g.source;
+      const wrap = document.createElement('div');
+      wrap.className = 'source-wrap';
+      const row = document.createElement('div');
+      row.className = 'source-row';
+      row.title = 'Click to see within/between decomposition';
+      row.innerHTML = `
+        <div class="source-label" title="${esc(g.source)}">
+          <span class="ch-dot" style="background:${esc(chColor(g.channel))}"></span>
+          <div>
+            <div>${esc(shortSrc)}${cvrBadge}</div>
+            <div class="source-driver">${esc(g.primaryEffect.typeLabel)}</div>
+          </div>
+        </div>
+        <div class="contrib-stat"><strong>${esc(fmtK(g.currS))}</strong>sess</div>
+        <div class="contrib-stat"><strong>${(g.currC*100).toFixed(2)}%</strong>CVR</div>
+        <div class="contrib-stat ${cls(g.deltaCvr)}" title="This source's own CVR change (${(g.prevCvr*100).toFixed(2)}% → ${(g.currC*100).toFixed(2)}%)"><strong>${fmtPP(g.deltaCvr*100)}</strong></div>
+        <div class="contrib-stat"><strong>${esc(fmtK(Math.round(g.currS * g.currC)))}</strong>txns</div>
+        <div>
+          <div class="contrib-bar-wrap">
+            <div class="contrib-bar" style="width:${barPct}%;background:${impactColor}"></div>
+          </div>
+        </div>
+        <div class="contrib-val ${cls(g.cvrImpact)}" title="Within (own CVR): ${fmtPP(g.withinCvr*100)} + Between (share-shift): ${fmtPP(g.betweenCvr*100)} = ${fmtPP(g.cvrImpact*100)}. Sums across all sources to total blended ΔCvr of ${fmtPP(tCvrDelta*100)}.">${fmtPP(g.cvrImpact*100)}</div>
+        <div class="contrib-pct ${cls(g.cvrImpact)}">${fmtP(pctOfDelta, 1)} of ΔCvr</div>
+        <div class="contrib-chevron">▶</div>
+      `;
+
+      const effectsPanel = document.createElement('div');
+      effectsPanel.className = 'effects-panel';
+
+      row.addEventListener('click', () => {
+        const open = wrap.classList.toggle('open');
+        row.querySelector('.contrib-chevron').textContent = open ? '▼' : '▶';
+        if (open && !effectsPanel.dataset.loaded) {
+          effectsPanel.dataset.loaded = '1';
+          renderEffects(effectsPanel, g, tCvrDelta, tDelta, tPrevConv);
+        }
+      });
+
+      wrap.appendChild(row);
+      wrap.appendChild(effectsPanel);
+      contribList.appendChild(wrap);
+    });
+
+    document.querySelectorAll('.contrib-header .sort-h').forEach(h => {
+      const active = h.dataset.sort === sortKey;
+      h.classList.toggle('sort-h--active', active);
+      const existingArrow = h.querySelector('.sort-arrow');
+      if (existingArrow) existingArrow.remove();
+      if (active) {
+        const arrow = document.createElement('span');
+        arrow.className = 'sort-arrow';
+        arrow.textContent = sortDir === 'desc' ? '▼' : '▲';
+        h.appendChild(arrow);
+      }
+    });
+  };
+
+  // Clone header cells so any listeners bound by a previous render are dropped,
+  // then attach fresh handlers closed over the current sourceGroups.
+  document.querySelectorAll('.contrib-header .sort-h').forEach(oldH => {
+    const h = oldH.cloneNode(true);
+    oldH.replaceWith(h);
+    h.addEventListener('click', () => {
+      const key = h.dataset.sort;
+      if (!sortKeyFns[key]) return;
+      if (sortKey === key) {
+        sortDir = sortDir === 'desc' ? 'asc' : 'desc';
+      } else {
+        sortKey = key;
+        sortDir = defaultDir[key] || 'desc';
+      }
+      renderContributorsList();
+    });
   });
+
+  renderContributorsList();
 
   // Breakdown table
   const tbody = document.getElementById('breakdown-tbody');
@@ -1553,18 +1763,14 @@ function makeCardsCollapsible() {
 // ─────────────────────────────────────────────
 function renderCvrMovement(rows, blendedPrev, blendedCurr) {
   const card = document.getElementById('cvr-movement-card');
-  // Only sources with meaningful sessions
   const minSess = 20;
   const qualified = rows.filter(r => r.prevSess >= minSess || r.currS >= minSess);
-  // Sort by current transactions descending (highest first)
   const sorted = [...qualified].sort((a, b) => (b.currS * b.currC) - (a.currS * a.currC));
-
-  // Find max absolute CVR change for bar scaling
   const maxAbsDelta = Math.max(...sorted.map(r => Math.abs(r.currC - r.prevCvr)), 0.001);
 
   let html = `
     <h3>CVR Movement by Source</h3>
-    <p class="card__sub">Each row shows how a source's CVR changed. Sorted by transactions (highest first). Bar length = magnitude of CVR change.</p>
+    <p class="card__sub">Each row shows how a source's CVR changed. Sorted by transactions (highest first). Bar length = magnitude of CVR change. <em style="color:var(--text-secondary)">· click a row to break down by landing page</em></p>
     <div class="cvr-chart">
       <div class="cvr-chart-row cvr-chart-row--header">
         <div>Source</div>
@@ -1574,27 +1780,25 @@ function renderCvrMovement(rows, blendedPrev, blendedCurr) {
         <div class="r">Txns</div>
       </div>`;
 
-  sorted.forEach(r => {
+  sorted.forEach((r, idx) => {
     const srcLabel = r.source || '(direct / none)';
     const shortSrc = srcLabel.length > 22 ? srcLabel.slice(0, 20) + '…' : srcLabel;
     const delta = r.currC - r.prevCvr;
     const deltaPP = delta * 100;
-    const barWidthPct = Math.round(Math.abs(delta) / maxAbsDelta * 45); // max 45% of cell width
+    const barWidthPct = Math.round(Math.abs(delta) / maxAbsDelta * 45);
     const isPositive = delta >= 0;
     const barColor = isPositive ? 'var(--positive)' : 'var(--negative)';
-    const labelColor = isPositive ? 'var(--positive)' : 'var(--negative)';
-
-    // Bar goes left of center for negative, right for positive
     const barStyle = isPositive
       ? `left:50%;width:${barWidthPct}%`
       : `right:50%;width:${barWidthPct}%`;
     const labelStyle = isPositive
-      ? `left:calc(50% + ${barWidthPct}% + 4px);color:${labelColor}`
-      : `right:calc(50% + ${barWidthPct}% + 4px);color:${labelColor}`;
+      ? `left:calc(50% + ${barWidthPct}% + 4px);color:${barColor}`
+      : `right:calc(50% + ${barWidthPct}% + 4px);color:${barColor}`;
 
     html += `
-      <div class="cvr-chart-row">
+      <div class="cvr-chart-row cvr-chart-row--clickable" data-drill-idx="${idx}">
         <div class="cvr-src-label" title="${esc(srcLabel)}">
+          <span class="cvr-chev">▶</span>
           <span class="ch-dot" style="background:${esc(chColor(r.channel))}"></span>
           ${esc(shortSrc)}
         </div>
@@ -1608,11 +1812,72 @@ function renderCvrMovement(rows, blendedPrev, blendedCurr) {
         </div>
         <div class="r" style="font-size:0.78rem">${(r.currC * 100).toFixed(2)}%</div>
         <div class="r" style="font-size:0.78rem;font-weight:600">${fmtN(Math.round(r.currS * r.currC))}</div>
-      </div>`;
+      </div>
+      <div class="cvr-drill-panel" data-drill-panel="${idx}"></div>`;
   });
 
   html += '</div>';
   card.innerHTML = html;
+
+  card.querySelectorAll('.cvr-chart-row--clickable').forEach(row => {
+    row.addEventListener('click', () => {
+      const idx = row.dataset.drillIdx;
+      const panel = card.querySelector(`.cvr-drill-panel[data-drill-panel="${idx}"]`);
+      if (!panel) return;
+      const isOpen = panel.classList.toggle('open');
+      row.classList.toggle('cvr-chart-row--open', isOpen);
+      const chev = row.querySelector('.cvr-chev');
+      if (chev) chev.textContent = isOpen ? '▼' : '▶';
+      if (isOpen && !panel.dataset.loaded) {
+        panel.dataset.loaded = '1';
+        panel.innerHTML = buildLpDrilldownHtml(sorted[idx].source);
+      }
+    });
+  });
+}
+
+function buildLpDrilldownHtml(sourceKey) {
+  const source = sourceKey || '(direct / none)';
+  const lpRows = aggregateByLp(_rawRows, source)
+    .filter(r => r.prevSess >= 5 || r.currS >= 5);
+  const sorted = [...lpRows].sort((a, b) => (b.currS * b.currC) - (a.currS * a.currC));
+
+  if (sorted.length === 0) {
+    return '<div class="cvr-drill-empty">No landing pages with ≥5 sessions for this source.</div>';
+  }
+
+  const maxAbsDelta = Math.max(...sorted.map(r => Math.abs(r.currC - r.prevCvr)), 0.001);
+  const rowsHtml = sorted.map(r => {
+    const label = r.lp || '(no path)';
+    const shortLabel = label.length > 32 ? label.slice(0, 30) + '…' : label;
+    const delta = r.currC - r.prevCvr;
+    const deltaPP = delta * 100;
+    const barWidthPct = Math.round(Math.abs(delta) / maxAbsDelta * 45);
+    const isPositive = delta >= 0;
+    const barColor = isPositive ? 'var(--positive)' : 'var(--negative)';
+    const barStyle = isPositive
+      ? `left:50%;width:${barWidthPct}%`
+      : `right:50%;width:${barWidthPct}%`;
+    const labelStyle = isPositive
+      ? `left:calc(50% + ${barWidthPct}% + 4px);color:${barColor}`
+      : `right:calc(50% + ${barWidthPct}% + 4px);color:${barColor}`;
+    return `
+      <div class="cvr-drill-row">
+        <div class="cvr-drill-lp" title="${esc(label)}">${esc(shortLabel)}</div>
+        <div class="r">${(r.prevCvr * 100).toFixed(2)}%</div>
+        <div class="cvr-bar-cell">
+          <div class="cvr-divider" style="left:50%"></div>
+          <div class="cvr-bar-track" style="${barStyle}">
+            <div class="cvr-bar-fill" style="width:100%;background:${barColor};border-radius:${isPositive ? '0 3px 3px 0' : '3px 0 0 3px'}"></div>
+          </div>
+          <div class="cvr-bar-label" style="${labelStyle}">${fmtPP(deltaPP)}</div>
+        </div>
+        <div class="r">${(r.currC * 100).toFixed(2)}%</div>
+        <div class="r" style="font-weight:600">${fmtN(Math.round(r.currS * r.currC))}</div>
+      </div>`;
+  }).join('');
+
+  return `<div class="cvr-drill-heading">Landing pages within this source · ${sorted.length}</div>${rowsHtml}`;
 }
 
 // ─────────────────────────────────────────────
@@ -1621,8 +1886,6 @@ function renderCvrMovement(rows, blendedPrev, blendedCurr) {
 function renderMixShift(rows, tPrevS, tCurrS, tPrevCvr, tCurrCvr) {
   const card = document.getElementById('mix-shift-card');
 
-  // Counterfactual: use current sessions but previous CVR for each source
-  // = "what would blended CVR be if only sessions changed?"
   let cfWeightedConv = 0;
   let cfTotalSess = 0;
   rows.forEach(r => {
@@ -1631,30 +1894,46 @@ function renderMixShift(rows, tPrevS, tCurrS, tPrevCvr, tCurrCvr) {
   });
   const counterfactualCvr = cfTotalSess > 0 ? cfWeightedConv / cfTotalSess : 0;
 
-  const actualDelta = tCurrCvr - tPrevCvr; // total CVR change
-  const mixComponent = counterfactualCvr - tPrevCvr; // portion from session mix shift
-  const pureComponent = tCurrCvr - counterfactualCvr; // portion from actual CVR changes
+  const actualDelta = tCurrCvr - tPrevCvr;
+  const mixComponent = counterfactualCvr - tPrevCvr;
+  const pureComponent = tCurrCvr - counterfactualCvr;
 
-  const mixPctOfDelta = actualDelta !== 0 ? (mixComponent / actualDelta * 100) : 0;
-  const purePctOfDelta = actualDelta !== 0 ? (pureComponent / actualDelta * 100) : 0;
-
-  // Waterfall: prev CVR → +mix shift → +pure CVR change → curr CVR
+  // Waterfall geometry — Prev & Actual are grounded columns; Mix Shift and
+  // Pure CVR Δ float between the cumulative CVR levels, so negative deltas
+  // visibly extend DOWNWARD from the prior level instead of growing from 0.
   const vals = [tPrevCvr, counterfactualCvr, tCurrCvr];
   const maxCvr = Math.max(...vals) * 100;
   const minCvr = Math.min(...vals) * 100;
   const range = Math.max(maxCvr - minCvr, 0.1);
-  // Scale bars relative to a baseline near the minimum
   const barBase = Math.max(0, minCvr - range * 0.3);
-  const barMax = maxCvr + range * 0.3;
+  const barMax  = maxCvr + range * 0.3;
   const barRange = barMax - barBase;
-  const barH = v => Math.max(2, ((v * 100 - barBase) / barRange) * 110);
+  const chartH = 110;
+  const yFromBase = v => Math.max(0, Math.min(chartH, ((v * 100 - barBase) / barRange) * chartH));
 
-  const dirWord = actualDelta >= 0 ? 'increase' : 'drop';
-  const mixDirWord = mixComponent >= 0 ? 'increase' : 'decrease';
+  const yPrev    = yFromBase(tPrevCvr);
+  const yCounter = yFromBase(counterfactualCvr);
+  const yCurr    = yFromBase(tCurrCvr);
 
-  let html = `
+  const mixBottom  = Math.min(yPrev, yCounter);
+  const mixH       = Math.max(2, Math.abs(yPrev - yCounter));
+  const mixColor   = mixComponent >= 0 ? 'var(--positive)' : 'var(--negative)';
+
+  const pureBottom = Math.min(yCounter, yCurr);
+  const pureH      = Math.max(2, Math.abs(yCounter - yCurr));
+  const pureColor  = pureComponent >= 0 ? 'var(--positive)' : 'var(--negative)';
+
+  const totalDirWord = actualDelta >= 0 ? 'rose' : 'fell';
+  const totalMag = (Math.abs(actualDelta) * 100).toFixed(2) + 'pp';
+  const mixArrow = mixComponent > 0 ? '↑ ' : mixComponent < 0 ? '↓ ' : '';
+  const pureArrow = pureComponent > 0 ? '↑ ' : pureComponent < 0 ? '↓ ' : '';
+  const opposing = mixComponent !== 0 && pureComponent !== 0 &&
+                   (mixComponent > 0) !== (pureComponent > 0);
+  const pureDominant = Math.abs(pureComponent) >= Math.abs(mixComponent);
+
+  card.innerHTML = `
     <h3>Mix-Shift Counterfactual</h3>
-    <p class="card__sub">If every source's CVR held constant day-over-day and <em>only</em> the session distribution changed, what would the blended CVR be?</p>
+    <p class="card__sub">Splits the blended-CVR change into two pieces: the part caused by <em>which sources got the sessions</em> (mix shift) and the part caused by <em>each source converting differently</em> (pure CVR change).</p>
 
     <div class="mix-summary">
       <div class="mix-stat">
@@ -1663,7 +1942,7 @@ function renderMixShift(rows, tPrevS, tCurrS, tPrevCvr, tCurrCvr) {
         <div class="mix-stat__sub">Baseline</div>
       </div>
       <div class="mix-stat">
-        <div class="mix-stat__label">Counterfactual CVR</div>
+        <div class="mix-stat__label">If Only Mix Changed</div>
         <div class="mix-stat__value ${cls(mixComponent)}">${(counterfactualCvr * 100).toFixed(2)}%</div>
         <div class="mix-stat__sub">${fmtPP(mixComponent * 100)} from mix shift alone</div>
       </div>
@@ -1676,40 +1955,68 @@ function renderMixShift(rows, tPrevS, tCurrS, tPrevCvr, tCurrCvr) {
 
     <div class="mix-waterfall">
       <div class="mix-wf-bar">
-        <div class="mix-wf-val">${(tPrevCvr * 100).toFixed(2)}%</div>
-        <div class="mix-wf-fill" style="height:${barH(tPrevCvr)}px;background:var(--fb-blue)"></div>
-        <div class="mix-wf-label">Prev CVR</div>
+        <div class="mix-wf-fill mix-wf-fill--grounded" style="bottom:0;height:${yPrev.toFixed(1)}px;background:var(--fb-blue)"></div>
+        <div class="mix-wf-val" style="bottom:${(yPrev + 4).toFixed(1)}px">${(tPrevCvr * 100).toFixed(2)}%</div>
       </div>
       <div class="mix-wf-bar">
-        <div class="mix-wf-val ${cls(mixComponent)}">${fmtPP(mixComponent * 100)}</div>
-        <div class="mix-wf-fill" style="height:${barH(counterfactualCvr)}px;background:${mixComponent >= 0 ? 'var(--positive)' : 'var(--amber)'}"></div>
-        <div class="mix-wf-label">+ Mix Shift</div>
+        <div class="mix-wf-fill" style="bottom:${mixBottom.toFixed(1)}px;height:${mixH.toFixed(1)}px;background:${mixColor}"></div>
+        <div class="mix-wf-val ${cls(mixComponent)}" style="bottom:${(mixBottom + mixH + 4).toFixed(1)}px">${mixArrow}${fmtPP(mixComponent * 100)}</div>
       </div>
       <div class="mix-wf-bar">
-        <div class="mix-wf-val ${cls(pureComponent)}">${fmtPP(pureComponent * 100)}</div>
-        <div class="mix-wf-fill" style="height:${barH(tCurrCvr)}px;background:${pureComponent >= 0 ? 'var(--positive)' : 'var(--negative)'}"></div>
-        <div class="mix-wf-label">+ Pure CVR Δ</div>
+        <div class="mix-wf-fill" style="bottom:${pureBottom.toFixed(1)}px;height:${pureH.toFixed(1)}px;background:${pureColor}"></div>
+        <div class="mix-wf-val ${cls(pureComponent)}" style="bottom:${(pureBottom + pureH + 4).toFixed(1)}px">${pureArrow}${fmtPP(pureComponent * 100)}</div>
       </div>
       <div class="mix-wf-bar">
-        <div class="mix-wf-val">${(tCurrCvr * 100).toFixed(2)}%</div>
-        <div class="mix-wf-fill" style="height:${barH(tCurrCvr)}px;background:var(--text-secondary)"></div>
-        <div class="mix-wf-label">Actual CVR</div>
+        <div class="mix-wf-fill mix-wf-fill--grounded" style="bottom:0;height:${yCurr.toFixed(1)}px;background:var(--text-secondary)"></div>
+        <div class="mix-wf-val" style="bottom:${(yCurr + 4).toFixed(1)}px">${(tCurrCvr * 100).toFixed(2)}%</div>
       </div>
+      <div class="mix-wf-connector" style="left:20%;right:70%;bottom:${yPrev.toFixed(1)}px"></div>
+      <div class="mix-wf-connector" style="left:45%;right:45%;bottom:${yCounter.toFixed(1)}px"></div>
+      <div class="mix-wf-connector" style="left:70%;right:20%;bottom:${yCurr.toFixed(1)}px"></div>
     </div>
+    <div class="mix-wf-labels">
+      <div>Prev CVR</div>
+      <div>Mix Shift Effect</div>
+      <div>Pure CVR Change</div>
+      <div>Actual CVR</div>
+    </div>
+    <div class="mix-wf-axisnote">Y-axis zoomed — bar heights exaggerate small pp differences</div>
 
     <div class="mix-insight">
-      <strong>Summary:</strong> The total CVR ${dirWord} was <strong>${fmtPP(Math.abs(actualDelta) * 100)}</strong>.<br>
-      <br>
-      <strong>Mix shift</strong> (sessions redistributing across sources with different CVRs) accounts for
-      <strong>${fmtPP(Math.abs(mixComponent) * 100)}</strong> — that's <strong>${Math.abs(mixPctOfDelta).toFixed(1)}%</strong> of the total ${dirWord}.
-      ${mixComponent !== 0 ? `The session mix alone would have caused a <strong>${mixDirWord}</strong> in blended CVR.` : ''}<br>
-      <br>
-      <strong>Pure CVR changes</strong> (sources actually converting better or worse) account for
-      <strong>${fmtPP(Math.abs(pureComponent) * 100)}</strong> — that's <strong>${Math.abs(purePctOfDelta).toFixed(1)}%</strong> of the total ${dirWord}.
+      <div class="mix-insight__headline">
+        Blended CVR <strong>${totalDirWord} ${totalMag}</strong>
+        <span class="mix-insight__range">(${(tPrevCvr * 100).toFixed(2)}% → ${(tCurrCvr * 100).toFixed(2)}%)</span>
+      </div>
+      <div class="mix-insight__forces">This breaks into two independent forces:</div>
+      <ul class="mix-insight__list">
+        <li>
+          <span class="mix-insight__pill ${cls(mixComponent)}">${mixArrow}${fmtPP(mixComponent * 100)}</span>
+          <strong>Mix shift</strong> — sessions flowed toward
+          ${mixComponent >= 0 ? 'higher-CVR' : 'lower-CVR'} sources.
+          <em>${mixComponent >= 0 ? 'Helped blended CVR.' : 'Hurt blended CVR.'}</em>
+        </li>
+        <li>
+          <span class="mix-insight__pill ${cls(pureComponent)}">${pureArrow}${fmtPP(pureComponent * 100)}</span>
+          <strong>Pure CVR change</strong> — sources themselves converted
+          ${pureComponent >= 0 ? 'better' : 'worse'} on average.
+          <em>${pureComponent >= 0 ? 'Helped blended CVR.' : 'Hurt blended CVR.'}</em>
+        </li>
+      </ul>
+      ${opposing ? `
+        <div class="mix-insight__takeaway">
+          <strong>Takeaway:</strong> The two forces pulled in opposite directions.
+          ${pureDominant
+            ? `Without the mix-shift ${mixComponent >= 0 ? 'tailwind' : 'headwind'}, blended CVR would have ${pureComponent >= 0 ? 'risen' : 'fallen'} <strong>${(Math.abs(pureComponent) * 100).toFixed(2)}pp</strong> instead of ${totalMag} — so <strong>source-level CVR is the dominant driver</strong> of the change.`
+            : `If every source's CVR had held constant, blended CVR would still have ${mixComponent >= 0 ? 'risen' : 'fallen'} <strong>${(Math.abs(mixComponent) * 100).toFixed(2)}pp</strong> from traffic redistribution alone — so <strong>mix shift is the dominant driver</strong> of the change.`}
+        </div>
+      ` : `
+        <div class="mix-insight__takeaway">
+          <strong>Takeaway:</strong> Both forces pushed in the same direction, so the ${totalDirWord === 'rose' ? 'gain' : 'drop'} reflects both
+          traffic redistribution and genuine per-source CVR movement.
+        </div>
+      `}
     </div>
   `;
-
-  card.innerHTML = html;
 }
 
 // ─────────────────────────────────────────────
@@ -1939,39 +2246,43 @@ function renderSessionVolume(rows, tDelta) {
 // ─────────────────────────────────────────────
 // EFFECTS PANEL: sessions / CVR / mix breakdown for one source
 // ─────────────────────────────────────────────
-function renderEffects(container, group, tDelta, tPrevConv) {
-  const maxEffAbs = group.effects.length > 0 ? Math.abs(group.effects[0].value) : 1;
-
+function renderEffects(container, group, tCvrDelta, tDelta, tPrevConv) {
+  const maxEffAbs = group.effects.length > 0 ? Math.abs(group.effects[0].value) : 1e-9;
   group.effects.forEach(e => {
     const barPct = Math.round(Math.abs(e.value) / maxEffAbs * 100);
-    const barColor = e.mixHarmful
-      ? 'var(--amber)'
-      : e.isMixShift
-        ? (e.value >= 0 ? 'var(--positive)' : 'var(--amber)')
-        : (e.value >= 0 ? 'var(--positive)' : 'var(--negative)');
-    const valCls = e.mixHarmful ? 'amb' : e.isMixShift ? (e.value >= 0 ? 'pos' : 'amb') : cls(e.value);
-    const pctOfDelta = tDelta !== 0 ? (e.value / tDelta * 100) : 0;
+    const barColor = e.value >= 0 ? 'var(--positive)' : 'var(--negative)';
+    const valCls = cls(e.value);
+    const pctOfDelta = tCvrDelta !== 0 ? (e.value / tCvrDelta * 100) : 0;
     const row = document.createElement('div');
     row.className = 'effect-row';
     row.innerHTML = `
       <div class="effect-type ${valCls}">${esc(e.typeLabel)}</div>
       <div class="effect-detail">${esc(e.detail)}</div>
       <div><div class="contrib-bar-wrap"><div class="contrib-bar" style="width:${barPct}%;background:${barColor}"></div></div></div>
-      <div class="contrib-val ${valCls}">${fmtS(Math.round(e.value))}</div>
-      <div class="contrib-pct">${fmtP(pctOfDelta, 1)} of total Δ</div>
+      <div class="contrib-val ${valCls}">${fmtPP(e.value * 100)}</div>
+      <div class="contrib-pct">${fmtP(pctOfDelta, 1)} of ΔCvr</div>
     `;
     container.appendChild(row);
   });
 
-  // Landing page drill-down button
+  const summary = document.createElement('div');
+  summary.className = 'effect-summary';
+  summary.innerHTML = `
+    <strong>Total CVR Impact:</strong>
+    <span class="${cls(group.cvrImpact)}">${fmtPP(group.cvrImpact * 100)}</span>
+    <span class="effect-summary__sub">(within ${fmtPP(group.withinCvr * 100)} + between ${fmtPP(group.betweenCvr * 100)})</span>
+    <span class="effect-summary__txn">· This source's txn change was <span class="${cls(group.txnDelta)}">${fmtS(Math.round(group.txnDelta))}</span></span>
+  `;
+  container.appendChild(summary);
+
   const lpBtn = document.createElement('button');
   lpBtn.className = 'lp-btn';
-  lpBtn.textContent = '↳ Break down by landing page';
+  lpBtn.textContent = '↳ Break down by landing page (txn view)';
   const drillDiv = document.createElement('div');
   drillDiv.className = 'drill-panel';
   lpBtn.addEventListener('click', () => {
     const open = drillDiv.classList.toggle('open');
-    lpBtn.textContent = open ? '↑ Hide landing pages' : '↳ Break down by landing page';
+    lpBtn.textContent = open ? '↑ Hide landing pages' : '↳ Break down by landing page (txn view)';
     if (open && !drillDiv.dataset.loaded) {
       drillDiv.dataset.loaded = '1';
       renderDrillDown(drillDiv, group.source, tDelta, tPrevConv);
