@@ -298,6 +298,27 @@
       letter-spacing: 0.05em;
       color: var(--text-secondary);
     }
+    .ad-lp-attr-vars {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 14px;
+      align-items: flex-end;
+      flex: 1 1 100%;
+    }
+    .ad-lp-attr-empty {
+      font-size: 0.78rem;
+      font-weight: 500;
+      text-transform: none;
+      letter-spacing: normal;
+      color: var(--text-secondary);
+    }
+    .ad-lp-attr-empty code {
+      background: var(--surface);
+      padding: 1px 4px;
+      border-radius: 3px;
+      border: 1px solid var(--border);
+      font-size: 0.75rem;
+    }
     .ad-lp-attr-filters select,
     .ad-lp-attr-filters input[type="text"] {
       padding: 4px 8px;
@@ -1203,27 +1224,11 @@
       <h3>Top Ad × Landing Page Combinations</h3>
       <p class="card__sub">Each row is one <code>utm_content</code> (ad name) paired with one <code>landing_page_path</code>. <em>Click an ad name to see all landing pages it sent traffic to; click a landing page to see all ads that sent traffic to it.</em> Use the filter row to slice by parsed ad-name variables (brand prefix, creator, URL slug, partnership flag, free-text token).</p>
       <div class="ad-lp-attr-filters" id="ad-lp-attr-filters">
-        <label>Brand
-          <select data-attr="brand"><option value="">All</option></select>
-        </label>
-        <label>Creator
-          <select data-attr="creator"><option value="">All</option></select>
-        </label>
-        <label>URL slug
-          <select data-attr="urlSlug"><option value="">All</option></select>
-        </label>
-        <label>Partnership
-          <select data-attr="partnership">
-            <option value="all">All</option>
-            <option value="yes">Partnership only</option>
-            <option value="no">Non-partnership</option>
-          </select>
-        </label>
-        <label>Token
-          <select data-attr="token"><option value="">All</option></select>
-        </label>
-        <label class="ad-lp-attr-filters__search">Contains
-          <input type="text" data-attr="search" placeholder="text in ad name…">
+        <div class="ad-lp-attr-vars" id="ad-lp-attr-vars">
+          <span class="ad-lp-attr-empty">Filter dropdowns will populate from <code>key:value</code> tokens parsed out of <code>utm_content</code> once data loads.</span>
+        </div>
+        <label class="ad-lp-attr-filters__search">contains
+          <input type="text" id="ad-lp-attr-search" placeholder="text in ad name…">
         </label>
         <button type="button" class="ad-lp-attr-reset" id="ad-lp-attr-reset" title="Reset all filters">Reset filters</button>
       </div>
@@ -2794,37 +2799,35 @@ function parseShopifyQL(data) {
 let _adLpRows = [];
 let _adLpFilter = null;          // null | { type: 'ad'|'lp', value: string }
 let _adLpSort = { key: 'sessions', dir: 'desc' };
-let _adLpAttrFilters = { brand: '', creator: '', urlSlug: '', partnership: 'all', token: '', search: '' };
+// Filter state — keyed by `var:<key>` for parsed variables, plus 'search' for
+// free-text. Empty string means "no filter for that key".
+let _adLpAttrFilters = {};
 const _adLpDefaultDir = { ad: 'asc', lp: 'asc', sessions: 'desc', prevSess: 'desc', cvr: 'desc', cvrDelta: 'desc', txns: 'desc' };
 
-// Parses a Meta utm_content/ad_name into structured variables. The team's ad
-// names are underscore-delimited, with conventional tokens like:
-//   {brand}_{format}_{concept}_{...}_url:{slug}            (in-house ads)
-//   {brand}_{...}:ext-{creator}_..._url:{slug}             (partnership ads)
-// We expose the high-signal ones as filter dimensions; everything else is
-// available via the generic "tokens" pool and free-text "contains" search.
+// Ad names follow a `key:value_key:value_...` convention, e.g.
+//   2026/02/14_batch:multi#0161a_stage:MOFU_medium:video-midform_style:Influencer_
+//   angle:Product_creator:philsmypharmacist_editor:Int-Lupe_file:...-catalog-2_
+//   url:HOMEPAGE_type:NetNew_notes:ext-creator_WL:External
+// Each underscore-segment with a `:` becomes a (key, value) pair. Segments
+// without `:` (e.g. the leading date) are kept as positional under a synthetic
+// "_pos<i>" key so they're still searchable. A key may legitimately appear
+// multiple times — we collect values into an array.
 function parseAdTokens(adName) {
-  if (!adName) return { brand: null, creator: null, urlSlug: null, isPartnership: false, tokens: [] };
-  const lower = adName.toLowerCase();
-
-  const isPartnership = lower.includes(':ext-')
-    || lower.includes('creator_wl:ext')
-    || /\bext[-_]creator\b/.test(lower);
-
-  const creator = (adName.match(/:ext-([^_:]+)/i) || [])[1] || null;
-  const urlSlug = (adName.match(/(?:^|[_:-])url[:_]([a-zA-Z0-9-]+)/i) || [])[1] || null;
-
-  // Brand = first underscore-segment if it looks like a short alpha prefix
-  const firstSeg = (adName.split('_')[0] || '').trim();
-  const brand = firstSeg && /^[a-z]{2,8}$/i.test(firstSeg) ? firstSeg.toLowerCase() : null;
-
-  // Tokens — clean segments excluding the special url:/ext- pieces
-  const tokens = adName.split('_')
-    .filter(s => !/^url[:_]/i.test(s))
-    .map(s => s.replace(/:ext-.*$/i, '').replace(/^ext[-_].*$/i, '').trim())
-    .filter(Boolean);
-
-  return { brand, creator, urlSlug, isPartnership, tokens };
+  const out = { vars: {}, raw: adName || '' };
+  if (!adName) return out;
+  const segments = adName.split('_');
+  segments.forEach((seg, i) => {
+    if (!seg) return;
+    const colon = seg.indexOf(':');
+    let key, val;
+    if (colon < 0) { key = `_pos${i}`; val = seg.trim(); }
+    else { key = seg.slice(0, colon).trim().toLowerCase(); val = seg.slice(colon + 1).trim(); }
+    if (!key || !val) return;
+    if (out.vars[key] == null) out.vars[key] = val;
+    else if (Array.isArray(out.vars[key])) out.vars[key].push(val);
+    else out.vars[key] = [out.vars[key], val];
+  });
+  return out;
 }
 
 function parseAdLpQL(data) {
@@ -2863,65 +2866,92 @@ function parseAdLpQL(data) {
   return out;
 }
 
+// Build a dropdown for every parsed ad-name key that has at least 2 distinct
+// values across the dataset. Keys are sorted by total sessions of rows that
+// include them (most-trafficked dimensions surface first); each value option
+// shows its session count so the busiest creators / stages / etc. float to
+// the top of the list.
 function populateAdLpAttrOptions() {
-  const wrap = document.getElementById('ad-lp-attr-filters');
+  const wrap = document.getElementById('ad-lp-attr-vars');
   if (!wrap) return;
 
-  // Aggregate distinct values weighted by sessions so the most-trafficked
-  // values surface first in each dropdown.
-  const sumBy = (keyFn) => {
-    const map = new Map();
-    _adLpRows.forEach(r => {
-      const ks = keyFn(r);
-      (Array.isArray(ks) ? ks : [ks]).forEach(k => {
-        if (!k) return;
-        map.set(k, (map.get(k) || 0) + r.currS);
-      });
-    });
-    return [...map.entries()]
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-      .map(([v, s]) => ({ value: v, sessions: s }));
-  };
+  // key → Map(value → sessions); also track per-key total
+  const byKey = new Map();
+  const keyTotals = new Map();
+  for (const r of _adLpRows) {
+    const vars = r.parsed?.vars || {};
+    for (const k of Object.keys(vars)) {
+      if (k.startsWith('_pos')) continue;          // hide positional pseudo-keys
+      const valList = Array.isArray(vars[k]) ? vars[k] : [vars[k]];
+      keyTotals.set(k, (keyTotals.get(k) || 0) + r.currS);
+      let vmap = byKey.get(k);
+      if (!vmap) { vmap = new Map(); byKey.set(k, vmap); }
+      for (const v of valList) vmap.set(v, (vmap.get(v) || 0) + r.currS);
+    }
+  }
 
-  const brands   = sumBy(r => r.parsed.brand);
-  const creators = sumBy(r => r.parsed.creator);
-  const slugs    = sumBy(r => r.parsed.urlSlug);
-  const tokens   = sumBy(r => r.parsed.tokens);
+  const keys = [...byKey.entries()]
+    .filter(([, vmap]) => vmap.size >= 2)
+    .map(([k, vmap]) => ({
+      key: k,
+      total: keyTotals.get(k) || 0,
+      values: [...vmap.entries()]
+        .sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))
+        .map(([value, sessions]) => ({ value, sessions })),
+    }))
+    .sort((a, b) => b.total - a.total || a.key.localeCompare(b.key));
 
-  const fillSelect = (sel, opts, allLabel = 'All') => {
-    const current = sel.value;
-    sel.innerHTML = `<option value="">${allLabel}</option>` +
-      opts.map(o => `<option value="${esc(o.value)}">${esc(o.value)} · ${fmtN(o.sessions)}</option>`).join('');
-    // Preserve current selection if still present
-    if (current && opts.some(o => o.value === current)) sel.value = current;
-  };
+  if (keys.length === 0) {
+    wrap.innerHTML = `<span class="ad-lp-attr-empty">No <code>key:value</code> tokens detected in <code>utm_content</code>. Use the <em>contains</em> search instead.</span>`;
+    return;
+  }
 
-  fillSelect(wrap.querySelector('select[data-attr="brand"]'), brands);
-  fillSelect(wrap.querySelector('select[data-attr="creator"]'), creators);
-  fillSelect(wrap.querySelector('select[data-attr="urlSlug"]'), slugs);
-  fillSelect(wrap.querySelector('select[data-attr="token"]'), tokens);
+  wrap.innerHTML = keys.map(({ key, values }) => {
+    const optsHtml = values.map(v =>
+      `<option value="${esc(v.value)}">${esc(v.value)} · ${fmtN(v.sessions)}</option>`
+    ).join('');
+    return `
+      <label>${esc(key)}
+        <select data-var="${esc(key)}">
+          <option value="">All</option>
+          ${optsHtml}
+        </select>
+      </label>`;
+  }).join('');
+
+  // Restore any preserved selections (e.g. after a re-load with overlapping data)
+  wrap.querySelectorAll('select[data-var]').forEach(sel => {
+    const filterKey = `var:${sel.dataset.var}`;
+    const v = _adLpAttrFilters[filterKey];
+    if (v && [...sel.options].some(o => o.value === v)) sel.value = v;
+  });
 }
 
 function rowMatchesAttrFilters(r) {
-  const f = _adLpAttrFilters;
-  const p = r.parsed || parseAdTokens(r.ad);
-  if (f.brand   && p.brand   !== f.brand)   return false;
-  if (f.creator && p.creator !== f.creator) return false;
-  if (f.urlSlug && p.urlSlug !== f.urlSlug) return false;
-  if (f.partnership === 'yes' && !p.isPartnership) return false;
-  if (f.partnership === 'no'  &&  p.isPartnership) return false;
-  if (f.token && !p.tokens.includes(f.token)) return false;
-  if (f.search && !r.ad.toLowerCase().includes(f.search.toLowerCase())) return false;
+  const vars = r.parsed?.vars || {};
+  for (const [k, v] of Object.entries(_adLpAttrFilters)) {
+    if (!v) continue;
+    if (k === 'search') {
+      if (!r.ad.toLowerCase().includes(v.toLowerCase())) return false;
+      continue;
+    }
+    if (k.startsWith('var:')) {
+      const varKey = k.slice(4);
+      const rowVal = vars[varKey];
+      if (rowVal == null) return false;
+      const matches = Array.isArray(rowVal) ? rowVal.includes(v) : rowVal === v;
+      if (!matches) return false;
+    }
+  }
   return true;
 }
 
 function syncAttrActiveStyles() {
-  document.querySelectorAll('#ad-lp-attr-filters [data-attr]').forEach(el => {
-    const key = el.dataset.attr;
-    const v = _adLpAttrFilters[key];
-    const active = key === 'partnership' ? v && v !== 'all' : !!v;
-    el.classList.toggle('ad-lp-attr-active', !!active);
+  document.querySelectorAll('#ad-lp-attr-vars select[data-var]').forEach(sel => {
+    sel.classList.toggle('ad-lp-attr-active', !!sel.value);
   });
+  const search = document.getElementById('ad-lp-attr-search');
+  if (search) search.classList.toggle('ad-lp-attr-active', !!search.value);
 }
 
 async function loadAdLpData(start, end, source, medium) {
@@ -2939,11 +2969,9 @@ async function loadAdLpData(start, end, source, medium) {
     const data = await resp.json();
     _adLpRows = parseAdLpQL(data);
     _adLpFilter = null;
-    _adLpAttrFilters = { brand: '', creator: '', urlSlug: '', partnership: 'all', token: '', search: '' };
-    document.querySelectorAll('#ad-lp-attr-filters [data-attr]').forEach(el => {
-      if (el.dataset.attr === 'partnership') el.value = 'all';
-      else el.value = '';
-    });
+    _adLpAttrFilters = {};
+    const search = document.getElementById('ad-lp-attr-search');
+    if (search) search.value = '';
     populateAdLpAttrOptions();
     renderAdLp();
   } catch (err) {
@@ -3104,20 +3132,25 @@ function setupAdLpHandlers() {
 
   document.getElementById('ad-lp-limit').addEventListener('change', renderAdLp);
 
-  document.querySelectorAll('#ad-lp-attr-filters [data-attr]').forEach(el => {
-    const key = el.dataset.attr;
-    const evt = el.tagName === 'INPUT' ? 'input' : 'change';
-    el.addEventListener(evt, () => {
-      _adLpAttrFilters[key] = el.value;
-      renderAdLp();
-    });
+  // Delegated handler — dropdowns are rebuilt on each data load.
+  const attrWrap = document.getElementById('ad-lp-attr-filters');
+  attrWrap.addEventListener('change', (e) => {
+    const sel = e.target.closest('select[data-var]');
+    if (!sel) return;
+    _adLpAttrFilters[`var:${sel.dataset.var}`] = sel.value;
+    renderAdLp();
+  });
+
+  const searchInput = document.getElementById('ad-lp-attr-search');
+  searchInput.addEventListener('input', () => {
+    _adLpAttrFilters.search = searchInput.value;
+    renderAdLp();
   });
 
   document.getElementById('ad-lp-attr-reset').addEventListener('click', () => {
-    _adLpAttrFilters = { brand: '', creator: '', urlSlug: '', partnership: 'all', token: '', search: '' };
-    document.querySelectorAll('#ad-lp-attr-filters [data-attr]').forEach(el => {
-      el.value = el.dataset.attr === 'partnership' ? 'all' : '';
-    });
+    _adLpAttrFilters = {};
+    document.querySelectorAll('#ad-lp-attr-vars select[data-var]').forEach(s => { s.value = ''; });
+    searchInput.value = '';
     renderAdLp();
   });
 
