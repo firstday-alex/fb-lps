@@ -1237,6 +1237,11 @@ app.get('/api/diag-meta', requireAuth, async (req, res) => {
 
   // Meta throttles by total payload (fields × rows). Keep page size small and
   // page through; up to 25 pages × 50 rows = 1250 ads max per window.
+  // Meta's pagination `next` URL preserves access_token but NOT appsecret_proof,
+  // so we re-append it to every paginated request.
+  const proof = generateAppSecretProof(req.accessToken);
+  const ensureProof = (u) => u.includes('appsecret_proof=') ? u : (u + `&appsecret_proof=${proof}`);
+
   const fetchInsights = async (s, u) => {
     const url = `${META_BASE_URL}/${account_id}/insights`
       + `?fields=${INSIGHT_FIELDS}`
@@ -1250,7 +1255,7 @@ app.get('/api/diag-meta', requireAuth, async (req, res) => {
     let next = url;
     let pageCount = 0;
     while (next && pageCount < 25) {
-      const resp = await fetch(next);
+      const resp = await fetch(ensureProof(next));
       const data = await resp.json();
       if (data.error) {
         if (data.error.code === 190) {
