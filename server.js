@@ -1231,8 +1231,7 @@ app.get('/api/diag-meta', requireAuth, async (req, res) => {
     'actions', 'action_values', 'cost_per_action_type',
     'video_p25_watched_actions', 'video_p50_watched_actions',
     'video_p75_watched_actions', 'video_p100_watched_actions',
-    'video_3_sec_watched_actions', 'video_thruplay_watched_actions',
-    'video_avg_time_watched_actions',
+    'video_thruplay_watched_actions', 'video_avg_time_watched_actions',
     'quality_ranking', 'engagement_rate_ranking', 'conversion_rate_ranking',
   ].join(',');
 
@@ -1282,8 +1281,11 @@ app.get('/api/diag-meta', requireAuth, async (req, res) => {
       const impressions = parseFloat(a.impressions) || 0;
       const link_clicks = parseFloat(a.inline_link_clicks) || actionVal(a.actions, 'link_click');
       const lpv = actionVal(a.actions, 'landing_page_view');
-      const v3 = actionVal(a.video_3_sec_watched_actions, 'video_view');
-      const vthru = actionVal(a.video_thruplay_watched_actions, 'video_thruplay_watched');
+      // 3-sec views come from the `actions` array under action_type 'video_view'
+      // (Meta deprecated the top-level video_3_sec_watched_actions field).
+      const v3 = actionVal(a.actions, 'video_view');
+      const vthru = actionVal(a.video_thruplay_watched_actions, 'video_thruplay_watched')
+        || actionVal(a.video_thruplay_watched_actions, 'video_view');
       return {
         ad_id: a.ad_id,
         ad_name: a.ad_name || '',
