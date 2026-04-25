@@ -1154,6 +1154,66 @@ VISUALIZE conversion_rate TYPE table`;
   }
 });
 
+// --- Top ad_name × landing_page_path combos (utm_content × landing_page_path) ---
+
+app.get('/api/meta-ad-lp-data', async (req, res) => {
+  if (!SHOPIFY_URL || !SHOPIFY_TOKEN) {
+    return res.status(500).json({ error: 'Shopify credentials not configured' });
+  }
+
+  const { start, end } = req.query;
+  if (!start || !end || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+    return res.status(400).json({ error: 'start and end query params required (YYYY-MM-DD)' });
+  }
+
+  const escapeQL = (v) => String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  const source = escapeQL(req.query.source || 'facebook');
+  const medium = escapeQL(req.query.medium || 'paid_social');
+
+  const endpoint = `https://${SHOPIFY_URL}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
+  const gqlQuery = `query RunShopifyQL($q: String!) {
+    shopifyqlQuery(query: $q) {
+      tableData { columns { name dataType } rows }
+      parseErrors
+    }
+  }`;
+
+  const mainQuery = `FROM sessions
+  SHOW sessions, conversion_rate
+  WHERE utm_source = '${source}' AND utm_medium = '${medium}'
+  GROUP BY utm_content, landing_page_path WITH PERCENT_CHANGE
+  SINCE ${start} UNTIL ${end}
+  COMPARE TO previous_period
+  ORDER BY sessions DESC
+VISUALIZE conversion_rate TYPE table`;
+
+  console.log('\n[meta-ad-lp-data] Query:\n' + mainQuery);
+
+  try {
+    const resp = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
+      body: JSON.stringify({ query: gqlQuery, variables: { q: mainQuery } }),
+    });
+    const json = await resp.json();
+    const payload = json.data?.shopifyqlQuery;
+    if (payload?.parseErrors?.length) {
+      return res.status(500).json({ error: 'ShopifyQL parse error', details: payload.parseErrors });
+    }
+    if (!payload?.tableData) throw new Error('No data returned from Shopify');
+
+    res.json({
+      query: mainQuery,
+      filter: { source, medium },
+      columns: payload.tableData.columns,
+      rows: payload.tableData.rows,
+    });
+  } catch (err) {
+    console.error('Meta ad-lp data error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // --- Campaign insights by day ---
 
 app.get('/api/campaign-insights', requireAuth, async (req, res) => {

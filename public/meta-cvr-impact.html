@@ -277,6 +277,63 @@
     }
     .breakdown-table tfoot td.r { text-align: right; }
 
+    .ad-lp-controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+    .ad-lp-controls__spacer { flex: 1; }
+    .ad-lp-filter-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 4px 4px 10px;
+      background: #eef3ff;
+      border: 1px solid var(--fb-blue);
+      color: var(--fb-blue);
+      border-radius: 999px;
+      font-size: 0.78rem;
+      font-weight: 600;
+    }
+    .ad-lp-filter-pill__label { max-width: 480px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ad-lp-filter-pill__close {
+      width: 20px; height: 20px;
+      border: none; background: var(--fb-blue); color: white;
+      border-radius: 50%; cursor: pointer; font-size: 0.95rem; line-height: 1;
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+    .ad-lp-filter-pill__close:hover { background: var(--fb-blue-dark); }
+    .ad-lp-limit { font-size: 0.8rem; color: var(--text-secondary); }
+    .ad-lp-limit select {
+      margin-left: 4px;
+      padding: 3px 6px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-size: 0.8rem;
+      font-family: inherit;
+    }
+
+    .ad-lp-table th.ad-lp-sort { cursor: pointer; user-select: none; }
+    .ad-lp-table th.ad-lp-sort:hover { background: #eef3ff; color: var(--fb-blue); }
+    .ad-lp-table th.ad-lp-sort--active { color: var(--fb-blue); }
+    .ad-lp-table .ad-lp-sort-arrow { margin-left: 4px; font-size: 0.7em; }
+
+    .ad-lp-table td.ad-lp-clickable {
+      cursor: pointer;
+      color: var(--fb-blue);
+      max-width: 260px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .ad-lp-table td.ad-lp-clickable:hover { background: #eef3ff; text-decoration: underline; }
+    .ad-lp-table td.ad-lp-clickable.ad-lp-active {
+      background: #eef3ff; color: var(--fb-blue); font-weight: 600;
+    }
+    .ad-lp-empty { text-align: center; color: var(--text-secondary); padding: 18px; }
+
     .headline-card {
       padding: 18px 20px;
       border-left: 4px solid var(--border);
@@ -1086,6 +1143,44 @@
       <div id="contributors-list"></div>
     </div>
 
+    <!-- Top Ad × Landing Page combinations -->
+    <div class="card breakdown-card" id="ad-lp-card">
+      <h3>Top Ad × Landing Page Combinations</h3>
+      <p class="card__sub">Each row is one <code>utm_content</code> (ad name) paired with one <code>landing_page_path</code>. <em>Click an ad name to see all landing pages it sent traffic to; click a landing page to see all ads that sent traffic to it.</em></p>
+      <div class="ad-lp-controls">
+        <div class="ad-lp-filter-pill" id="ad-lp-filter-pill" style="display:none">
+          <span class="ad-lp-filter-pill__label" id="ad-lp-filter-label"></span>
+          <button class="ad-lp-filter-pill__close" id="ad-lp-filter-clear" title="Clear filter">×</button>
+        </div>
+        <div class="ad-lp-controls__spacer"></div>
+        <label class="ad-lp-limit">Show top
+          <select id="ad-lp-limit">
+            <option value="25">25</option>
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+            <option value="all">all</option>
+          </select>
+        </label>
+      </div>
+      <div style="overflow-x:auto">
+        <table class="breakdown-table ad-lp-table" id="ad-lp-table">
+          <thead>
+            <tr>
+              <th class="ad-lp-sort" data-sort="ad">Ad Name</th>
+              <th class="ad-lp-sort" data-sort="lp">Landing Page</th>
+              <th class="r ad-lp-sort" data-sort="sessions">Sessions</th>
+              <th class="r ad-lp-sort" data-sort="prevSess">Prev Sess</th>
+              <th class="r ad-lp-sort" data-sort="cvr">CVR</th>
+              <th class="r ad-lp-sort" data-sort="cvrDelta">Δ CVR (pp)</th>
+              <th class="r ad-lp-sort" data-sort="txns">Txns</th>
+            </tr>
+          </thead>
+          <tbody id="ad-lp-tbody"></tbody>
+          <tfoot id="ad-lp-tfoot"></tfoot>
+        </table>
+      </div>
+    </div>
+
     <!-- Campaign breakdown table -->
     <div class="card breakdown-card">
       <h3>Campaign Breakdown</h3>
@@ -1609,6 +1704,7 @@ function makeCardsCollapsible() {
     'session-volume-lp-card': { title: 'Session Volume by Landing Page', hint: 'Which landing pages gained or lost traffic' },
     'cvr-bucket-card':        { title: 'CVR Bucket Summary',          hint: 'Campaigns grouped by CVR tier' },
     'correlation-card':       { title: 'Duration ↔ CVR Correlation',  hint: 'Does time on page predict conversion?' },
+    'ad-lp-card':             { title: 'Top Ad × Landing Page Combinations', hint: 'Click an ad name or landing page to filter' },
   };
 
   document.querySelectorAll('#results-screen .card').forEach(card => {
@@ -2612,6 +2708,238 @@ function parseShopifyQL(data) {
   return parsed;
 }
 
+// ─────────────────────────────────────────────
+// AD × LANDING PAGE MODULE
+// ─────────────────────────────────────────────
+let _adLpRows = [];
+let _adLpFilter = null;          // null | { type: 'ad'|'lp', value: string }
+let _adLpSort = { key: 'sessions', dir: 'desc' };
+const _adLpDefaultDir = { ad: 'asc', lp: 'asc', sessions: 'desc', prevSess: 'desc', cvr: 'desc', cvrDelta: 'desc', txns: 'desc' };
+
+function parseAdLpQL(data) {
+  const { columns, rows } = data;
+  if (!columns || !rows) return [];
+  const colNames = columns.map(c => (c.name || '').toLowerCase());
+  const getVal = (row, idx) => {
+    if (idx < 0) return undefined;
+    return Array.isArray(row) ? row[idx] : row[columns[idx].name];
+  };
+  const findPrior = (metric) => colNames.findIndex(s =>
+    s === `comparison_${metric}__previous_period` || s === `comparison_${metric}__yesterday`
+  );
+
+  const iAd      = colNames.findIndex(s => s === 'utm_content');
+  const iLp      = colNames.findIndex(s => s === 'landing_page_path');
+  const iSess    = colNames.findIndex(s => s === 'sessions');
+  const iCvr     = colNames.findIndex(s => s === 'conversion_rate');
+  const iPrevS   = findPrior('sessions');
+  const iPrevCvr = findPrior('conversion_rate');
+  if (iAd < 0 || iSess < 0 || iCvr < 0) return [];
+
+  const out = [];
+  for (const row of rows) {
+    const ad = String(getVal(row, iAd) ?? '').trim();
+    const lp = String(getVal(row, iLp) ?? '').trim();
+    if (!ad && !lp) continue;
+    if (/^\/(checkout|checkouts|orders|payment-methods|gift_cards)(\/|$)/i.test(lp)) continue;
+
+    const currS    = Math.round(parseFloat(getVal(row, iSess)) || 0);
+    const currC    = normCvr(parseFloat(getVal(row, iCvr)) || 0) ?? 0;
+    const prevSess = iPrevS   >= 0 ? Math.round(parseFloat(getVal(row, iPrevS))   || 0) : 0;
+    const prevCvr  = iPrevCvr >= 0 ? (normCvr(parseFloat(getVal(row, iPrevCvr)) || 0) ?? 0) : 0;
+    out.push({ ad, lp, currS, currC, prevSess, prevCvr });
+  }
+  return out;
+}
+
+async function loadAdLpData(start, end, source, medium) {
+  const tbody = document.getElementById('ad-lp-tbody');
+  const tfoot = document.getElementById('ad-lp-tfoot');
+  tbody.innerHTML = `<tr><td colspan="7" class="ad-lp-empty">Loading top ad × landing-page combinations…</td></tr>`;
+  tfoot.innerHTML = '';
+  try {
+    const params = new URLSearchParams({ start, end, source, medium });
+    const resp = await fetch(`/api/meta-ad-lp-data?${params.toString()}`);
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${resp.status}`);
+    }
+    const data = await resp.json();
+    _adLpRows = parseAdLpQL(data);
+    _adLpFilter = null;
+    renderAdLp();
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="7" class="ad-lp-empty" style="color:var(--negative)">${esc(err.message)}</td></tr>`;
+  }
+}
+
+function renderAdLp() {
+  const tbody = document.getElementById('ad-lp-tbody');
+  const tfoot = document.getElementById('ad-lp-tfoot');
+  const pill  = document.getElementById('ad-lp-filter-pill');
+  const pillLabel = document.getElementById('ad-lp-filter-label');
+  const limitSel = document.getElementById('ad-lp-limit');
+
+  // Filter pill
+  if (_adLpFilter) {
+    const prefix = _adLpFilter.type === 'ad' ? 'Ad: ' : 'LP: ';
+    pill.style.display = 'inline-flex';
+    pillLabel.textContent = prefix + (_adLpFilter.value || '(empty)');
+    pill.title = _adLpFilter.value;
+  } else {
+    pill.style.display = 'none';
+  }
+
+  // Filter rows
+  let filtered = _adLpRows;
+  if (_adLpFilter) {
+    if (_adLpFilter.type === 'ad') {
+      filtered = _adLpRows.filter(r => r.ad === _adLpFilter.value);
+    } else {
+      filtered = _adLpRows.filter(r => r.lp === _adLpFilter.value);
+    }
+  }
+
+  // Sort
+  const keyFns = {
+    ad:        r => (r.ad || '').toLowerCase(),
+    lp:        r => (r.lp || '').toLowerCase(),
+    sessions:  r => r.currS,
+    prevSess:  r => r.prevSess,
+    cvr:       r => r.currC,
+    cvrDelta:  r => r.currC - r.prevCvr,
+    txns:      r => r.currS * r.currC,
+  };
+  const keyFn = keyFns[_adLpSort.key] || keyFns.sessions;
+  const dirMul = _adLpSort.dir === 'desc' ? -1 : 1;
+  const sorted = [...filtered].sort((a, b) => {
+    const va = keyFn(a), vb = keyFn(b);
+    if (typeof va === 'string') return va.localeCompare(vb) * dirMul;
+    return (va - vb) * dirMul;
+  });
+
+  // Limit (only when no filter — when filtering we want to see everything)
+  let display = sorted;
+  if (!_adLpFilter) {
+    const lim = limitSel.value;
+    if (lim !== 'all') display = sorted.slice(0, parseInt(lim, 10) || 50);
+  }
+
+  // Header sort indicators
+  document.querySelectorAll('#ad-lp-table th.ad-lp-sort').forEach(h => {
+    const active = h.dataset.sort === _adLpSort.key;
+    h.classList.toggle('ad-lp-sort--active', active);
+    const old = h.querySelector('.ad-lp-sort-arrow');
+    if (old) old.remove();
+    if (active) {
+      const arrow = document.createElement('span');
+      arrow.className = 'ad-lp-sort-arrow';
+      arrow.textContent = _adLpSort.dir === 'desc' ? '▼' : '▲';
+      h.appendChild(arrow);
+    }
+  });
+
+  if (display.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="7" class="ad-lp-empty">${_adLpFilter ? 'No matches for this filter.' : 'No ad × landing-page data.'}</td></tr>`;
+    tfoot.innerHTML = '';
+    return;
+  }
+
+  // Body rows
+  tbody.innerHTML = '';
+  display.forEach(r => {
+    const adLabel = r.ad || '(empty)';
+    const lpLabel = r.lp || '(empty)';
+    const dCvr = r.currC - r.prevCvr;
+    const txns = r.currS * r.currC;
+    const adActive = _adLpFilter && _adLpFilter.type === 'ad' && _adLpFilter.value === r.ad;
+    const lpActive = _adLpFilter && _adLpFilter.type === 'lp' && _adLpFilter.value === r.lp;
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="ad-lp-clickable${adActive ? ' ad-lp-active' : ''}" data-ad="${esc(r.ad)}" title="${esc(adLabel)}">${esc(adLabel)}</td>
+      <td class="ad-lp-clickable${lpActive ? ' ad-lp-active' : ''}" data-lp="${esc(r.lp)}" title="${esc(lpLabel)}">${esc(lpLabel)}</td>
+      <td class="r">${fmtN(r.currS)}</td>
+      <td class="r" style="color:var(--text-secondary)">${fmtN(r.prevSess)}</td>
+      <td class="r">${(r.currC * 100).toFixed(2)}%</td>
+      <td class="r ${cls(dCvr)}">${fmtPP(dCvr * 100)}</td>
+      <td class="r"><strong>${fmtN(Math.round(txns))}</strong></td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  // Totals (across what is currently shown)
+  let tS = 0, tWC = 0, tPrevS = 0, tPrevWC = 0;
+  display.forEach(r => {
+    tS     += r.currS;
+    tWC    += r.currS * r.currC;
+    tPrevS += r.prevSess;
+    tPrevWC += r.prevSess * r.prevCvr;
+  });
+  const blendedCvr     = tS > 0 ? tWC / tS : 0;
+  const blendedPrevCvr = tPrevS > 0 ? tPrevWC / tPrevS : 0;
+  const totalDcvr = blendedCvr - blendedPrevCvr;
+  const totalTxns = tWC;
+
+  const limitNote = !_adLpFilter && sorted.length > display.length
+    ? ` <span style="color:var(--text-secondary);font-weight:400">(of ${sorted.length})</span>`
+    : '';
+  tfoot.innerHTML = `
+    <tr>
+      <td colspan="2">Total · ${display.length} row${display.length === 1 ? '' : 's'}${limitNote}</td>
+      <td class="r">${fmtN(tS)}</td>
+      <td class="r" style="color:var(--text-secondary)">${fmtN(tPrevS)}</td>
+      <td class="r">${(blendedCvr * 100).toFixed(2)}%</td>
+      <td class="r ${cls(totalDcvr)}">${fmtPP(totalDcvr * 100)}</td>
+      <td class="r"><strong>${fmtN(Math.round(totalTxns))}</strong></td>
+    </tr>
+  `;
+}
+
+function setupAdLpHandlers() {
+  const card = document.getElementById('ad-lp-card');
+  if (!card || card.dataset.adLpWired === '1') return;
+  card.dataset.adLpWired = '1';
+
+  card.addEventListener('click', (e) => {
+    const adCell = e.target.closest('td[data-ad]');
+    const lpCell = e.target.closest('td[data-lp]');
+    if (adCell) {
+      const v = adCell.dataset.ad;
+      _adLpFilter = (_adLpFilter && _adLpFilter.type === 'ad' && _adLpFilter.value === v) ? null : { type: 'ad', value: v };
+      renderAdLp();
+      return;
+    }
+    if (lpCell) {
+      const v = lpCell.dataset.lp;
+      _adLpFilter = (_adLpFilter && _adLpFilter.type === 'lp' && _adLpFilter.value === v) ? null : { type: 'lp', value: v };
+      renderAdLp();
+      return;
+    }
+  });
+
+  document.getElementById('ad-lp-filter-clear').addEventListener('click', () => {
+    _adLpFilter = null;
+    renderAdLp();
+  });
+
+  document.getElementById('ad-lp-limit').addEventListener('change', renderAdLp);
+
+  document.querySelectorAll('#ad-lp-table th.ad-lp-sort').forEach(h => {
+    h.addEventListener('click', () => {
+      const key = h.dataset.sort;
+      if (!key) return;
+      if (_adLpSort.key === key) {
+        _adLpSort.dir = _adLpSort.dir === 'desc' ? 'asc' : 'desc';
+      } else {
+        _adLpSort.key = key;
+        _adLpSort.dir = _adLpDefaultDir[key] || 'desc';
+      }
+      renderAdLp();
+    });
+  });
+}
+
 async function loadFromShopify() {
   const btn    = document.getElementById('btn-shopify-load');
   const status = document.getElementById('shopify-status');
@@ -2653,6 +2981,9 @@ async function loadFromShopify() {
         alert(data.query);
       });
     }
+
+    // Kick off ad × landing-page combo query (independent of main render)
+    loadAdLpData(startDate, endDate, source, medium);
   } catch (err) {
     status.className = 'shopify-status error';
     status.textContent = err.message;
@@ -2698,6 +3029,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('date-end').value = fmt(yesterday);
 
   document.getElementById('btn-shopify-load').addEventListener('click', loadFromShopify);
+  setupAdLpHandlers();
 });
 </script>
 </body>
