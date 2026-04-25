@@ -277,6 +277,61 @@
     }
     .breakdown-table tfoot td.r { text-align: right; }
 
+    .ad-lp-attr-filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 14px;
+      align-items: flex-end;
+      padding: 10px 12px;
+      margin-bottom: 12px;
+      background: #f7f9fc;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+    .ad-lp-attr-filters label {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-secondary);
+    }
+    .ad-lp-attr-filters select,
+    .ad-lp-attr-filters input[type="text"] {
+      padding: 4px 8px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-size: 0.82rem;
+      font-family: inherit;
+      font-weight: 500;
+      color: var(--text-primary);
+      text-transform: none;
+      letter-spacing: normal;
+      background: var(--surface);
+      min-width: 140px;
+    }
+    .ad-lp-attr-filters__search input { min-width: 180px; }
+    .ad-lp-attr-filters select.ad-lp-attr-active,
+    .ad-lp-attr-filters input.ad-lp-attr-active {
+      border-color: var(--fb-blue);
+      background: #eef3ff;
+      color: var(--fb-blue);
+      font-weight: 600;
+    }
+    .ad-lp-attr-reset {
+      padding: 6px 12px;
+      font-size: 0.78rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--surface);
+      cursor: pointer;
+      color: var(--text-secondary);
+      align-self: flex-end;
+    }
+    .ad-lp-attr-reset:hover { background: var(--bg); color: var(--text-primary); }
+
     .ad-lp-controls {
       display: flex;
       align-items: center;
@@ -1146,7 +1201,32 @@
     <!-- Top Ad × Landing Page combinations -->
     <div class="card breakdown-card" id="ad-lp-card">
       <h3>Top Ad × Landing Page Combinations</h3>
-      <p class="card__sub">Each row is one <code>utm_content</code> (ad name) paired with one <code>landing_page_path</code>. <em>Click an ad name to see all landing pages it sent traffic to; click a landing page to see all ads that sent traffic to it.</em></p>
+      <p class="card__sub">Each row is one <code>utm_content</code> (ad name) paired with one <code>landing_page_path</code>. <em>Click an ad name to see all landing pages it sent traffic to; click a landing page to see all ads that sent traffic to it.</em> Use the filter row to slice by parsed ad-name variables (brand prefix, creator, URL slug, partnership flag, free-text token).</p>
+      <div class="ad-lp-attr-filters" id="ad-lp-attr-filters">
+        <label>Brand
+          <select data-attr="brand"><option value="">All</option></select>
+        </label>
+        <label>Creator
+          <select data-attr="creator"><option value="">All</option></select>
+        </label>
+        <label>URL slug
+          <select data-attr="urlSlug"><option value="">All</option></select>
+        </label>
+        <label>Partnership
+          <select data-attr="partnership">
+            <option value="all">All</option>
+            <option value="yes">Partnership only</option>
+            <option value="no">Non-partnership</option>
+          </select>
+        </label>
+        <label>Token
+          <select data-attr="token"><option value="">All</option></select>
+        </label>
+        <label class="ad-lp-attr-filters__search">Contains
+          <input type="text" data-attr="search" placeholder="text in ad name…">
+        </label>
+        <button type="button" class="ad-lp-attr-reset" id="ad-lp-attr-reset" title="Reset all filters">Reset filters</button>
+      </div>
       <div class="ad-lp-controls">
         <div class="ad-lp-filter-pill" id="ad-lp-filter-pill" style="display:none">
           <span class="ad-lp-filter-pill__label" id="ad-lp-filter-label"></span>
@@ -2714,7 +2794,38 @@ function parseShopifyQL(data) {
 let _adLpRows = [];
 let _adLpFilter = null;          // null | { type: 'ad'|'lp', value: string }
 let _adLpSort = { key: 'sessions', dir: 'desc' };
+let _adLpAttrFilters = { brand: '', creator: '', urlSlug: '', partnership: 'all', token: '', search: '' };
 const _adLpDefaultDir = { ad: 'asc', lp: 'asc', sessions: 'desc', prevSess: 'desc', cvr: 'desc', cvrDelta: 'desc', txns: 'desc' };
+
+// Parses a Meta utm_content/ad_name into structured variables. The team's ad
+// names are underscore-delimited, with conventional tokens like:
+//   {brand}_{format}_{concept}_{...}_url:{slug}            (in-house ads)
+//   {brand}_{...}:ext-{creator}_..._url:{slug}             (partnership ads)
+// We expose the high-signal ones as filter dimensions; everything else is
+// available via the generic "tokens" pool and free-text "contains" search.
+function parseAdTokens(adName) {
+  if (!adName) return { brand: null, creator: null, urlSlug: null, isPartnership: false, tokens: [] };
+  const lower = adName.toLowerCase();
+
+  const isPartnership = lower.includes(':ext-')
+    || lower.includes('creator_wl:ext')
+    || /\bext[-_]creator\b/.test(lower);
+
+  const creator = (adName.match(/:ext-([^_:]+)/i) || [])[1] || null;
+  const urlSlug = (adName.match(/(?:^|[_:-])url[:_]([a-zA-Z0-9-]+)/i) || [])[1] || null;
+
+  // Brand = first underscore-segment if it looks like a short alpha prefix
+  const firstSeg = (adName.split('_')[0] || '').trim();
+  const brand = firstSeg && /^[a-z]{2,8}$/i.test(firstSeg) ? firstSeg.toLowerCase() : null;
+
+  // Tokens — clean segments excluding the special url:/ext- pieces
+  const tokens = adName.split('_')
+    .filter(s => !/^url[:_]/i.test(s))
+    .map(s => s.replace(/:ext-.*$/i, '').replace(/^ext[-_].*$/i, '').trim())
+    .filter(Boolean);
+
+  return { brand, creator, urlSlug, isPartnership, tokens };
+}
 
 function parseAdLpQL(data) {
   const { columns, rows } = data;
@@ -2747,9 +2858,70 @@ function parseAdLpQL(data) {
     const currC    = normCvr(parseFloat(getVal(row, iCvr)) || 0) ?? 0;
     const prevSess = iPrevS   >= 0 ? Math.round(parseFloat(getVal(row, iPrevS))   || 0) : 0;
     const prevCvr  = iPrevCvr >= 0 ? (normCvr(parseFloat(getVal(row, iPrevCvr)) || 0) ?? 0) : 0;
-    out.push({ ad, lp, currS, currC, prevSess, prevCvr });
+    out.push({ ad, lp, currS, currC, prevSess, prevCvr, parsed: parseAdTokens(ad) });
   }
   return out;
+}
+
+function populateAdLpAttrOptions() {
+  const wrap = document.getElementById('ad-lp-attr-filters');
+  if (!wrap) return;
+
+  // Aggregate distinct values weighted by sessions so the most-trafficked
+  // values surface first in each dropdown.
+  const sumBy = (keyFn) => {
+    const map = new Map();
+    _adLpRows.forEach(r => {
+      const ks = keyFn(r);
+      (Array.isArray(ks) ? ks : [ks]).forEach(k => {
+        if (!k) return;
+        map.set(k, (map.get(k) || 0) + r.currS);
+      });
+    });
+    return [...map.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([v, s]) => ({ value: v, sessions: s }));
+  };
+
+  const brands   = sumBy(r => r.parsed.brand);
+  const creators = sumBy(r => r.parsed.creator);
+  const slugs    = sumBy(r => r.parsed.urlSlug);
+  const tokens   = sumBy(r => r.parsed.tokens);
+
+  const fillSelect = (sel, opts, allLabel = 'All') => {
+    const current = sel.value;
+    sel.innerHTML = `<option value="">${allLabel}</option>` +
+      opts.map(o => `<option value="${esc(o.value)}">${esc(o.value)} · ${fmtN(o.sessions)}</option>`).join('');
+    // Preserve current selection if still present
+    if (current && opts.some(o => o.value === current)) sel.value = current;
+  };
+
+  fillSelect(wrap.querySelector('select[data-attr="brand"]'), brands);
+  fillSelect(wrap.querySelector('select[data-attr="creator"]'), creators);
+  fillSelect(wrap.querySelector('select[data-attr="urlSlug"]'), slugs);
+  fillSelect(wrap.querySelector('select[data-attr="token"]'), tokens);
+}
+
+function rowMatchesAttrFilters(r) {
+  const f = _adLpAttrFilters;
+  const p = r.parsed || parseAdTokens(r.ad);
+  if (f.brand   && p.brand   !== f.brand)   return false;
+  if (f.creator && p.creator !== f.creator) return false;
+  if (f.urlSlug && p.urlSlug !== f.urlSlug) return false;
+  if (f.partnership === 'yes' && !p.isPartnership) return false;
+  if (f.partnership === 'no'  &&  p.isPartnership) return false;
+  if (f.token && !p.tokens.includes(f.token)) return false;
+  if (f.search && !r.ad.toLowerCase().includes(f.search.toLowerCase())) return false;
+  return true;
+}
+
+function syncAttrActiveStyles() {
+  document.querySelectorAll('#ad-lp-attr-filters [data-attr]').forEach(el => {
+    const key = el.dataset.attr;
+    const v = _adLpAttrFilters[key];
+    const active = key === 'partnership' ? v && v !== 'all' : !!v;
+    el.classList.toggle('ad-lp-attr-active', !!active);
+  });
 }
 
 async function loadAdLpData(start, end, source, medium) {
@@ -2767,6 +2939,12 @@ async function loadAdLpData(start, end, source, medium) {
     const data = await resp.json();
     _adLpRows = parseAdLpQL(data);
     _adLpFilter = null;
+    _adLpAttrFilters = { brand: '', creator: '', urlSlug: '', partnership: 'all', token: '', search: '' };
+    document.querySelectorAll('#ad-lp-attr-filters [data-attr]').forEach(el => {
+      if (el.dataset.attr === 'partnership') el.value = 'all';
+      else el.value = '';
+    });
+    populateAdLpAttrOptions();
     renderAdLp();
   } catch (err) {
     tbody.innerHTML = `<tr><td colspan="7" class="ad-lp-empty" style="color:var(--negative)">${esc(err.message)}</td></tr>`;
@@ -2791,14 +2969,15 @@ function renderAdLp() {
   }
 
   // Filter rows
-  let filtered = _adLpRows;
+  let filtered = _adLpRows.filter(rowMatchesAttrFilters);
   if (_adLpFilter) {
     if (_adLpFilter.type === 'ad') {
-      filtered = _adLpRows.filter(r => r.ad === _adLpFilter.value);
+      filtered = filtered.filter(r => r.ad === _adLpFilter.value);
     } else {
-      filtered = _adLpRows.filter(r => r.lp === _adLpFilter.value);
+      filtered = filtered.filter(r => r.lp === _adLpFilter.value);
     }
   }
+  syncAttrActiveStyles();
 
   // Sort
   const keyFns = {
@@ -2924,6 +3103,23 @@ function setupAdLpHandlers() {
   });
 
   document.getElementById('ad-lp-limit').addEventListener('change', renderAdLp);
+
+  document.querySelectorAll('#ad-lp-attr-filters [data-attr]').forEach(el => {
+    const key = el.dataset.attr;
+    const evt = el.tagName === 'INPUT' ? 'input' : 'change';
+    el.addEventListener(evt, () => {
+      _adLpAttrFilters[key] = el.value;
+      renderAdLp();
+    });
+  });
+
+  document.getElementById('ad-lp-attr-reset').addEventListener('click', () => {
+    _adLpAttrFilters = { brand: '', creator: '', urlSlug: '', partnership: 'all', token: '', search: '' };
+    document.querySelectorAll('#ad-lp-attr-filters [data-attr]').forEach(el => {
+      el.value = el.dataset.attr === 'partnership' ? 'all' : '';
+    });
+    renderAdLp();
+  });
 
   document.querySelectorAll('#ad-lp-table th.ad-lp-sort').forEach(h => {
     h.addEventListener('click', () => {
