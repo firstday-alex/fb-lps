@@ -1,0 +1,1272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ad Diagnostic Dashboard</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --fb-blue: #1877f2;
+      --fb-blue-dark: #166fe5;
+      --bg: #f0f2f5;
+      --surface: #fff;
+      --text-primary: #1c1e21;
+      --text-secondary: #65676b;
+      --border: #dddfe2;
+      --positive: #1a7f37;
+      --positive-bg: #dcfce7;
+      --negative: #c0392b;
+      --negative-bg: #fee2e2;
+      --neutral-bg: #e4e6eb;
+      --shadow: 0 1px 3px rgba(0,0,0,0.12);
+      --radius: 8px;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text-primary);
+      line-height: 1.45;
+      min-height: 100vh;
+    }
+    header {
+      background: var(--fb-blue);
+      color: white;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    header h1 { font-size: 1.2rem; font-weight: 700; }
+    header p  { font-size: 0.78rem; opacity: 0.8; }
+    .header__back {
+      color: rgba(255,255,255,0.85);
+      text-decoration: none;
+      font-size: 0.82rem;
+      border: 1px solid rgba(255,255,255,0.3);
+      padding: 4px 10px;
+      border-radius: 6px;
+    }
+    .header__back:hover { background: rgba(255,255,255,0.15); }
+
+    .wrap {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 18px 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 16px 18px;
+    }
+
+    /* ── controls ── */
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px 16px;
+      align-items: flex-end;
+    }
+    .controls label {
+      display: flex; flex-direction: column; gap: 3px;
+      font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--text-secondary);
+    }
+    .controls input, .controls select {
+      padding: 6px 8px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-size: 0.85rem;
+      font-family: inherit;
+      font-weight: 500;
+      color: var(--text-primary);
+      text-transform: none;
+      letter-spacing: normal;
+      min-width: 140px;
+    }
+    .controls__group {
+      display: flex; gap: 8px; align-items: flex-end;
+      padding-right: 14px; border-right: 1px solid var(--border);
+    }
+    .controls__group:last-child { border-right: none; }
+    .quick-buttons { display: flex; gap: 4px; flex-wrap: wrap; }
+    .quick-btn {
+      padding: 5px 10px;
+      font-size: 0.78rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--surface);
+      cursor: pointer;
+      color: var(--text-secondary);
+    }
+    .quick-btn:hover, .quick-btn.active {
+      background: #eef3ff; border-color: var(--fb-blue); color: var(--fb-blue);
+    }
+    .btn-primary {
+      padding: 8px 18px;
+      background: var(--fb-blue);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 0.86rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn-primary:hover { background: var(--fb-blue-dark); }
+    .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+    .btn-ghost {
+      padding: 6px 12px;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.82rem;
+      color: var(--text-secondary);
+    }
+    .btn-ghost:hover { background: var(--bg); }
+
+    .status { font-size: 0.85rem; color: var(--text-secondary); min-height: 1.2em; }
+    .status.error { color: var(--negative); }
+
+    /* ── summary tiles ── */
+    .tiles {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px;
+    }
+    .tile {
+      padding: 12px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      border: 2px solid transparent;
+      background: var(--bg);
+      transition: transform 0.05s;
+    }
+    .tile:hover { transform: translateY(-1px); }
+    .tile.active { border-color: var(--fb-blue); background: #eef3ff; }
+    .tile__label { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-secondary); }
+    .tile__count { font-size: 1.5rem; font-weight: 700; line-height: 1.1; margin-top: 4px; }
+    .tile__spend { font-size: 0.76rem; color: var(--text-secondary); margin-top: 2px; }
+    .tile__chip {
+      display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+      vertical-align: middle; margin-right: 6px;
+    }
+
+    /* ── table ── */
+    .filter-row {
+      display: flex; gap: 10px 14px; flex-wrap: wrap; align-items: center;
+      padding-bottom: 8px;
+    }
+    .filter-row input[type="text"] {
+      padding: 6px 10px; border: 1px solid var(--border); border-radius: 4px;
+      font-size: 0.84rem; min-width: 220px;
+    }
+    .table-wrap { overflow-x: auto; }
+    table.diag {
+      width: 100%; border-collapse: collapse; font-size: 0.82rem;
+    }
+    table.diag th {
+      text-align: left;
+      padding: 8px 10px;
+      font-size: 0.68rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-secondary);
+      border-bottom: 2px solid var(--border);
+      cursor: pointer;
+      user-select: none;
+      white-space: nowrap;
+    }
+    table.diag th:hover { color: var(--fb-blue); background: #fafbfd; }
+    table.diag th.r { text-align: right; }
+    table.diag th.sort-active { color: var(--fb-blue); }
+    table.diag th .sort-arrow { font-size: 0.7em; margin-left: 3px; }
+    table.diag td {
+      padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: middle;
+    }
+    table.diag td.r { text-align: right; }
+    table.diag tbody tr { cursor: pointer; }
+    table.diag tbody tr:hover { background: #fafbfd; }
+    table.diag tbody tr.row-selected { background: #eef3ff; }
+
+    .ad-name-cell {
+      max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      font-weight: 500;
+    }
+    .lp-cell {
+      max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      color: var(--text-secondary); font-family: ui-monospace, SFMono-Regular, monospace;
+      font-size: 0.78rem;
+    }
+
+    /* ── bucket chips ── */
+    .chip {
+      display: inline-flex; align-items: center;
+      padding: 2px 8px; border-radius: 12px;
+      font-size: 0.7rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.04em;
+      white-space: nowrap;
+    }
+    .chip__dot { width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
+    .chip-secondary {
+      display: inline-block;
+      margin-left: 4px;
+      padding: 1px 5px;
+      font-size: 0.62rem;
+      font-weight: 600;
+      border-radius: 8px;
+      background: var(--neutral-bg);
+      color: var(--text-secondary);
+      white-space: nowrap;
+    }
+
+    .pos { color: var(--positive); }
+    .neg { color: var(--negative); }
+    .muted { color: var(--text-secondary); }
+
+    /* ── detail side panel ── */
+    .detail-overlay {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.35);
+      display: none;
+      z-index: 1000;
+    }
+    .detail-overlay.open { display: block; }
+    .detail-panel {
+      position: fixed; right: 0; top: 0; bottom: 0; width: min(640px, 92vw);
+      background: var(--surface);
+      box-shadow: -4px 0 16px rgba(0,0,0,0.18);
+      overflow-y: auto;
+      padding: 18px 22px;
+    }
+    .detail-panel__head {
+      display: flex; justify-content: space-between; align-items: flex-start;
+      gap: 12px; margin-bottom: 12px;
+    }
+    .detail-panel__title { font-size: 0.95rem; font-weight: 600; word-break: break-all; }
+    .detail-panel__sub { font-size: 0.78rem; color: var(--text-secondary); margin-top: 4px; word-break: break-all; }
+    .detail-close {
+      background: transparent; border: none; cursor: pointer;
+      font-size: 1.4rem; color: var(--text-secondary); line-height: 1;
+    }
+
+    .detail-section { margin-bottom: 16px; }
+    .detail-section__h {
+      font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--text-secondary); margin-bottom: 6px;
+    }
+    .preview-frame {
+      width: 100%; height: 540px;
+      border: 1px solid var(--border); border-radius: 6px;
+      background: var(--bg);
+    }
+    .preview-fallback {
+      padding: 20px; text-align: center; background: var(--bg);
+      border-radius: 6px; color: var(--text-secondary); font-size: 0.84rem;
+    }
+    .reasons {
+      list-style: none; padding: 8px 12px;
+      background: var(--bg); border-radius: 6px;
+      font-size: 0.82rem;
+    }
+    .reasons li { padding: 3px 0; }
+    .reasons .r-pass { color: var(--positive); }
+    .reasons .r-fail { color: var(--negative); }
+    .metric-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 4px 14px;
+      font-size: 0.82rem;
+    }
+    .metric-grid > div { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--border); }
+    .metric-grid > div:nth-last-child(-n+2) { border-bottom: none; }
+    .metric-grid .k { color: var(--text-secondary); }
+    .metric-grid .v { font-weight: 600; }
+
+    .pop-table { width: 100%; font-size: 0.82rem; border-collapse: collapse; }
+    .pop-table th, .pop-table td { padding: 5px 8px; text-align: right; border-bottom: 1px solid var(--border); }
+    .pop-table th:first-child, .pop-table td:first-child { text-align: left; }
+    .pop-table th { color: var(--text-secondary); font-weight: 600; font-size: 0.75rem; }
+  </style>
+</head>
+<body>
+
+<header>
+  <a class="header__back" href="/">&larr; Ads Viewer</a>
+  <div>
+    <h1>Ad Diagnostic Dashboard</h1>
+    <p>Meta × Shopify joined at <code>ad_name × landing_page_path</code> with rule-based bucketing</p>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <!-- ── controls ── -->
+  <div class="card">
+    <div class="controls">
+      <div class="controls__group">
+        <label>Ad Account
+          <select id="acct-select"><option value="">— choose —</option></select>
+        </label>
+      </div>
+      <div class="controls__group">
+        <label>Start <input type="date" id="d-start"></label>
+        <label>End <input type="date" id="d-end"></label>
+      </div>
+      <div class="controls__group">
+        <label>Compare Start <input type="date" id="c-start"></label>
+        <label>Compare End <input type="date" id="c-end"></label>
+      </div>
+      <div class="controls__group">
+        <label>Quick range
+          <div class="quick-buttons" id="quick-buttons">
+            <button type="button" class="quick-btn" data-days="7">7d</button>
+            <button type="button" class="quick-btn" data-days="14">14d</button>
+            <button type="button" class="quick-btn" data-days="28">28d</button>
+            <button type="button" class="quick-btn" data-days="30">30d</button>
+          </div>
+        </label>
+      </div>
+      <div class="controls__group">
+        <label>UTM sources
+          <input type="text" id="utm-sources" value="facebook,instagram,fb,ig,meta">
+        </label>
+      </div>
+      <div class="controls__group">
+        <label>Target ROAS
+          <input type="number" id="cfg-target-roas" value="2.0" step="0.1" min="0" style="min-width:90px">
+        </label>
+        <label>Min spend
+          <input type="number" id="cfg-min-spend" value="50" step="5" min="0" style="min-width:90px">
+        </label>
+      </div>
+      <button class="btn-primary" id="btn-load">Load</button>
+    </div>
+    <div style="margin-top:10px" class="status" id="status"></div>
+  </div>
+
+  <!-- ── summary tiles ── -->
+  <div class="card" id="summary-card" style="display:none">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px">
+      <h3 style="font-size:0.78rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary)">Bucket summary <span id="summary-meta" style="font-weight:400;text-transform:none;letter-spacing:normal"></span></h3>
+      <button type="button" class="btn-ghost" id="btn-clear-bucket">All buckets</button>
+    </div>
+    <div class="tiles" id="tiles"></div>
+  </div>
+
+  <!-- ── filters + table ── -->
+  <div class="card" id="table-card" style="display:none">
+    <div class="filter-row">
+      <input type="text" id="search-box" placeholder="Search ad name or landing page…">
+      <label style="font-size:0.72rem;font-weight:700;text-transform:uppercase;color:var(--text-secondary)">Campaign
+        <select id="campaign-filter" style="margin-left:6px;padding:5px 8px;border:1px solid var(--border);border-radius:4px;font-size:0.82rem"><option value="">All</option></select>
+      </label>
+      <label style="font-size:0.72rem;font-weight:700;text-transform:uppercase;color:var(--text-secondary)">Ad set
+        <select id="adset-filter" style="margin-left:6px;padding:5px 8px;border:1px solid var(--border);border-radius:4px;font-size:0.82rem"><option value="">All</option></select>
+      </label>
+      <span class="muted" id="row-count" style="margin-left:auto;font-size:0.82rem"></span>
+    </div>
+    <div class="table-wrap">
+      <table class="diag" id="diag-table">
+        <thead>
+          <tr>
+            <th data-sort="bucket">Bucket</th>
+            <th data-sort="ad_name">Ad name</th>
+            <th data-sort="landing_page_path">LP</th>
+            <th class="r" data-sort="spend">Spend</th>
+            <th class="r" data-sort="shopify_roas" title="Shopify revenue / spend">Shop ROAS</th>
+            <th class="r" data-sort="meta_roas" title="Meta-attributed">Meta ROAS</th>
+            <th class="r" data-sort="ctr">CTR</th>
+            <th class="r" data-sort="hook_rate" title="3-sec views / impressions">Hook</th>
+            <th class="r" data-sort="cvr" title="Shopify orders / link clicks">CVR</th>
+            <th class="r" data-sort="shopify_pct_new" title="% new customers">% New</th>
+            <th class="r" data-sort="shopify_aov">AOV</th>
+            <th class="r" data-sort="frequency">Freq</th>
+          </tr>
+        </thead>
+        <tbody id="diag-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── insufficient-data section ── -->
+  <div class="card" id="insufficient-card" style="display:none">
+    <details>
+      <summary style="cursor:pointer;font-size:0.82rem;color:var(--text-secondary);font-weight:600">Insufficient data — <span id="insufficient-count"></span></summary>
+      <div class="table-wrap" style="margin-top:8px">
+        <table class="diag" id="insufficient-table">
+          <thead>
+            <tr>
+              <th>Ad name</th>
+              <th>LP</th>
+              <th class="r">Spend</th>
+              <th class="r">Impressions</th>
+              <th>Reason</th>
+            </tr>
+          </thead>
+          <tbody id="insufficient-tbody"></tbody>
+        </table>
+      </div>
+    </details>
+  </div>
+
+</div>
+
+<!-- ── detail panel ── -->
+<div class="detail-overlay" id="detail-overlay"></div>
+<div class="detail-panel" id="detail-panel" style="display:none">
+  <div class="detail-panel__head">
+    <div>
+      <div class="detail-panel__title" id="dp-title"></div>
+      <div class="detail-panel__sub" id="dp-sub"></div>
+    </div>
+    <button class="detail-close" id="dp-close" title="Close">&times;</button>
+  </div>
+  <div id="dp-body"></div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────
+// FORMATTERS
+// ─────────────────────────────────────────────
+const fmtN = (n, d=0) => (isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d }) : '—');
+const fmtUSD = (n) => isFinite(n) ? '$' + Math.round(n).toLocaleString('en-US') : '—';
+const fmtPct = (n, d=1) => isFinite(n) ? (n*100).toFixed(d) + '%' : '—';
+const fmtPctRaw = (n, d=1) => isFinite(n) ? n.toFixed(d) + '%' : '—';
+const fmtX = (n, d=2) => isFinite(n) ? n.toFixed(d) + 'x' : '—';
+const esc = (s) => { const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; };
+const median = (arr) => {
+  const xs = arr.filter(x => isFinite(x)).slice().sort((a,b) => a-b);
+  if (xs.length === 0) return 0;
+  const m = Math.floor(xs.length / 2);
+  return xs.length % 2 ? xs[m] : (xs[m-1] + xs[m]) / 2;
+};
+const isoDaysAgo = (n) => { const d = new Date(); d.setUTCDate(d.getUTCDate() - n); return d.toISOString().slice(0,10); };
+
+// ─────────────────────────────────────────────
+// BUCKET DEFINITIONS
+// ─────────────────────────────────────────────
+const BUCKETS = {
+  INSUFFICIENT_DATA:    { label: 'Insufficient',  color: '#9aa0a6', short: 'NODATA' },
+  TRACKING_ISSUE:       { label: 'Tracking',      color: '#7c3aed', short: 'TRACK',  icon: '⚠' },
+  NEGATIVE_ENGAGEMENT:  { label: 'Negative Eng.', color: '#a21caf', short: 'NEGENG', icon: '👎' },
+  CREATIVE_FATIGUE:     { label: 'Fatigue',       color: '#d97706', short: 'FATIGUE', icon: '🟠' },
+  SCALING_SATURATION:   { label: 'Scaling Sat.',  color: '#d97706', short: 'SCALE',  icon: '📈' },
+  DISCOUNT_HUNTER_TRAP: { label: 'Discount Trap', color: '#db2777', short: 'DISC',   icon: '🎟' },
+  RETARGETING_ECHO:     { label: 'Retarget Echo', color: '#1d4ed8', short: 'RETARG', icon: '🔁' },
+  HOOK_NOT_BODY:        { label: 'Hook-Not-Body', color: '#ca8a04', short: 'HOOK',   icon: '🪝' },
+  CHEAP_CLICKS_NO_BIZ:  { label: 'Cheap, No Biz', color: '#9aa0a6', short: 'CHEAP',  icon: '💸' },
+  WINNER:               { label: 'Winner',        color: '#1a7f37', short: 'WIN',    icon: '🟢' },
+  CLICKBAIT:            { label: 'Clickbait',     color: '#dc2626', short: 'BAIT',   icon: '🔴' },
+  QUALIFIER:            { label: 'Qualifier',     color: '#ca8a04', short: 'QUAL',   icon: '🟡' },
+  LOSER:                { label: 'Loser',         color: '#374151', short: 'LOSE',   icon: '⚫' },
+  UNCATEGORIZED:        { label: 'Uncategorized', color: '#9aa0a6', short: 'UNCAT' },
+};
+const BUCKET_PRIORITY = [
+  'INSUFFICIENT_DATA', 'TRACKING_ISSUE', 'NEGATIVE_ENGAGEMENT',
+  'CREATIVE_FATIGUE', 'SCALING_SATURATION', 'DISCOUNT_HUNTER_TRAP',
+  'RETARGETING_ECHO', 'HOOK_NOT_BODY', 'CHEAP_CLICKS_NO_BIZ',
+  'WINNER', 'CLICKBAIT', 'QUALIFIER', 'LOSER',
+];
+
+// ─────────────────────────────────────────────
+// JOIN: Meta + Shopify → AdRow[]
+// ─────────────────────────────────────────────
+function buildRows(metaCurrent, metaPrior, shopifyTable) {
+  // Aggregate Meta current/prior by (ad_name, landing_page_path)
+  const aggregateMeta = (rows) => {
+    const map = new Map();
+    for (const r of rows) {
+      const lp = r.landing_page_path || '(unknown)';
+      const key = (r.ad_name || '') + '||' + lp;
+      let g = map.get(key);
+      if (!g) {
+        g = {
+          key, ad_name: r.ad_name || '', landing_page_path: lp,
+          ad_ids: new Set(), campaign_names: new Set(), adset_names: new Set(),
+          spend: 0, impressions: 0, reach: 0,
+          link_clicks: 0, clicks_all: 0, landing_page_views: 0,
+          v3: 0, vthru: 0, vp25: 0, vp50: 0, vp75: 0, vp100: 0,
+          meta_purchases: 0, meta_purchase_value: 0, meta_atc: 0, meta_ic: 0,
+          post_reactions: 0, post_comments: 0, post_shares: 0, post_saves: 0,
+          quality_ranking: r.quality_ranking, engagement_rate_ranking: r.engagement_rate_ranking,
+          conversion_rate_ranking: r.conversion_rate_ranking,
+          preview_shareable_link: r.preview_shareable_link || null,
+          creative_link_url: r.creative_link_url || null,
+          ad_name_parsed: r.ad_name_parsed,
+        };
+        map.set(key, g);
+      }
+      if (r.ad_id) g.ad_ids.add(r.ad_id);
+      if (r.campaign_name) g.campaign_names.add(r.campaign_name);
+      if (r.adset_name) g.adset_names.add(r.adset_name);
+      g.spend += r.spend; g.impressions += r.impressions; g.reach += r.reach;
+      g.link_clicks += r.link_clicks; g.clicks_all += r.clicks_all;
+      g.landing_page_views += r.landing_page_views;
+      g.v3   += r.video_3sec_views || 0;
+      g.vthru += r.video_thruplay  || 0;
+      g.vp25 += r.video_p25 || 0; g.vp50 += r.video_p50 || 0;
+      g.vp75 += r.video_p75 || 0; g.vp100 += r.video_p100 || 0;
+      g.meta_purchases      += r.meta_purchases;
+      g.meta_purchase_value += r.meta_purchase_value;
+      g.meta_atc += r.meta_atc; g.meta_ic += r.meta_ic;
+      g.post_reactions += r.post_reactions; g.post_comments += r.post_comments;
+      g.post_shares    += r.post_shares;    g.post_saves    += r.post_saves;
+      // Prefer first-seen preview/creative but allow upgrade if missing
+      g.preview_shareable_link = g.preview_shareable_link || r.preview_shareable_link || null;
+      g.creative_link_url      = g.creative_link_url      || r.creative_link_url      || null;
+    }
+    return map;
+  };
+
+  const cur = aggregateMeta(metaCurrent);
+  const pri = aggregateMeta(metaPrior);
+
+  // Index Shopify rows by (utm_content, landing_page_path)
+  const shop = new Map();
+  if (shopifyTable && shopifyTable.columns && shopifyTable.rows) {
+    const cols = shopifyTable.columns.map(c => (c.name || '').toLowerCase());
+    const idx = (n) => cols.findIndex(c => c === n);
+    const iAd  = idx('utm_content');
+    const iLp  = idx('landing_page_path');
+    const iOrd = idx('orders');
+    const iGross = idx('gross_sales');
+    const iNet   = idx('net_sales');
+    const iTotal = idx('total_sales');
+    const iAov   = idx('average_order_value');
+    const iRet   = idx('returning_customer_orders');
+    for (const row of shopifyTable.rows) {
+      const get = (i) => i < 0 ? null : (Array.isArray(row) ? row[i] : row[shopifyTable.columns[i].name]);
+      const ad = String(get(iAd) ?? '').trim();
+      const lp = String(get(iLp) ?? '').trim();
+      if (!ad) continue;
+      const k = ad + '||' + lp;
+      const orders = parseFloat(get(iOrd)) || 0;
+      const revenue = parseFloat(get(iNet)) || parseFloat(get(iTotal)) || parseFloat(get(iGross)) || 0;
+      const aov = parseFloat(get(iAov)) || (orders > 0 ? revenue / orders : 0);
+      const returning = parseFloat(get(iRet)) || 0;
+      const newCustomerOrders = Math.max(orders - returning, 0);
+      shop.set(k, {
+        orders, revenue, aov,
+        returning,
+        new_customer_orders: newCustomerOrders,
+        pct_new: orders > 0 ? newCustomerOrders / orders : 0,
+      });
+    }
+  }
+
+  // Stitch together
+  const rows = [];
+  for (const [key, c] of cur) {
+    const p = pri.get(key);
+    const s = shop.get(key) || { orders: 0, revenue: 0, aov: 0, new_customer_orders: 0, pct_new: 0 };
+
+    const ctr = c.impressions > 0 ? (c.clicks_all / c.impressions) * 100 : 0;
+    const link_ctr = c.impressions > 0 ? (c.link_clicks / c.impressions) * 100 : 0;
+    const cpm = c.impressions > 0 ? (c.spend / c.impressions) * 1000 : 0;
+    const cpc = c.link_clicks > 0 ? c.spend / c.link_clicks : 0;
+    const frequency = c.reach > 0 ? c.impressions / c.reach : 0;
+    const hook_rate = c.impressions > 0 && c.v3 > 0 ? c.v3 / c.impressions : null;
+    const hold_rate = c.v3 > 0 && c.vthru > 0 ? c.vthru / c.v3 : null;
+    const cvr = c.link_clicks > 0 ? s.orders / c.link_clicks : 0;
+    const meta_roas = c.spend > 0 ? c.meta_purchase_value / c.spend : 0;
+    const shopify_roas = c.spend > 0 ? s.revenue / c.spend : 0;
+    const truth_check_ratio = s.orders > 0 ? c.meta_purchases / s.orders : null;
+    const lpv_ratio = c.link_clicks > 0 ? c.landing_page_views / c.link_clicks : null;
+
+    let prior = null;
+    if (p) {
+      const p_ctr = p.impressions > 0 ? (p.clicks_all / p.impressions) * 100 : 0;
+      const p_cpm = p.impressions > 0 ? (p.spend / p.impressions) * 1000 : 0;
+      const p_freq = p.reach > 0 ? p.impressions / p.reach : 0;
+      const p_cpa = p.meta_purchases > 0 ? p.spend / p.meta_purchases : null;
+      const cpa = c.meta_purchases > 0 ? c.spend / c.meta_purchases : null;
+      prior = {
+        spend: p.spend, ctr: p_ctr, cpm: p_cpm, frequency: p_freq, cpa: p_cpa,
+        ctr_change_pct: p_ctr > 0 ? ((ctr - p_ctr) / p_ctr) * 100 : null,
+        cpm_change_pct: p_cpm > 0 ? ((cpm - p_cpm) / p_cpm) * 100 : null,
+        frequency_change_pct: p_freq > 0 ? ((frequency - p_freq) / p_freq) * 100 : null,
+        cpa_change_pct: p_cpa && cpa ? ((cpa - p_cpa) / p_cpa) * 100 : null,
+        spend_change_pct: p.spend > 0 ? ((c.spend - p.spend) / p.spend) * 100 : null,
+      };
+    }
+
+    rows.push({
+      ad_name: c.ad_name,
+      landing_page_path: c.landing_page_path,
+      ad_ids: [...c.ad_ids],
+      campaign_names: [...c.campaign_names],
+      adset_names: [...c.adset_names],
+      preview_shareable_link: c.preview_shareable_link,
+      creative_link_url: c.creative_link_url,
+      ad_name_parsed: c.ad_name_parsed,
+
+      spend: c.spend, impressions: c.impressions, reach: c.reach,
+      frequency, cpm, cpc, ctr, link_ctr,
+      link_clicks: c.link_clicks, clicks_all: c.clicks_all,
+      landing_page_views: c.landing_page_views, lpv_to_link_click_ratio: lpv_ratio,
+      video_3sec_views: c.v3 || null, video_thruplay: c.vthru || null,
+      video_p25: c.vp25 || null, video_p50: c.vp50 || null, video_p75: c.vp75 || null, video_p100: c.vp100 || null,
+      hook_rate, hold_rate,
+      meta_purchases: c.meta_purchases, meta_purchase_value: c.meta_purchase_value,
+      meta_roas, meta_atc: c.meta_atc, meta_ic: c.meta_ic,
+      quality_ranking: c.quality_ranking,
+      engagement_rate_ranking: c.engagement_rate_ranking,
+      conversion_rate_ranking: c.conversion_rate_ranking,
+      post_reactions: c.post_reactions, post_comments: c.post_comments,
+      post_shares: c.post_shares, post_saves: c.post_saves,
+      shopify_orders: s.orders, shopify_revenue: s.revenue, shopify_aov: s.aov,
+      shopify_roas, shopify_new_customer_orders: s.new_customer_orders,
+      shopify_pct_new: s.pct_new,
+      cvr, truth_check_ratio,
+      prior,                                        // null when ad is brand-new
+      bucket: 'UNCATEGORIZED', secondary_flags: [], reasons: [],
+    });
+  }
+  return rows;
+}
+
+// ─────────────────────────────────────────────
+// BENCHMARKS
+// ─────────────────────────────────────────────
+function computeBenchmarks(rows, config) {
+  const elig = rows.filter(r => r.spend >= config.minimum_spend && r.impressions >= config.minimum_impressions);
+  return {
+    median_ctr: median(elig.map(r => r.ctr)),
+    median_link_ctr: median(elig.map(r => r.link_ctr)),
+    median_hook_rate: median(elig.map(r => r.hook_rate).filter(x => x != null)),
+    median_hold_rate: median(elig.map(r => r.hold_rate).filter(x => x != null)),
+    median_cpm: median(elig.map(r => r.cpm)),
+    median_cpc: median(elig.map(r => r.cpc).filter(x => x > 0)),
+    median_cvr: median(elig.map(r => r.cvr).filter(x => x > 0)),
+    median_aov: median(elig.map(r => r.shopify_aov).filter(x => x > 0)),
+    median_pct_new: median(elig.map(r => r.shopify_pct_new).filter(x => x > 0)),
+    median_shopify_roas: median(elig.map(r => r.shopify_roas).filter(x => x > 0)),
+    median_frequency: median(elig.map(r => r.frequency).filter(x => x > 0)),
+  };
+}
+
+// ─────────────────────────────────────────────
+// BUCKETING ENGINE — pure function over (row, benchmarks, config)
+// ─────────────────────────────────────────────
+const RULES = {
+  INSUFFICIENT_DATA: (r, b, c) => {
+    if (r.spend < c.minimum_spend) return { ok: true, reasons: [`Spend $${r.spend.toFixed(2)} < minimum $${c.minimum_spend}`] };
+    if (r.impressions < c.minimum_impressions) return { ok: true, reasons: [`Impressions ${r.impressions.toFixed(0)} < ${c.minimum_impressions}`] };
+    return null;
+  },
+  TRACKING_ISSUE: (r, b, c) => {
+    if (r.truth_check_ratio == null) return null;
+    if (r.link_clicks <= 100) return null;
+    if (r.truth_check_ratio < c.truth_check_lower || r.truth_check_ratio > c.truth_check_upper) {
+      return { ok: true, reasons: [`Meta/Shopify purchase ratio ${r.truth_check_ratio.toFixed(2)} outside [${c.truth_check_lower}, ${c.truth_check_upper}]`] };
+    }
+    return null;
+  },
+  NEGATIVE_ENGAGEMENT: (r) => {
+    const reasons = [];
+    if (r.quality_ranking === 'below_average_10' || r.quality_ranking === 'below_average_20' || r.quality_ranking === 'below_average_35' || r.quality_ranking === 'below_average') reasons.push(`Quality ranking: ${r.quality_ranking}`);
+    if (r.engagement_rate_ranking === 'below_average_10' || r.engagement_rate_ranking === 'below_average_20' || r.engagement_rate_ranking === 'below_average_35' || r.engagement_rate_ranking === 'below_average') reasons.push(`Engagement-rate ranking: ${r.engagement_rate_ranking}`);
+    return reasons.length ? { ok: true, reasons } : null;
+  },
+  CREATIVE_FATIGUE: (r, b, c) => {
+    if (!r.prior) return null;
+    if (r.frequency <= c.high_frequency) return null;
+    if (r.prior.ctr_change_pct == null || r.prior.ctr_change_pct >= c.ctr_decline_pct) return null;
+    const cpmRising = r.prior.cpm_change_pct != null && r.prior.cpm_change_pct > 10;
+    const cpaRising = r.prior.cpa_change_pct != null && r.prior.cpa_change_pct > 15;
+    if (!cpmRising && !cpaRising) return null;
+    return { ok: true, reasons: [
+      `Frequency ${r.frequency.toFixed(2)} > ${c.high_frequency}`,
+      `CTR change ${r.prior.ctr_change_pct.toFixed(1)}% (threshold ${c.ctr_decline_pct}%)`,
+      cpmRising ? `CPM up ${r.prior.cpm_change_pct.toFixed(1)}%` : null,
+      cpaRising ? `CPA up ${r.prior.cpa_change_pct.toFixed(1)}%` : null,
+    ].filter(Boolean) };
+  },
+  SCALING_SATURATION: (r, b, c) => {
+    if (!r.prior) return null;
+    if (r.prior.spend_change_pct == null || r.prior.spend_change_pct <= c.spend_increase) return null;
+    if (r.prior.cpa_change_pct == null || r.prior.cpa_change_pct <= c.cpa_increase) return null;
+    if (r.prior.frequency_change_pct == null || r.prior.frequency_change_pct <= 20) return null;
+    return { ok: true, reasons: [
+      `Spend up ${r.prior.spend_change_pct.toFixed(0)}%`,
+      `CPA up ${r.prior.cpa_change_pct.toFixed(0)}%`,
+      `Frequency up ${r.prior.frequency_change_pct.toFixed(0)}%`,
+    ] };
+  },
+  DISCOUNT_HUNTER_TRAP: (r, b, c) => {
+    if (b.median_shopify_roas <= 0) return null;
+    const roasOk  = r.shopify_roas > b.median_shopify_roas;
+    const newLow  = b.median_pct_new > 0 && r.shopify_pct_new < b.median_pct_new * c.discount_pct_new_mult;
+    const aovLow  = b.median_aov > 0 && r.shopify_aov < b.median_aov;
+    if (roasOk && newLow && aovLow) return { ok: true, reasons: [
+      `ROAS ${r.shopify_roas.toFixed(2)}x > median ${b.median_shopify_roas.toFixed(2)}x`,
+      `% new ${(r.shopify_pct_new*100).toFixed(0)}% < ${(b.median_pct_new*c.discount_pct_new_mult*100).toFixed(0)}% (${c.discount_pct_new_mult}× median)`,
+      `AOV $${r.shopify_aov.toFixed(0)} < median $${b.median_aov.toFixed(0)}`,
+    ] };
+    return null;
+  },
+  RETARGETING_ECHO: (r, b, c) => {
+    const adsetText = r.adset_names.join(' ').toLowerCase();
+    if (!c.retargeting_patterns.some(p => adsetText.includes(p))) return null;
+    if (r.shopify_pct_new >= 0.2) return null;
+    if (r.frequency <= 4.0) return null;
+    return { ok: true, reasons: [
+      `Ad set looks like retargeting: "${r.adset_names.join(', ')}"`,
+      `% new only ${(r.shopify_pct_new*100).toFixed(0)}%`,
+      `Frequency ${r.frequency.toFixed(2)} > 4.0`,
+    ] };
+  },
+  HOOK_NOT_BODY: (r, b) => {
+    if (r.hook_rate == null || r.hold_rate == null) return null;
+    if (r.hook_rate <= b.median_hook_rate) return null;
+    if (r.hold_rate >= 0.25) return null;
+    if (b.median_link_ctr > 0 && r.link_ctr >= b.median_link_ctr) return null;
+    return { ok: true, reasons: [
+      `Hook rate ${(r.hook_rate*100).toFixed(1)}% > median ${(b.median_hook_rate*100).toFixed(1)}%`,
+      `Hold rate ${(r.hold_rate*100).toFixed(0)}% < 25%`,
+      `Link CTR ${r.link_ctr.toFixed(2)}% < median ${b.median_link_ctr.toFixed(2)}%`,
+    ] };
+  },
+  CHEAP_CLICKS_NO_BIZ: (r, b, c) => {
+    if (b.median_cpc <= 0 || b.median_ctr <= 0 || b.median_cvr <= 0) return null;
+    if (r.cpc >= b.median_cpc) return null;
+    if (r.ctr <= b.median_ctr) return null;
+    if (r.cvr >= b.median_cvr) return null;
+    if (r.shopify_roas >= c.target_roas) return null;
+    return { ok: true, reasons: [
+      `CPC $${r.cpc.toFixed(2)} < median $${b.median_cpc.toFixed(2)}`,
+      `CTR ${r.ctr.toFixed(2)}% > median ${b.median_ctr.toFixed(2)}%`,
+      `CVR ${(r.cvr*100).toFixed(2)}% < median ${(b.median_cvr*100).toFixed(2)}%`,
+      `Shop ROAS ${r.shopify_roas.toFixed(2)}x < target ${c.target_roas.toFixed(2)}x`,
+    ] };
+  },
+  WINNER: (r, b, c) => {
+    if (b.median_ctr <= 0 || b.median_cvr <= 0) return null;
+    if (r.ctr <= b.median_ctr) return null;
+    if (r.cvr <= b.median_cvr) return null;
+    if (r.shopify_roas <= c.target_roas) return null;
+    if (r.frequency >= c.high_frequency) return null;
+    if (r.quality_ranking && /below/i.test(r.quality_ranking)) return null;
+    return { ok: true, reasons: [
+      `CTR ${r.ctr.toFixed(2)}% > median ${b.median_ctr.toFixed(2)}%`,
+      `CVR ${(r.cvr*100).toFixed(2)}% > median ${(b.median_cvr*100).toFixed(2)}%`,
+      `Shop ROAS ${r.shopify_roas.toFixed(2)}x > target ${c.target_roas.toFixed(2)}x`,
+      `Frequency ${r.frequency.toFixed(2)} < ${c.high_frequency}`,
+    ] };
+  },
+  CLICKBAIT: (r, b, c) => {
+    if (b.median_ctr <= 0) return null;
+    if (r.ctr <= b.median_ctr) return null;
+    const cvrLow = b.median_cvr > 0 && r.cvr < b.median_cvr;
+    const newLow = b.median_pct_new > 0 && r.shopify_pct_new < b.median_pct_new;
+    const aovLow = b.median_aov > 0 && r.shopify_aov < b.median_aov;
+    if (!(cvrLow || newLow || aovLow)) return null;
+    if (r.shopify_roas >= c.target_roas) return null;
+    return { ok: true, reasons: [
+      `CTR ${r.ctr.toFixed(2)}% > median ${b.median_ctr.toFixed(2)}%`,
+      cvrLow ? `CVR ${(r.cvr*100).toFixed(2)}% < median ${(b.median_cvr*100).toFixed(2)}%` : null,
+      newLow ? `% new ${(r.shopify_pct_new*100).toFixed(0)}% < median ${(b.median_pct_new*100).toFixed(0)}%` : null,
+      aovLow ? `AOV $${r.shopify_aov.toFixed(0)} < median $${b.median_aov.toFixed(0)}` : null,
+      `Shop ROAS ${r.shopify_roas.toFixed(2)}x < target ${c.target_roas.toFixed(2)}x`,
+    ].filter(Boolean) };
+  },
+  QUALIFIER: (r, b, c) => {
+    if (b.median_ctr <= 0 || b.median_cvr <= 0) return null;
+    if (r.ctr >= b.median_ctr) return null;
+    if (r.cvr < b.median_cvr * c.qualifier_cvr_mult) return null;
+    if (r.shopify_roas < c.target_roas) return null;
+    return { ok: true, reasons: [
+      `CTR ${r.ctr.toFixed(2)}% < median ${b.median_ctr.toFixed(2)}%`,
+      `CVR ${(r.cvr*100).toFixed(2)}% > ${c.qualifier_cvr_mult}× median (${(b.median_cvr*c.qualifier_cvr_mult*100).toFixed(2)}%)`,
+      `Shop ROAS ${r.shopify_roas.toFixed(2)}x ≥ target ${c.target_roas.toFixed(2)}x`,
+    ] };
+  },
+  LOSER: (r, b, c) => {
+    if (b.median_ctr <= 0) return null;
+    if (r.ctr >= b.median_ctr) return null;
+    if (b.median_cvr > 0 && r.cvr >= b.median_cvr) return null;
+    if (r.shopify_roas >= c.target_roas) return null;
+    return { ok: true, reasons: [
+      `CTR ${r.ctr.toFixed(2)}% < median ${b.median_ctr.toFixed(2)}%`,
+      `CVR ${(r.cvr*100).toFixed(2)}% < median ${(b.median_cvr*100).toFixed(2)}%`,
+      `Shop ROAS ${r.shopify_roas.toFixed(2)}x < target ${c.target_roas.toFixed(2)}x`,
+    ] };
+  },
+};
+
+function assignBucket(r, b, c) {
+  const matched = [];
+  for (const name of BUCKET_PRIORITY) {
+    const fn = RULES[name];
+    if (!fn) continue;
+    const res = fn(r, b, c);
+    if (res && res.ok) matched.push({ name, reasons: res.reasons });
+    if (matched.length === 1 && name === 'INSUFFICIENT_DATA') break; // INSUFFICIENT_DATA short-circuits
+  }
+  if (matched.length === 0) return { primary: 'UNCATEGORIZED', secondary: [], reasons: ['No rule matched'] };
+  return { primary: matched[0].name, secondary: matched.slice(1).map(m => m.name), reasons: matched[0].reasons };
+}
+
+// ─────────────────────────────────────────────
+// STATE + RENDER
+// ─────────────────────────────────────────────
+const state = {
+  rows: [],
+  benchmarks: null,
+  config: null,
+  bucketFilter: '',
+  campaignFilter: '',
+  adsetFilter: '',
+  search: '',
+  sort: { key: 'spend', dir: 'desc' },
+  selectedKey: null,
+};
+
+function readConfig() {
+  const tr = parseFloat(document.getElementById('cfg-target-roas').value) || 2.0;
+  const ms = parseFloat(document.getElementById('cfg-min-spend').value) || 50;
+  return {
+    minimum_spend: ms,
+    minimum_impressions: 1000,
+    target_roas: tr,
+    high_frequency: 3.0,
+    ctr_decline_pct: -15,
+    spend_increase: 50,
+    cpa_increase: 25,
+    discount_pct_new_mult: 0.5,
+    qualifier_cvr_mult: 1.5,
+    truth_check_lower: 0.5,
+    truth_check_upper: 2.0,
+    retargeting_patterns: ['rt', 'retarget', 'warm', 'visitors', 'view-content'],
+  };
+}
+
+async function loadData() {
+  const acct  = document.getElementById('acct-select').value;
+  const since = document.getElementById('d-start').value;
+  const until = document.getElementById('d-end').value;
+  const cs    = document.getElementById('c-start').value;
+  const cu    = document.getElementById('c-end').value;
+  const utm   = document.getElementById('utm-sources').value.trim();
+  const status = document.getElementById('status');
+  const btn = document.getElementById('btn-load');
+
+  if (!acct) { status.className = 'status error'; status.textContent = 'Pick an ad account first.'; return; }
+  if (!since || !until) { status.className = 'status error'; status.textContent = 'Pick a start & end date.'; return; }
+
+  btn.disabled = true;
+  status.className = 'status'; status.textContent = 'Pulling Meta + Shopify data…';
+
+  try {
+    const metaParams = new URLSearchParams({ account_id: acct, since, until });
+    if (cs && cu) { metaParams.set('compare_since', cs); metaParams.set('compare_until', cu); }
+    const shopParams = new URLSearchParams({ since, until, utm_sources: utm });
+
+    const [metaResp, shopResp] = await Promise.all([
+      fetch('/api/diag-meta?' + metaParams.toString()),
+      fetch('/api/diag-shopify?' + shopParams.toString()),
+    ]);
+    if (!metaResp.ok) {
+      const j = await metaResp.json().catch(() => ({}));
+      throw new Error('Meta: ' + (j.error || metaResp.status));
+    }
+    if (!shopResp.ok) {
+      const j = await shopResp.json().catch(() => ({}));
+      throw new Error('Shopify: ' + (j.error || shopResp.status));
+    }
+    const metaData = await metaResp.json();
+    const shopData = await shopResp.json();
+
+    state.config = readConfig();
+    state.rows = buildRows(metaData.current || [], metaData.prior || [], shopData.orders);
+    state.benchmarks = computeBenchmarks(state.rows, state.config);
+
+    // Bucket each row
+    for (const r of state.rows) {
+      const result = assignBucket(r, state.benchmarks, state.config);
+      r.bucket = result.primary;
+      r.secondary_flags = result.secondary;
+      r.reasons = result.reasons;
+    }
+
+    populateFilters();
+    renderTiles();
+    renderTable();
+    renderInsufficient();
+
+    status.textContent = `Loaded ${state.rows.length} ad×LP rows · ${metaData.current.length} ads (current) · ${(metaData.prior || []).length} ads (prior).`;
+    document.getElementById('summary-card').style.display = '';
+    document.getElementById('table-card').style.display = '';
+  } catch (err) {
+    console.error(err);
+    status.className = 'status error';
+    status.textContent = err.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function populateFilters() {
+  const camps = new Set(), adsets = new Set();
+  state.rows.forEach(r => {
+    r.campaign_names.forEach(c => camps.add(c));
+    r.adset_names.forEach(a => adsets.add(a));
+  });
+  const fillSel = (id, vals, current) => {
+    const sel = document.getElementById(id);
+    sel.innerHTML = '<option value="">All</option>' + [...vals].sort().map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+    if (current && [...sel.options].some(o => o.value === current)) sel.value = current;
+  };
+  fillSel('campaign-filter', camps, state.campaignFilter);
+  fillSel('adset-filter', adsets, state.adsetFilter);
+}
+
+function bucketChip(name) {
+  const b = BUCKETS[name] || BUCKETS.UNCATEGORIZED;
+  return `<span class="chip" style="background:${b.color}20;color:${b.color}">
+    <span class="chip__dot" style="background:${b.color}"></span>${b.short}
+  </span>`;
+}
+
+function renderTiles() {
+  const tiles = document.getElementById('tiles');
+  const counts = {};
+  const spends = {};
+  for (const r of state.rows) {
+    counts[r.bucket] = (counts[r.bucket] || 0) + 1;
+    spends[r.bucket] = (spends[r.bucket] || 0) + r.spend;
+  }
+  // Show all buckets that have at least one row, in priority order, plus UNCATEGORIZED at end
+  const order = [...BUCKET_PRIORITY, 'UNCATEGORIZED'].filter(b => counts[b]);
+  tiles.innerHTML = order.map(b => {
+    const def = BUCKETS[b];
+    const active = state.bucketFilter === b;
+    return `<div class="tile ${active ? 'active' : ''}" data-bucket="${b}">
+      <div class="tile__label"><span class="tile__chip" style="background:${def.color}"></span>${def.label}</div>
+      <div class="tile__count">${counts[b]}</div>
+      <div class="tile__spend">${fmtUSD(spends[b] || 0)}</div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('summary-meta').textContent =
+    state.benchmarks
+      ? ` · CTR ${state.benchmarks.median_ctr.toFixed(2)}% · CVR ${(state.benchmarks.median_cvr*100).toFixed(2)}% · ROAS ${state.benchmarks.median_shopify_roas.toFixed(2)}x · AOV $${state.benchmarks.median_aov.toFixed(0)} · %new ${(state.benchmarks.median_pct_new*100).toFixed(0)}% (account medians)`
+      : '';
+
+  tiles.querySelectorAll('.tile').forEach(t => {
+    t.addEventListener('click', () => {
+      const b = t.dataset.bucket;
+      state.bucketFilter = (state.bucketFilter === b) ? '' : b;
+      renderTiles(); renderTable();
+    });
+  });
+}
+
+function renderTable() {
+  const tbody = document.getElementById('diag-tbody');
+  let rows = state.rows.filter(r => r.bucket !== 'INSUFFICIENT_DATA');
+
+  if (state.bucketFilter) rows = rows.filter(r => r.bucket === state.bucketFilter);
+  if (state.campaignFilter) rows = rows.filter(r => r.campaign_names.includes(state.campaignFilter));
+  if (state.adsetFilter)    rows = rows.filter(r => r.adset_names.includes(state.adsetFilter));
+  if (state.search) {
+    const q = state.search.toLowerCase();
+    rows = rows.filter(r => r.ad_name.toLowerCase().includes(q) || r.landing_page_path.toLowerCase().includes(q));
+  }
+
+  // Sort
+  const keyFns = {
+    bucket: r => r.bucket,
+    ad_name: r => r.ad_name.toLowerCase(),
+    landing_page_path: r => r.landing_page_path,
+    spend: r => r.spend, shopify_roas: r => r.shopify_roas, meta_roas: r => r.meta_roas,
+    ctr: r => r.ctr, hook_rate: r => r.hook_rate || 0, cvr: r => r.cvr,
+    shopify_pct_new: r => r.shopify_pct_new, shopify_aov: r => r.shopify_aov, frequency: r => r.frequency,
+  };
+  const kf = keyFns[state.sort.key] || keyFns.spend;
+  const dir = state.sort.dir === 'desc' ? -1 : 1;
+  rows = rows.slice().sort((a,b) => {
+    const va = kf(a), vb = kf(b);
+    if (typeof va === 'string') return va.localeCompare(vb) * dir;
+    return ((va || 0) - (vb || 0)) * dir;
+  });
+
+  document.getElementById('row-count').textContent = `${rows.length} rows · ${fmtUSD(rows.reduce((s,r) => s + r.spend, 0))} spend`;
+
+  tbody.innerHTML = rows.map(r => {
+    const adShort = r.ad_name.length > 42 ? r.ad_name.slice(0, 40) + '…' : r.ad_name;
+    const lpShort = r.landing_page_path.length > 28 ? r.landing_page_path.slice(0, 26) + '…' : r.landing_page_path;
+    const secondary = r.secondary_flags.length
+      ? r.secondary_flags.map(s => `<span class="chip-secondary" title="${esc(BUCKETS[s]?.label || s)}">${esc(BUCKETS[s]?.short || s)}</span>`).join('')
+      : '';
+    const sel = state.selectedKey === r.ad_name + '||' + r.landing_page_path ? 'row-selected' : '';
+    return `<tr class="${sel}" data-key="${esc(r.ad_name + '||' + r.landing_page_path)}">
+      <td>${bucketChip(r.bucket)}${secondary}</td>
+      <td><div class="ad-name-cell" title="${esc(r.ad_name)}">${esc(adShort)}</div></td>
+      <td><div class="lp-cell" title="${esc(r.landing_page_path)}">${esc(lpShort)}</div></td>
+      <td class="r">${fmtUSD(r.spend)}</td>
+      <td class="r ${r.shopify_roas >= state.config.target_roas ? 'pos' : 'neg'}">${fmtX(r.shopify_roas)}</td>
+      <td class="r muted">${fmtX(r.meta_roas)}</td>
+      <td class="r">${fmtPctRaw(r.ctr)}</td>
+      <td class="r">${r.hook_rate != null ? fmtPct(r.hook_rate, 1) : '—'}</td>
+      <td class="r">${r.cvr > 0 ? fmtPct(r.cvr, 2) : '—'}</td>
+      <td class="r">${r.shopify_orders > 0 ? fmtPct(r.shopify_pct_new, 0) : '—'}</td>
+      <td class="r">${r.shopify_aov > 0 ? fmtUSD(r.shopify_aov) : '—'}</td>
+      <td class="r">${fmtN(r.frequency, 2)}</td>
+    </tr>`;
+  }).join('');
+
+  // Sort header indicators
+  document.querySelectorAll('table.diag thead th[data-sort]').forEach(th => {
+    const active = th.dataset.sort === state.sort.key;
+    th.classList.toggle('sort-active', active);
+    const old = th.querySelector('.sort-arrow');
+    if (old) old.remove();
+    if (active) {
+      const arrow = document.createElement('span');
+      arrow.className = 'sort-arrow';
+      arrow.textContent = state.sort.dir === 'desc' ? '▼' : '▲';
+      th.appendChild(arrow);
+    }
+  });
+
+  tbody.querySelectorAll('tr').forEach(tr => {
+    tr.addEventListener('click', () => openDetail(tr.dataset.key));
+  });
+}
+
+function renderInsufficient() {
+  const card = document.getElementById('insufficient-card');
+  const tbody = document.getElementById('insufficient-tbody');
+  const rows = state.rows.filter(r => r.bucket === 'INSUFFICIENT_DATA');
+  if (rows.length === 0) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  document.getElementById('insufficient-count').textContent = rows.length + ' rows';
+  rows.sort((a,b) => b.spend - a.spend);
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td><div class="ad-name-cell" title="${esc(r.ad_name)}">${esc(r.ad_name.length > 50 ? r.ad_name.slice(0, 48) + '…' : r.ad_name)}</div></td>
+      <td><div class="lp-cell" title="${esc(r.landing_page_path)}">${esc(r.landing_page_path)}</div></td>
+      <td class="r">${fmtUSD(r.spend)}</td>
+      <td class="r">${fmtN(r.impressions)}</td>
+      <td class="muted">${esc((r.reasons || []).join('; '))}</td>
+    </tr>
+  `).join('');
+}
+
+// ─────────────────────────────────────────────
+// DETAIL PANEL
+// ─────────────────────────────────────────────
+function openDetail(key) {
+  const r = state.rows.find(x => (x.ad_name + '||' + x.landing_page_path) === key);
+  if (!r) return;
+  state.selectedKey = key;
+  document.querySelectorAll('table.diag tbody tr').forEach(tr => tr.classList.toggle('row-selected', tr.dataset.key === key));
+
+  document.getElementById('dp-title').textContent = r.ad_name || '(unnamed)';
+  document.getElementById('dp-sub').textContent = r.landing_page_path + (r.creative_link_url ? '  ·  ' + r.creative_link_url : '');
+
+  const def = BUCKETS[r.bucket] || BUCKETS.UNCATEGORIZED;
+
+  const previewSection = r.preview_shareable_link
+    ? `<div class="detail-section">
+         <div class="detail-section__h">Preview</div>
+         <iframe class="preview-frame" src="${esc(r.preview_shareable_link)}" sandbox="allow-scripts allow-same-origin"></iframe>
+         <div style="margin-top:6px;font-size:0.78rem">
+           <a href="${esc(r.preview_shareable_link)}" target="_blank" rel="noopener">Open preview in new tab ↗</a>
+         </div>
+       </div>`
+    : `<div class="detail-section">
+         <div class="detail-section__h">Preview</div>
+         <div class="preview-fallback">No preview link available.</div>
+       </div>`;
+
+  const reasons = (r.reasons || []).map(rsn => `<li class="r-pass">✓ ${esc(rsn)}</li>`).join('');
+  const secondaryHtml = r.secondary_flags.length
+    ? `<div style="margin-top:6px;font-size:0.78rem;color:var(--text-secondary)">Also flagged: ${r.secondary_flags.map(s => `<span class="chip-secondary">${esc(BUCKETS[s]?.label || s)}</span>`).join(' ')}</div>`
+    : '';
+
+  const popHtml = r.prior ? `
+    <div class="detail-section">
+      <div class="detail-section__h">Period over period</div>
+      <table class="pop-table">
+        <thead><tr><th>Metric</th><th class="r">Current</th><th class="r">Prior</th><th class="r">Δ</th></tr></thead>
+        <tbody>
+          <tr><td>Spend</td><td class="r">${fmtUSD(r.spend)}</td><td class="r">${fmtUSD(r.prior.spend)}</td><td class="r ${(r.prior.spend_change_pct||0) > 0 ? 'pos' : 'neg'}">${r.prior.spend_change_pct != null ? r.prior.spend_change_pct.toFixed(0)+'%' : '—'}</td></tr>
+          <tr><td>CTR</td><td class="r">${fmtPctRaw(r.ctr)}</td><td class="r">${fmtPctRaw(r.prior.ctr)}</td><td class="r ${(r.prior.ctr_change_pct||0) > 0 ? 'pos' : 'neg'}">${r.prior.ctr_change_pct != null ? r.prior.ctr_change_pct.toFixed(1)+'%' : '—'}</td></tr>
+          <tr><td>CPM</td><td class="r">${fmtUSD(r.cpm)}</td><td class="r">${fmtUSD(r.prior.cpm)}</td><td class="r ${(r.prior.cpm_change_pct||0) < 0 ? 'pos' : 'neg'}">${r.prior.cpm_change_pct != null ? r.prior.cpm_change_pct.toFixed(1)+'%' : '—'}</td></tr>
+          <tr><td>Frequency</td><td class="r">${r.frequency.toFixed(2)}</td><td class="r">${r.prior.frequency.toFixed(2)}</td><td class="r ${(r.prior.frequency_change_pct||0) < 0 ? 'pos' : 'neg'}">${r.prior.frequency_change_pct != null ? r.prior.frequency_change_pct.toFixed(0)+'%' : '—'}</td></tr>
+          <tr><td>CPA</td><td class="r">${r.prior.cpa != null ? fmtUSD(r.spend/r.meta_purchases) : '—'}</td><td class="r">${r.prior.cpa != null ? fmtUSD(r.prior.cpa) : '—'}</td><td class="r ${(r.prior.cpa_change_pct||0) < 0 ? 'pos' : 'neg'}">${r.prior.cpa_change_pct != null ? r.prior.cpa_change_pct.toFixed(0)+'%' : '—'}</td></tr>
+        </tbody>
+      </table>
+    </div>` : `<div class="detail-section"><div class="detail-section__h">Period over period</div><div class="muted" style="font-size:0.82rem">No comparison data — ad is NEW or compare window not set.</div></div>`;
+
+  const metaList = (label, val) => `<div><span class="k">${label}</span><span class="v">${val}</span></div>`;
+
+  document.getElementById('dp-body').innerHTML = `
+    <div class="detail-section">
+      ${bucketChip(r.bucket)} ${secondaryHtml ? '' : ''}
+      <div style="margin-top:6px;font-weight:600;font-size:0.92rem">${esc(def.label)}</div>
+      ${secondaryHtml}
+    </div>
+    ${previewSection}
+    <div class="detail-section">
+      <div class="detail-section__h">Why this bucket</div>
+      <ul class="reasons">${reasons || '<li>—</li>'}</ul>
+    </div>
+    <div class="detail-section">
+      <div class="detail-section__h">Meta metrics</div>
+      <div class="metric-grid">
+        ${metaList('Spend', fmtUSD(r.spend))}
+        ${metaList('Impressions', fmtN(r.impressions))}
+        ${metaList('Reach', fmtN(r.reach))}
+        ${metaList('Frequency', r.frequency.toFixed(2))}
+        ${metaList('CPM', fmtUSD(r.cpm))}
+        ${metaList('CPC', fmtUSD(r.cpc))}
+        ${metaList('CTR (all)', fmtPctRaw(r.ctr))}
+        ${metaList('Link CTR', fmtPctRaw(r.link_ctr))}
+        ${metaList('Link clicks', fmtN(r.link_clicks))}
+        ${metaList('Landing-page views', fmtN(r.landing_page_views))}
+        ${metaList('LPV / link click', r.lpv_to_link_click_ratio != null ? fmtPct(r.lpv_to_link_click_ratio, 0) : '—')}
+        ${metaList('Hook rate', r.hook_rate != null ? fmtPct(r.hook_rate, 1) : '—')}
+        ${metaList('Hold rate', r.hold_rate != null ? fmtPct(r.hold_rate, 0) : '—')}
+        ${metaList('Meta purchases', fmtN(r.meta_purchases))}
+        ${metaList('Meta purchase $', fmtUSD(r.meta_purchase_value))}
+        ${metaList('Meta ROAS', fmtX(r.meta_roas))}
+        ${metaList('Quality rank', r.quality_ranking || '—')}
+        ${metaList('Engagement rank', r.engagement_rate_ranking || '—')}
+        ${metaList('Conv-rate rank', r.conversion_rate_ranking || '—')}
+      </div>
+    </div>
+    <div class="detail-section">
+      <div class="detail-section__h">Shopify metrics</div>
+      <div class="metric-grid">
+        ${metaList('Orders', fmtN(r.shopify_orders))}
+        ${metaList('Revenue', fmtUSD(r.shopify_revenue))}
+        ${metaList('AOV', r.shopify_aov > 0 ? fmtUSD(r.shopify_aov) : '—')}
+        ${metaList('Shop ROAS', fmtX(r.shopify_roas))}
+        ${metaList('CVR (orders/link clicks)', r.cvr > 0 ? fmtPct(r.cvr, 2) : '—')}
+        ${metaList('% new', r.shopify_orders > 0 ? fmtPct(r.shopify_pct_new, 0) : '—')}
+        ${metaList('New-customer orders', fmtN(r.shopify_new_customer_orders))}
+        ${metaList('Truth-check (Meta/Shop)', r.truth_check_ratio != null ? r.truth_check_ratio.toFixed(2) : '—')}
+      </div>
+    </div>
+    ${popHtml}
+    <div class="detail-section">
+      <div class="detail-section__h">Identifiers</div>
+      <div class="metric-grid">
+        ${metaList('Ad IDs', r.ad_ids.join(', ') || '—')}
+        ${metaList('Campaigns', r.campaign_names.join(', ') || '—')}
+        ${metaList('Ad sets', r.adset_names.join(', ') || '—')}
+      </div>
+    </div>
+  `;
+
+  document.getElementById('detail-overlay').classList.add('open');
+  document.getElementById('detail-panel').style.display = '';
+}
+
+function closeDetail() {
+  document.getElementById('detail-overlay').classList.remove('open');
+  document.getElementById('detail-panel').style.display = 'none';
+  state.selectedKey = null;
+  document.querySelectorAll('table.diag tbody tr').forEach(tr => tr.classList.remove('row-selected'));
+}
+
+// ─────────────────────────────────────────────
+// WIRE UP
+// ─────────────────────────────────────────────
+async function loadAccounts() {
+  try {
+    const r = await fetch('/api/auth-status');
+    const a = await r.json();
+    if (!a.authenticated) {
+      document.getElementById('status').className = 'status error';
+      document.getElementById('status').innerHTML = 'Not authenticated. <a href="/auth/facebook">Log in with Facebook</a>.';
+      return;
+    }
+    const resp = await fetch('/api/ad-accounts');
+    if (!resp.ok) throw new Error('Failed to fetch ad accounts');
+    const data = await resp.json();
+    const sel = document.getElementById('acct-select');
+    sel.innerHTML = '<option value="">— choose —</option>' + (data.accounts || [])
+      .map(a => `<option value="${esc(a.id)}">${esc(a.name)} (${esc(a.account_id)})</option>`).join('');
+    if (data.accounts && data.accounts.length === 1) sel.value = data.accounts[0].id;
+  } catch (err) {
+    document.getElementById('status').className = 'status error';
+    document.getElementById('status').textContent = err.message;
+  }
+}
+
+function applyQuickRange(days) {
+  const end = isoDaysAgo(1);                  // yesterday
+  const start = isoDaysAgo(days);             // days ago
+  document.getElementById('d-start').value = start;
+  document.getElementById('d-end').value = end;
+  // Comparison: previous N-day window immediately before `start`
+  const cEnd   = isoDaysAgo(days + 1);
+  const cStart = isoDaysAgo(days * 2);
+  document.getElementById('c-start').value = cStart;
+  document.getElementById('c-end').value = cEnd;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  loadAccounts();
+
+  // Default: last 7 days vs prior 7 days
+  applyQuickRange(7);
+
+  document.querySelectorAll('.quick-btn').forEach(b => {
+    b.addEventListener('click', () => {
+      document.querySelectorAll('.quick-btn').forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+      applyQuickRange(parseInt(b.dataset.days, 10));
+    });
+  });
+
+  document.getElementById('btn-load').addEventListener('click', loadData);
+
+  document.getElementById('btn-clear-bucket').addEventListener('click', () => {
+    state.bucketFilter = '';
+    renderTiles(); renderTable();
+  });
+
+  document.getElementById('search-box').addEventListener('input', (e) => {
+    state.search = e.target.value;
+    renderTable();
+  });
+  document.getElementById('campaign-filter').addEventListener('change', (e) => {
+    state.campaignFilter = e.target.value;
+    renderTable();
+  });
+  document.getElementById('adset-filter').addEventListener('change', (e) => {
+    state.adsetFilter = e.target.value;
+    renderTable();
+  });
+
+  document.querySelectorAll('table.diag thead th[data-sort]').forEach(th => {
+    th.addEventListener('click', () => {
+      const k = th.dataset.sort;
+      if (state.sort.key === k) {
+        state.sort.dir = state.sort.dir === 'desc' ? 'asc' : 'desc';
+      } else {
+        state.sort.key = k;
+        state.sort.dir = (k === 'ad_name' || k === 'landing_page_path' || k === 'bucket') ? 'asc' : 'desc';
+      }
+      renderTable();
+    });
+  });
+
+  document.getElementById('dp-close').addEventListener('click', closeDetail);
+  document.getElementById('detail-overlay').addEventListener('click', closeDetail);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDetail(); });
+});
+</script>
+</body>
+</html>

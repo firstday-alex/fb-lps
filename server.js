@@ -1214,6 +1214,259 @@ VISUALIZE conversion_rate TYPE table`;
   }
 });
 
+// ─────────────────────────────────────────────
+// DIAGNOSTIC DASHBOARD — Meta ad-level insights with comparison window
+// ─────────────────────────────────────────────
+app.get('/api/diag-meta', requireAuth, async (req, res) => {
+  const { account_id, since, until, compare_since, compare_until } = req.query;
+  if (!account_id || !since || !until) {
+    return res.status(400).json({ error: 'account_id, since, and until are required' });
+  }
+
+  const INSIGHT_FIELDS = [
+    'ad_id', 'ad_name', 'adset_id', 'adset_name', 'campaign_id', 'campaign_name',
+    'spend', 'impressions', 'reach', 'frequency', 'cpm', 'cpc', 'ctr',
+    'inline_link_clicks', 'inline_link_click_ctr', 'cost_per_inline_link_click',
+    'clicks',
+    'actions', 'action_values', 'cost_per_action_type',
+    'video_p25_watched_actions', 'video_p50_watched_actions',
+    'video_p75_watched_actions', 'video_p100_watched_actions',
+    'video_3_sec_watched_actions', 'video_thruplay_watched_actions',
+    'video_avg_time_watched_actions',
+    'quality_ranking', 'engagement_rate_ranking', 'conversion_rate_ranking',
+  ].join(',');
+
+  const fetchInsights = async (s, u) => {
+    const url = `${META_BASE_URL}/${account_id}/insights`
+      + `?fields=${INSIGHT_FIELDS}`
+      + `&time_range=${encodeURIComponent(JSON.stringify({ since: s, until: u }))}`
+      + `&level=ad`
+      + `&time_increment=all_days`
+      + `&filtering=${encodeURIComponent(JSON.stringify([{ field: 'spend', operator: 'GREATER_THAN', value: 0 }]))}`
+      + `&limit=500`
+      + `&${metaParams(req.accessToken)}`;
+    const all = [];
+    let next = url;
+    let pageCount = 0;
+    while (next && pageCount < 8) {
+      const resp = await fetch(next);
+      const data = await resp.json();
+      if (data.error) {
+        if (data.error.code === 190) {
+          clearTokenCookie(res);
+          throw Object.assign(new Error('Session expired. Please log in again.'), { status: 401 });
+        }
+        throw new Error(data.error.message || 'Meta insights error');
+      }
+      if (Array.isArray(data.data)) all.push(...data.data);
+      next = data.paging?.next || null;
+      pageCount += 1;
+    }
+    return all;
+  };
+
+  try {
+    const [current, prior] = await Promise.all([
+      fetchInsights(since, until),
+      compare_since && compare_until ? fetchInsights(compare_since, compare_until) : Promise.resolve([]),
+    ]);
+
+    // Helper to extract action value of a given type
+    const actionVal = (arr, type) => {
+      if (!Array.isArray(arr)) return 0;
+      const f = arr.find(a => a.action_type === type);
+      return f ? (parseFloat(f.value) || 0) : 0;
+    };
+
+    const shapeRow = (a) => {
+      const impressions = parseFloat(a.impressions) || 0;
+      const link_clicks = parseFloat(a.inline_link_clicks) || actionVal(a.actions, 'link_click');
+      const lpv = actionVal(a.actions, 'landing_page_view');
+      const v3 = actionVal(a.video_3_sec_watched_actions, 'video_view');
+      const vthru = actionVal(a.video_thruplay_watched_actions, 'video_thruplay_watched');
+      return {
+        ad_id: a.ad_id,
+        ad_name: a.ad_name || '',
+        adset_id: a.adset_id, adset_name: a.adset_name,
+        campaign_id: a.campaign_id, campaign_name: a.campaign_name,
+        spend: parseFloat(a.spend) || 0,
+        impressions,
+        reach: parseFloat(a.reach) || 0,
+        frequency: parseFloat(a.frequency) || 0,
+        cpm: parseFloat(a.cpm) || 0,
+        cpc: parseFloat(a.cpc) || 0,
+        ctr: parseFloat(a.ctr) || 0,                                // %
+        link_clicks,
+        link_ctr: parseFloat(a.inline_link_click_ctr) || 0,         // %
+        cost_per_link_click: parseFloat(a.cost_per_inline_link_click) || 0,
+        clicks_all: parseFloat(a.clicks) || 0,
+        landing_page_views: lpv,
+        video_3sec_views: v3 || null,
+        video_thruplay: vthru || null,
+        video_p25: actionVal(a.video_p25_watched_actions, 'video_view') || null,
+        video_p50: actionVal(a.video_p50_watched_actions, 'video_view') || null,
+        video_p75: actionVal(a.video_p75_watched_actions, 'video_view') || null,
+        video_p100: actionVal(a.video_p100_watched_actions, 'video_view') || null,
+        // Prefer the most-comprehensive purchase counter Meta returned; fall back
+        // through Pixel-only and finally to the legacy 'purchase' action type.
+        meta_purchases: actionVal(a.actions, 'omni_purchase')
+          || actionVal(a.actions, 'offsite_conversion.fb_pixel_purchase')
+          || actionVal(a.actions, 'purchase'),
+        meta_purchase_value: actionVal(a.action_values, 'omni_purchase')
+          || actionVal(a.action_values, 'offsite_conversion.fb_pixel_purchase')
+          || actionVal(a.action_values, 'purchase'),
+        meta_atc: actionVal(a.actions, 'omni_add_to_cart')
+          || actionVal(a.actions, 'offsite_conversion.fb_pixel_add_to_cart')
+          || actionVal(a.actions, 'add_to_cart'),
+        meta_ic: actionVal(a.actions, 'omni_initiated_checkout')
+          || actionVal(a.actions, 'offsite_conversion.fb_pixel_initiate_checkout')
+          || actionVal(a.actions, 'initiate_checkout'),
+        post_reactions: actionVal(a.actions, 'post_reaction'),
+        post_comments: actionVal(a.actions, 'comment'),
+        post_shares: actionVal(a.actions, 'post'),
+        post_saves: actionVal(a.actions, 'onsite_conversion.post_save'),
+        quality_ranking: a.quality_ranking || null,
+        engagement_rate_ranking: a.engagement_rate_ranking || null,
+        conversion_rate_ranking: a.conversion_rate_ranking || null,
+      };
+    };
+
+    const currentRows = current.map(shapeRow);
+    const priorRows   = prior.map(shapeRow);
+
+    // Fetch creative link_url + preview_shareable_link in batches of 50 for current ads only
+    const adIds = [...new Set(currentRows.map(r => r.ad_id))].filter(Boolean);
+    const previewMap = {};   // ad_id → preview_shareable_link
+    const creativeMap = {};  // ad_id → { link_url, story_link, asset_feed_links }
+    const BATCH = 50;
+    for (let i = 0; i < adIds.length; i += BATCH) {
+      const slice = adIds.slice(i, i + BATCH);
+      const batchRequests = slice.map(id => ({
+        method: 'GET',
+        relative_url: `${id}?fields=preview_shareable_link,creative{link_url,object_story_spec,asset_feed_spec}`,
+      }));
+      try {
+        const body = new URLSearchParams({
+          access_token: req.accessToken,
+          appsecret_proof: generateAppSecretProof(req.accessToken),
+          batch: JSON.stringify(batchRequests),
+        });
+        const resp = await fetch(`${META_BASE_URL}/`, {
+          method: 'POST', body, signal: AbortSignal.timeout(20000),
+        });
+        const results = await resp.json();
+        if (Array.isArray(results)) {
+          for (let j = 0; j < slice.length; j++) {
+            const r = results[j];
+            if (!r || r.code !== 200) continue;
+            try {
+              const parsed = JSON.parse(r.body);
+              previewMap[slice[j]] = parsed.preview_shareable_link || null;
+              const creative = parsed.creative || {};
+              const linkUrl = creative.link_url
+                || extractDestinationUrl(creative.object_story_spec || {})
+                || extractAssetFeedUrl(creative.asset_feed_spec || {})
+                || null;
+              creativeMap[slice[j]] = { link_url: linkUrl };
+            } catch {}
+          }
+        }
+      } catch (e) {
+        console.error('[diag-meta] preview batch failed:', e.message);
+      }
+    }
+
+    // Derive landing_page_path per current row: prefer creative link_url's pathname,
+    // fall back to slug parsed from ad name (existing parseAdName helper)
+    const pathFromUrl = (u) => {
+      if (!u) return null;
+      try { return new URL(u).pathname || '/'; } catch { return null; }
+    };
+    const enrich = (r) => {
+      const creativeLink = creativeMap[r.ad_id]?.link_url || null;
+      const pathFromCreative = pathFromUrl(creativeLink);
+      const parsed = parseAdName(r.ad_name);
+      const pathFromName = parsed.landing_page_url ? pathFromUrl(parsed.landing_page_url) : null;
+      const landing_page_path = pathFromCreative || pathFromName || '(unknown)';
+      return {
+        ...r,
+        landing_page_path,
+        creative_link_url: creativeLink,
+        preview_shareable_link: previewMap[r.ad_id] || null,
+        ad_name_parsed: parsed,
+      };
+    };
+
+    res.json({
+      current: currentRows.map(enrich),
+      prior:   priorRows,            // prior keyed-by-ad_id only (no creative enrichment needed for trend math)
+      since, until, compare_since: compare_since || null, compare_until: compare_until || null,
+    });
+  } catch (err) {
+    console.error('[diag-meta] error:', err);
+    if (err.status === 401) return res.status(401).json({ error: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────
+// DIAGNOSTIC DASHBOARD — Shopify orders aggregated by utm_content × landing_page_path
+// ─────────────────────────────────────────────
+app.get('/api/diag-shopify', async (req, res) => {
+  if (!SHOPIFY_URL || !SHOPIFY_TOKEN) {
+    return res.status(500).json({ error: 'Shopify credentials not configured' });
+  }
+  const { since, until } = req.query;
+  if (!since || !until || !/^\d{4}-\d{2}-\d{2}$/.test(since) || !/^\d{4}-\d{2}-\d{2}$/.test(until)) {
+    return res.status(400).json({ error: 'since and until query params required (YYYY-MM-DD)' });
+  }
+  const escapeQL = (v) => String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  const whitelist = (req.query.utm_sources || 'facebook,instagram,fb,ig,meta')
+    .split(',').map(s => escapeQL(s.trim())).filter(Boolean);
+  const sourceClause = whitelist.length === 1
+    ? `utm_source = '${whitelist[0]}'`
+    : `(${whitelist.map(s => `utm_source = '${s}'`).join(' OR ')})`;
+
+  const endpoint = `https://${SHOPIFY_URL}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
+  const gqlQuery = `query RunShopifyQL($q: String!) {
+    shopifyqlQuery(query: $q) { tableData { columns { name dataType } rows } parseErrors }
+  }`;
+
+  const ordersQL = `FROM orders
+  SHOW orders, gross_sales, net_sales, average_order_value, ordered_item_quantity, returning_customer_orders, total_sales
+  WHERE ${sourceClause}
+  GROUP BY utm_content, landing_page_path
+  SINCE ${since} UNTIL ${until}
+  ORDER BY orders DESC`;
+
+  console.log('\n[diag-shopify] orders query:\n' + ordersQL);
+
+  try {
+    const run = async (ql) => {
+      const r = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
+        body: JSON.stringify({ query: gqlQuery, variables: { q: ql } }),
+      });
+      const j = await r.json();
+      if (j.data?.shopifyqlQuery?.parseErrors?.length) {
+        throw new Error('ShopifyQL parse error: ' + JSON.stringify(j.data.shopifyqlQuery.parseErrors));
+      }
+      return j.data?.shopifyqlQuery?.tableData || null;
+    };
+
+    const orders = await run(ordersQL);
+    res.json({
+      query: ordersQL,
+      orders,
+      since, until,
+    });
+  } catch (err) {
+    console.error('[diag-shopify] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // --- Campaign insights by day ---
 
 app.get('/api/campaign-insights', requireAuth, async (req, res) => {
