@@ -1228,13 +1228,15 @@ app.get('/api/diag-meta', requireAuth, async (req, res) => {
     'spend', 'impressions', 'reach', 'frequency', 'cpm', 'cpc', 'ctr',
     'inline_link_clicks', 'inline_link_click_ctr', 'cost_per_inline_link_click',
     'clicks',
-    'actions', 'action_values', 'cost_per_action_type',
+    'actions', 'action_values',
     'video_p25_watched_actions', 'video_p50_watched_actions',
     'video_p75_watched_actions', 'video_p100_watched_actions',
-    'video_thruplay_watched_actions', 'video_avg_time_watched_actions',
+    'video_thruplay_watched_actions',
     'quality_ranking', 'engagement_rate_ranking', 'conversion_rate_ranking',
   ].join(',');
 
+  // Meta throttles by total payload (fields × rows). Keep page size small and
+  // page through; up to 25 pages × 50 rows = 1250 ads max per window.
   const fetchInsights = async (s, u) => {
     const url = `${META_BASE_URL}/${account_id}/insights`
       + `?fields=${INSIGHT_FIELDS}`
@@ -1242,12 +1244,12 @@ app.get('/api/diag-meta', requireAuth, async (req, res) => {
       + `&level=ad`
       + `&time_increment=all_days`
       + `&filtering=${encodeURIComponent(JSON.stringify([{ field: 'spend', operator: 'GREATER_THAN', value: 0 }]))}`
-      + `&limit=500`
+      + `&limit=50`
       + `&${metaParams(req.accessToken)}`;
     const all = [];
     let next = url;
     let pageCount = 0;
-    while (next && pageCount < 8) {
+    while (next && pageCount < 25) {
       const resp = await fetch(next);
       const data = await resp.json();
       if (data.error) {
