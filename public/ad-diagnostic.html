@@ -416,7 +416,8 @@
       display: flex; align-items: stretch; gap: 6px;
       margin-top: 4px;
     }
-    .copy-block input {
+    .copy-block input,
+    .copy-block textarea {
       flex: 1 1 0%;
       width: 100%;
       min-width: 0;                            /* let flex shrink in narrow viewports */
@@ -428,6 +429,38 @@
       background: var(--bg);
       color: var(--text-primary);
       user-select: text;
+    }
+    .copy-block textarea {
+      resize: vertical;
+      min-height: 48px;
+      max-height: 240px;
+      line-height: 1.4;
+      word-break: break-all;
+      white-space: pre-wrap;
+    }
+    .copy-block button { align-self: flex-start; }
+
+    .dp-preview-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 18px;
+      background: var(--fb-blue);
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-size: 0.88rem;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+      text-decoration: none;
+    }
+    .dp-preview-btn:hover { background: var(--fb-blue-dark); }
+    .dp-preview-btn:disabled,
+    .dp-preview-btn.disabled {
+      background: var(--neutral-bg);
+      color: var(--text-secondary);
+      cursor: not-allowed;
     }
     .copy-block button {
       padding: 4px 10px;
@@ -763,27 +796,27 @@ const BUCKET_DOCS = {
   },
   CHEAP_CLICKS_NO_BIZ: {
     desc: 'Lots of cheap clicks that never turn into orders. Often Audience Network or low-intent placements.',
-    rule: 'cpc < median\nAND ctr > median\nAND cvr < median\nAND shopify_roas < ${target_roas}',
+    rule: 'cpc < median\nAND ctr > median\nAND cvr < median\nAND ROAS < ${target_roas}',
     action: 'Check the placement breakdown — Audience Network is usually the culprit. Tighten placements / audience.',
   },
   WINNER: {
     desc: 'Engaging AND converting AND profitable AND not yet fatigued. Scale carefully.',
-    rule: 'ctr > median\nAND cvr > median\nAND shopify_roas > ${target_roas}\nAND frequency < ${high_frequency}\nAND quality_ranking != below_average',
+    rule: 'ctr > median\nAND cvr > median\nAND ROAS > ${target_roas}\nAND frequency < ${high_frequency}\nAND quality_ranking != below_average',
     action: 'Scale carefully (don\'t double budget overnight). Save to a winners library.',
   },
   CLICKBAIT: {
     desc: 'High click-through but the wrong audience or wrong promise — they bounce, fail to convert, or buy nothing.',
-    rule: 'ctr > median\nAND (cvr < median OR pct_new < median OR aov < median)\nAND shopify_roas < ${target_roas}',
+    rule: 'ctr > median\nAND (cvr < median OR pct_new < median OR aov < median)\nAND ROAS < ${target_roas}',
     action: 'Tighten ad-LP message match. Add qualifying language. Re-check the audience.',
   },
   QUALIFIER: {
     desc: "Low CTR but the people who DO click are gold. Don't kill — broaden the hook.",
-    rule: 'ctr < median\nAND cvr > ${qualifier_cvr_mult}× median\nAND shopify_roas ≥ ${target_roas}',
+    rule: 'ctr < median\nAND cvr > ${qualifier_cvr_mult}× median\nAND ROAS ≥ ${target_roas}',
     action: "Don't kill. Test a broader hook with the same body/offer to expand reach.",
   },
   LOSER: {
     desc: "Low engagement, low conversion, low ROAS. Doesn't deserve more budget.",
-    rule: 'ctr < median\nAND cvr < median\nAND shopify_roas < ${target_roas}',
+    rule: 'ctr < median\nAND cvr < median\nAND ROAS < ${target_roas}',
     action: 'Kill it. Start over with a fresh angle.',
   },
   UNCATEGORIZED: {
@@ -978,6 +1011,12 @@ function buildRows(metaCurrent, metaPrior, shopifyTable) {
       };
     }
 
+    // effective_roas = real Shopify ROAS when revenue is available, otherwise
+    // fall back to Meta-attributed ROAS so the bucketing rules still have a
+    // signal on stores where Shopify doesn't expose revenue (e.g. only
+    // `sessions` topic is available). Shop-revenue stores → behaves as before.
+    const effective_roas = shopify_roas > 0 ? shopify_roas : meta_roas;
+
     rows.push({
       ad_name: c.ad_name,
       landing_page_path: c.landing_page_path,
@@ -1005,7 +1044,8 @@ function buildRows(metaCurrent, metaPrior, shopifyTable) {
       post_shares: c.post_shares, post_saves: c.post_saves,
       shopify_sessions: s.sessions || 0,
       shopify_orders: s.orders, shopify_revenue: s.revenue, shopify_aov: s.aov,
-      shopify_roas, shopify_new_customer_orders: s.new_customer_orders,
+      shopify_roas, effective_roas,
+      shopify_new_customer_orders: s.new_customer_orders,
       shopify_pct_new: s.pct_new,
       shopify_avg_duration: s.site_avg_duration || 0,
       shopify_bounce_rate:  s.site_bounce_rate  || 0,
@@ -1033,6 +1073,7 @@ function computeBenchmarks(rows, config) {
     median_aov: median(elig.map(r => r.shopify_aov).filter(x => x > 0)),
     median_pct_new: median(elig.map(r => r.shopify_pct_new).filter(x => x > 0)),
     median_shopify_roas: median(elig.map(r => r.shopify_roas).filter(x => x > 0)),
+    median_effective_roas: median(elig.map(r => r.effective_roas).filter(x => x > 0)),
     median_frequency: median(elig.map(r => r.frequency).filter(x => x > 0)),
   };
 }
@@ -1124,25 +1165,25 @@ const RULES = {
     if (r.cpc >= b.median_cpc) return null;
     if (r.ctr <= b.median_ctr) return null;
     if (r.cvr >= b.median_cvr) return null;
-    if (r.shopify_roas >= c.target_roas) return null;
+    if (r.effective_roas >= c.target_roas) return null;
     return { ok: true, reasons: [
       `CPC $${r.cpc.toFixed(2)} < median $${b.median_cpc.toFixed(2)}`,
       `CTR ${r.ctr.toFixed(2)}% > median ${b.median_ctr.toFixed(2)}%`,
       `CVR ${(r.cvr*100).toFixed(2)}% < median ${(b.median_cvr*100).toFixed(2)}%`,
-      `Shop ROAS ${r.shopify_roas.toFixed(2)}x < target ${c.target_roas.toFixed(2)}x`,
+      `ROAS ${r.effective_roas.toFixed(2)}x < target ${c.target_roas.toFixed(2)}x`,
     ] };
   },
   WINNER: (r, b, c) => {
     if (b.median_ctr <= 0 || b.median_cvr <= 0) return null;
     if (r.ctr <= b.median_ctr) return null;
     if (r.cvr <= b.median_cvr) return null;
-    if (r.shopify_roas <= c.target_roas) return null;
+    if (r.effective_roas <= c.target_roas) return null;
     if (r.frequency >= c.high_frequency) return null;
     if (r.quality_ranking && /below/i.test(r.quality_ranking)) return null;
     return { ok: true, reasons: [
       `CTR ${r.ctr.toFixed(2)}% > median ${b.median_ctr.toFixed(2)}%`,
       `CVR ${(r.cvr*100).toFixed(2)}% > median ${(b.median_cvr*100).toFixed(2)}%`,
-      `Shop ROAS ${r.shopify_roas.toFixed(2)}x > target ${c.target_roas.toFixed(2)}x`,
+      `ROAS ${r.effective_roas.toFixed(2)}x > target ${c.target_roas.toFixed(2)}x`,
       `Frequency ${r.frequency.toFixed(2)} < ${c.high_frequency}`,
     ] };
   },
@@ -1153,35 +1194,35 @@ const RULES = {
     const newLow = b.median_pct_new > 0 && r.shopify_pct_new < b.median_pct_new;
     const aovLow = b.median_aov > 0 && r.shopify_aov < b.median_aov;
     if (!(cvrLow || newLow || aovLow)) return null;
-    if (r.shopify_roas >= c.target_roas) return null;
+    if (r.effective_roas >= c.target_roas) return null;
     return { ok: true, reasons: [
       `CTR ${r.ctr.toFixed(2)}% > median ${b.median_ctr.toFixed(2)}%`,
       cvrLow ? `CVR ${(r.cvr*100).toFixed(2)}% < median ${(b.median_cvr*100).toFixed(2)}%` : null,
       newLow ? `% new ${(r.shopify_pct_new*100).toFixed(0)}% < median ${(b.median_pct_new*100).toFixed(0)}%` : null,
       aovLow ? `AOV $${r.shopify_aov.toFixed(0)} < median $${b.median_aov.toFixed(0)}` : null,
-      `Shop ROAS ${r.shopify_roas.toFixed(2)}x < target ${c.target_roas.toFixed(2)}x`,
+      `ROAS ${r.effective_roas.toFixed(2)}x < target ${c.target_roas.toFixed(2)}x`,
     ].filter(Boolean) };
   },
   QUALIFIER: (r, b, c) => {
     if (b.median_ctr <= 0 || b.median_cvr <= 0) return null;
     if (r.ctr >= b.median_ctr) return null;
     if (r.cvr < b.median_cvr * c.qualifier_cvr_mult) return null;
-    if (r.shopify_roas < c.target_roas) return null;
+    if (r.effective_roas < c.target_roas) return null;
     return { ok: true, reasons: [
       `CTR ${r.ctr.toFixed(2)}% < median ${b.median_ctr.toFixed(2)}%`,
       `CVR ${(r.cvr*100).toFixed(2)}% > ${c.qualifier_cvr_mult}× median (${(b.median_cvr*c.qualifier_cvr_mult*100).toFixed(2)}%)`,
-      `Shop ROAS ${r.shopify_roas.toFixed(2)}x ≥ target ${c.target_roas.toFixed(2)}x`,
+      `ROAS ${r.effective_roas.toFixed(2)}x ≥ target ${c.target_roas.toFixed(2)}x`,
     ] };
   },
   LOSER: (r, b, c) => {
     if (b.median_ctr <= 0) return null;
     if (r.ctr >= b.median_ctr) return null;
     if (b.median_cvr > 0 && r.cvr >= b.median_cvr) return null;
-    if (r.shopify_roas >= c.target_roas) return null;
+    if (r.effective_roas >= c.target_roas) return null;
     return { ok: true, reasons: [
       `CTR ${r.ctr.toFixed(2)}% < median ${b.median_ctr.toFixed(2)}%`,
       `CVR ${(r.cvr*100).toFixed(2)}% < median ${(b.median_cvr*100).toFixed(2)}%`,
-      `Shop ROAS ${r.shopify_roas.toFixed(2)}x < target ${c.target_roas.toFixed(2)}x`,
+      `ROAS ${r.effective_roas.toFixed(2)}x < target ${c.target_roas.toFixed(2)}x`,
     ] };
   },
 };
@@ -1504,7 +1545,7 @@ function renderTiles() {
 
   document.getElementById('summary-meta').textContent =
     state.benchmarks
-      ? ` · CTR ${state.benchmarks.median_ctr.toFixed(2)}% · CVR ${(state.benchmarks.median_cvr*100).toFixed(2)}% · ROAS ${state.benchmarks.median_shopify_roas.toFixed(2)}x · AOV $${state.benchmarks.median_aov.toFixed(0)} · %new ${(state.benchmarks.median_pct_new*100).toFixed(0)}% (account medians)`
+      ? ` · CTR ${state.benchmarks.median_ctr.toFixed(2)}% · CVR ${(state.benchmarks.median_cvr*100).toFixed(2)}% · ROAS ${(state.benchmarks.median_effective_roas || 0).toFixed(2)}x (account medians)`
       : '';
 
   tiles.querySelectorAll('.tile').forEach(t => {
@@ -1794,32 +1835,35 @@ function openDetail(key) {
   state.selectedKey = key;
   document.querySelectorAll('table.diag tbody tr').forEach(tr => tr.classList.toggle('row-selected', tr.dataset.key === key));
 
-  // Copyable header — input fields are easier to triple-click + Cmd-C than
-  // free-floating text, plus a one-click Copy button as a fallback.
+  // Copyable header — textareas wrap so you can see the full value at a glance,
+  // and the Copy button is a one-click fallback for the clipboard API.
+  const labelStyle = 'font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);margin-bottom:3px';
   document.getElementById('dp-title').innerHTML = `
-    <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);margin-bottom:2px">utm_content (ad name)</div>
+    <div style="${labelStyle}">utm_content (ad name)</div>
     <div class="copy-block">
-      <input type="text" readonly value="${esc(r.ad_name || '')}" data-copy-target="1">
+      <textarea readonly rows="2" data-copy-target="1">${esc(r.ad_name || '')}</textarea>
       <button class="dp-copy" data-clip="${esc(r.ad_name || '')}">Copy</button>
     </div>`;
   document.getElementById('dp-sub').innerHTML = `
-    <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);margin-top:8px;margin-bottom:2px">landing_page_path</div>
+    <div style="${labelStyle};margin-top:10px">landing_page_path</div>
     <div class="copy-block">
-      <input type="text" readonly value="${esc(r.landing_page_path || '')}" data-copy-target="1">
+      <textarea readonly rows="1" data-copy-target="1">${esc(r.landing_page_path || '')}</textarea>
       <button class="dp-copy" data-clip="${esc(r.landing_page_path || '')}">Copy</button>
     </div>
     ${r.creative_link_url ? `
-      <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);margin-top:8px;margin-bottom:2px">creative URL</div>
+      <div style="${labelStyle};margin-top:10px">creative URL</div>
       <div class="copy-block">
-        <input type="text" readonly value="${esc(r.creative_link_url)}" data-copy-target="1">
+        <textarea readonly rows="2" data-copy-target="1">${esc(r.creative_link_url)}</textarea>
         <button class="dp-copy" data-clip="${esc(r.creative_link_url)}">Copy</button>
       </div>` : ''}`;
 
   const def = BUCKETS[r.bucket] || BUCKETS.UNCATEGORIZED;
 
   const previewSection = `<div class="detail-section">
-         <div class="detail-section__h">Preview</div>
-         <div id="dp-preview-slot" class="preview-fallback">Loading preview…</div>
+         <div class="detail-section__h">Meta preview</div>
+         <div id="dp-preview-slot">
+           <button type="button" class="dp-preview-btn disabled" disabled>Loading preview link…</button>
+         </div>
        </div>`;
 
   const reasons = (r.reasons || []).map(rsn => `<li class="r-pass">✓ ${esc(rsn)}</li>`).join('');
@@ -1942,9 +1986,9 @@ function openDetail(key) {
         await navigator.clipboard.writeText(text);
       } catch {
         // Clipboard API can fail in non-HTTPS / older browsers — fall back to
-        // selecting the sibling input so the user can Cmd-C themselves.
-        const input = btn.parentElement.querySelector('input');
-        if (input) { input.focus(); input.select(); }
+        // selecting the sibling field so the user can Cmd-C themselves.
+        const field = btn.parentElement.querySelector('input, textarea');
+        if (field) { field.focus(); field.select(); }
       }
       const orig = btn.textContent;
       btn.textContent = '✓ Copied';
@@ -1952,41 +1996,39 @@ function openDetail(key) {
       setTimeout(() => { btn.textContent = orig; btn.classList.remove('copied'); }, 1200);
     });
   });
-  // Triple-click a readonly input → select all of it for fast Cmd-C
-  panel.querySelectorAll('input[data-copy-target]').forEach(inp => {
+  // Triple-click a readonly field → select all of it for fast Cmd-C
+  panel.querySelectorAll('[data-copy-target]').forEach(inp => {
     inp.addEventListener('focus', () => inp.select());
     inp.addEventListener('click', () => inp.select());
   });
 
   // Lazy-load preview link for the first ad_id of this row (cached on the row)
   const slot = document.getElementById('dp-preview-slot');
+  const renderPreviewButton = (link) => {
+    if (link) {
+      slot.innerHTML = `<a class="dp-preview-btn" href="${esc(link)}" target="_blank" rel="noopener">Open Meta preview ↗</a>`;
+    } else {
+      slot.innerHTML = `<button type="button" class="dp-preview-btn disabled" disabled>No preview link available</button>`;
+    }
+  };
   if (slot && r.preview_shareable_link) {
-    slot.outerHTML = `
-      <iframe class="preview-frame" src="${esc(r.preview_shareable_link)}" sandbox="allow-scripts allow-same-origin"></iframe>
-      <div style="margin-top:6px;font-size:0.78rem">
-        <a href="${esc(r.preview_shareable_link)}" target="_blank" rel="noopener">Open preview in new tab ↗</a>
-      </div>`;
+    renderPreviewButton(r.preview_shareable_link);
   } else if (slot && r.ad_ids.length > 0) {
     fetch('/api/diag-ad-preview?ad_id=' + encodeURIComponent(r.ad_ids[0]))
       .then(resp => resp.ok ? resp.json() : Promise.reject(new Error('preview fetch failed')))
       .then(data => {
-        // Cache on the row so re-opening doesn't refetch
         r.preview_shareable_link = data.preview_shareable_link || null;
         if (data.creative_link_url) r.creative_link_url = data.creative_link_url;
         if (state.selectedKey !== key) return;          // user already moved on
-        if (data.preview_shareable_link) {
-          slot.outerHTML = `
-            <iframe class="preview-frame" src="${esc(data.preview_shareable_link)}" sandbox="allow-scripts allow-same-origin"></iframe>
-            <div style="margin-top:6px;font-size:0.78rem">
-              <a href="${esc(data.preview_shareable_link)}" target="_blank" rel="noopener">Open preview in new tab ↗</a>
-            </div>`;
-        } else {
-          slot.textContent = 'No preview link available.';
-        }
+        renderPreviewButton(data.preview_shareable_link);
       })
-      .catch(() => { if (slot && state.selectedKey === key) slot.textContent = 'Preview unavailable.'; });
+      .catch(() => {
+        if (slot && state.selectedKey === key) {
+          slot.innerHTML = `<button type="button" class="dp-preview-btn disabled" disabled>Preview unavailable</button>`;
+        }
+      });
   } else if (slot) {
-    slot.textContent = 'No ad_id to fetch preview.';
+    slot.innerHTML = `<button type="button" class="dp-preview-btn disabled" disabled>No ad_id to fetch preview</button>`;
   }
 }
 
