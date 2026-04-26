@@ -1216,13 +1216,58 @@ VISUALIZE conversion_rate TYPE table`;
 });
 
 // ─────────────────────────────────────────────
-// DIAGNOSTIC DASHBOARD — bucketing-criteria persistence (shared JSON file)
+// DIAGNOSTIC DASHBOARD — bucketing-criteria persistence
 // ─────────────────────────────────────────────
+// Storage strategy:
+//   1. If Vercel KV env vars are set (KV_REST_API_URL + KV_REST_API_TOKEN),
+//      persist to KV — survives cold starts and is shared across all instances.
+//   2. Otherwise persist to a JSON file (great for local dev). On Vercel
+//      without KV, this falls through to /tmp which is ephemeral.
+// Override the file path via DIAG_CRITERIA_FILE env var if needed.
 const fsp = require('fs').promises;
-// On Vercel the project filesystem is read-only at runtime — fall back to /tmp
-// (per-instance, ephemeral). Override with DIAG_CRITERIA_FILE env var if needed.
 const CRITERIA_FILE = process.env.DIAG_CRITERIA_FILE
   || (process.env.VERCEL ? '/tmp/diag-criteria.json' : path.join(__dirname, 'data', 'diag-criteria.json'));
+const CRITERIA_KV_KEY = 'diag-criteria';
+
+let kvClient = null;
+if (process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) {
+  try {
+    kvClient = require('@vercel/kv').kv;
+    console.log('[diag-criteria] using Vercel KV for persistence');
+  } catch (e) {
+    console.warn('[diag-criteria] @vercel/kv import failed, falling back to file:', e.message);
+  }
+}
+if (!kvClient) console.log('[diag-criteria] KV env vars not set, using file persistence:', CRITERIA_FILE);
+
+const STORAGE_KIND = kvClient ? 'kv' : 'file';
+const STORAGE_LABEL = kvClient ? 'Vercel KV' : CRITERIA_FILE;
+const STORAGE_IS_EPHEMERAL = !kvClient && !!process.env.VERCEL && !process.env.DIAG_CRITERIA_FILE;
+
+async function readStoredCriteria() {
+  if (kvClient) {
+    const v = await kvClient.get(CRITERIA_KV_KEY);
+    return v && typeof v === 'object' ? v : null;
+  }
+  try {
+    const raw = await fsp.readFile(CRITERIA_FILE, 'utf8');
+    return JSON.parse(raw);
+  } catch (err) {
+    if (err.code === 'ENOENT') return null;
+    throw err;
+  }
+}
+
+async function writeStoredCriteria(data) {
+  if (kvClient) {
+    await kvClient.set(CRITERIA_KV_KEY, data);
+    return { kind: 'kv', label: 'Vercel KV', size: JSON.stringify(data).length };
+  }
+  await fsp.mkdir(path.dirname(CRITERIA_FILE), { recursive: true });
+  await fsp.writeFile(CRITERIA_FILE, JSON.stringify(data, null, 2), 'utf8');
+  const stat = await fsp.stat(CRITERIA_FILE).catch(() => null);
+  return { kind: 'file', label: CRITERIA_FILE, size: stat?.size || 0 };
+}
 
 const CRITERIA_DEFAULTS = {
   minimum_spend: 50,
@@ -1258,23 +1303,26 @@ function coerceCriteria(input) {
 
 app.get('/api/diag-criteria', async (req, res) => {
   try {
-    const raw = await fsp.readFile(CRITERIA_FILE, 'utf8');
-    const parsed = JSON.parse(raw);
-    res.json({
-      criteria: { ...CRITERIA_DEFAULTS, ...parsed },
-      updated_at: parsed.updated_at || null,
-      updated_by: parsed.updated_by || null,
-      source: 'file',
-      file: CRITERIA_FILE,
-    });
-  } catch (err) {
-    if (err.code === 'ENOENT') {
+    const stored = await readStoredCriteria();
+    if (stored) {
+      console.log(`[diag-criteria GET] ${STORAGE_LABEL}`);
       return res.json({
-        criteria: { ...CRITERIA_DEFAULTS },
-        updated_at: null, updated_by: null,
-        source: 'defaults', file: CRITERIA_FILE,
+        criteria: { ...CRITERIA_DEFAULTS, ...stored },
+        updated_at: stored.updated_at || null,
+        updated_by: stored.updated_by || null,
+        source: STORAGE_KIND,
+        file: STORAGE_LABEL,
+        ephemeral: STORAGE_IS_EPHEMERAL,
       });
     }
+    console.log(`[diag-criteria GET] no value at ${STORAGE_LABEL}, returning defaults`);
+    res.json({
+      criteria: { ...CRITERIA_DEFAULTS },
+      updated_at: null, updated_by: null,
+      source: 'defaults', file: STORAGE_LABEL,
+      ephemeral: STORAGE_IS_EPHEMERAL,
+    });
+  } catch (err) {
     console.error('[diag-criteria GET] error:', err);
     res.status(500).json({ error: err.message });
   }
@@ -1287,12 +1335,15 @@ app.post('/api/diag-criteria', async (req, res) => {
     cleaned.updated_by = req.body.updated_by.slice(0, 120);
   }
   try {
-    await fsp.mkdir(path.dirname(CRITERIA_FILE), { recursive: true });
-    await fsp.writeFile(CRITERIA_FILE, JSON.stringify(cleaned, null, 2), 'utf8');
-    res.json({ criteria: cleaned, saved: true, file: CRITERIA_FILE });
+    const result = await writeStoredCriteria(cleaned);
+    console.log(`[diag-criteria POST] wrote to ${result.label} (${result.size} bytes)`);
+    res.json({
+      criteria: cleaned, saved: true,
+      file: result.label, ephemeral: STORAGE_IS_EPHEMERAL,
+    });
   } catch (err) {
     console.error('[diag-criteria POST] error:', err);
-    res.status(500).json({ error: 'Failed to save: ' + err.message });
+    res.status(500).json({ error: 'Failed to save: ' + err.message, file: STORAGE_LABEL });
   }
 });
 

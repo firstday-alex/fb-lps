@@ -1295,10 +1295,19 @@ const CRIT_FIELDS = [
 // fetch fails, we fall back to the localStorage mirror so the dashboard still
 // works offline / with no auth.
 let _criteriaCache = { ...CRIT_DEFAULTS };
-let _criteriaMeta  = { updated_at: null, updated_by: null, source: 'defaults' };
+let _criteriaMeta  = { updated_at: null, updated_by: null, source: 'defaults', file: null, ephemeral: false };
 
 function loadCriteria() {
   return { ..._criteriaCache };
+}
+
+// Helper: do the saved values diverge from the hard-coded defaults?
+function criteriaDiffersFromDefaults(c) {
+  if (!c || typeof c !== 'object') return false;
+  for (const k of Object.keys(CRIT_DEFAULTS)) {
+    if (c[k] != null && String(c[k]) !== String(CRIT_DEFAULTS[k])) return true;
+  }
+  return false;
 }
 
 async function fetchCriteriaFromServer() {
@@ -1306,10 +1315,39 @@ async function fetchCriteriaFromServer() {
     const resp = await fetch('/api/diag-criteria');
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const data = await resp.json();
+
+    if (data.source === 'defaults') {
+      // Server has no saved file — common after a Vercel cold start that
+      // wiped /tmp. If the browser cache has non-default values that the user
+      // saved before, restore them (and re-POST to repair the server file).
+      try {
+        const raw = localStorage.getItem(CRIT_KEY);
+        if (raw) {
+          const cached = JSON.parse(raw);
+          if (criteriaDiffersFromDefaults(cached)) {
+            console.info('[criteria] server returned defaults; restoring from local cache and re-saving to server');
+            _criteriaCache = { ...CRIT_DEFAULTS, ...cached };
+            _criteriaMeta  = {
+              updated_at: cached.updated_at || null,
+              updated_by: cached.updated_by || null,
+              source: 'restored-from-local-cache',
+              file: data.file, ephemeral: !!data.ephemeral,
+            };
+            // Fire-and-forget re-save; we don't await so page load isn't blocked.
+            saveCriteriaToServer(_criteriaCache).catch(() => {});
+            return _criteriaCache;
+          }
+        }
+      } catch {}
+    }
+
     _criteriaCache = { ...CRIT_DEFAULTS, ...(data.criteria || {}) };
-    _criteriaMeta  = { updated_at: data.updated_at, updated_by: data.updated_by, source: data.source };
+    _criteriaMeta  = {
+      updated_at: data.updated_at, updated_by: data.updated_by,
+      source: data.source, file: data.file, ephemeral: !!data.ephemeral,
+    };
     // Mirror to localStorage so we can still render if the server is briefly
-    // unreachable on the next load.
+    // unreachable (or wiped) on the next load.
     try { localStorage.setItem(CRIT_KEY, JSON.stringify(_criteriaCache)); } catch {}
     return _criteriaCache;
   } catch (err) {
@@ -1317,7 +1355,7 @@ async function fetchCriteriaFromServer() {
     try {
       const raw = localStorage.getItem(CRIT_KEY);
       if (raw) _criteriaCache = { ...CRIT_DEFAULTS, ...JSON.parse(raw) };
-      _criteriaMeta = { updated_at: null, updated_by: null, source: 'local-cache' };
+      _criteriaMeta = { updated_at: null, updated_by: null, source: 'local-cache', file: null, ephemeral: false };
     } catch {}
     return _criteriaCache;
   }
@@ -1343,7 +1381,13 @@ async function saveCriteriaToServer(next) {
   }
   const data = await resp.json();
   _criteriaCache = { ...CRIT_DEFAULTS, ...(data.criteria || {}) };
-  _criteriaMeta  = { updated_at: data.criteria?.updated_at, updated_by: data.criteria?.updated_by, source: 'file' };
+  _criteriaMeta  = {
+    updated_at: data.criteria?.updated_at,
+    updated_by: data.criteria?.updated_by,
+    source: 'file',
+    file: data.file,
+    ephemeral: !!data.ephemeral,
+  };
   try { localStorage.setItem(CRIT_KEY, JSON.stringify(_criteriaCache)); } catch {}
   return _criteriaCache;
 }
@@ -1384,14 +1428,24 @@ function openCriteriaModal() {
       <span class="crit-field__hint">${esc(f.hint || '')}</span>
     </div>`;
   }).join('');
-  // "Last updated" / "by" line so users can see whose change is live.
+  // Storage transparency: show where values are coming from, plus a clear
+  // warning when storage is ephemeral (Vercel /tmp file mode).
   const status = document.getElementById('crit-status');
-  if (_criteriaMeta.source === 'file' && _criteriaMeta.updated_at) {
+  const path = _criteriaMeta.file || '(unknown)';
+  const isKv = _criteriaMeta.source === 'kv';
+  const isFile = _criteriaMeta.source === 'file';
+  const where = isKv ? 'Vercel KV' : `file: ${path}`;
+  const ephemeralNote = _criteriaMeta.ephemeral
+    ? ` ⚠ Storage is /tmp on Vercel — values may be wiped on cold start. Wire Vercel KV or set DIAG_CRITERIA_FILE for true persistence.`
+    : '';
+  if ((isKv || isFile) && _criteriaMeta.updated_at) {
     const when = new Date(_criteriaMeta.updated_at).toLocaleString();
     const who = _criteriaMeta.updated_by ? ` by ${_criteriaMeta.updated_by}` : '';
-    status.textContent = `Server config · last saved ${when}${who}`;
+    status.textContent = `Stored in ${where} · last saved ${when}${who}.${ephemeralNote}`;
   } else if (_criteriaMeta.source === 'defaults') {
-    status.textContent = 'No saved server config — showing defaults.';
+    status.textContent = `No saved config in ${where} — showing defaults.${ephemeralNote}`;
+  } else if (_criteriaMeta.source === 'restored-from-local-cache') {
+    status.textContent = `Restored from this browser's cache (server ${where} was missing/empty); re-saving in the background.${ephemeralNote}`;
   } else if (_criteriaMeta.source === 'local-cache') {
     status.textContent = 'Server unreachable — editing cached values from this browser.';
   } else {
