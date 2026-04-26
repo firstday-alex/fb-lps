@@ -333,8 +333,11 @@
         </label>
       </div>
       <div class="controls__group">
-        <label>UTM sources
-          <input type="text" id="utm-sources" value="facebook,instagram,fb,ig,meta">
+        <label>utm_source
+          <input type="text" id="utm-sources" value="facebook" title="Comma-separate to query multiple sources (one ShopifyQL call each).">
+        </label>
+        <label>utm_medium
+          <input type="text" id="utm-medium" value="paid_social">
         </label>
       </div>
       <div class="controls__group">
@@ -527,36 +530,52 @@ function buildRows(metaCurrent, metaPrior, shopifyTable) {
   const cur = aggregateMeta(metaCurrent);
   const pri = aggregateMeta(metaPrior);
 
-  // Index Shopify rows by (utm_content, landing_page_path)
+  // Index Shopify rows by (utm_content, landing_page_path).
+  // Backend returns `sessions`-topic data: sessions, conversion_rate, and
+  // sessions_that_reached_and_completed_checkout (≈ orders count). This store
+  // doesn't expose orders/sales topics, so revenue/AOV/%new are unavailable —
+  // we set them to 0/null and the bucketing rules guard for that.
   const shop = new Map();
   if (shopifyTable && shopifyTable.columns && shopifyTable.rows) {
     const cols = shopifyTable.columns.map(c => (c.name || '').toLowerCase());
     const idx = (n) => cols.findIndex(c => c === n);
-    const iAd  = idx('utm_content');
-    const iLp  = idx('landing_page_path');
-    const iOrd = idx('orders');
-    const iGross = idx('gross_sales');
-    const iNet   = idx('net_sales');
-    const iTotal = idx('total_sales');
-    const iAov   = idx('average_order_value');
-    const iRet   = idx('returning_customer_orders');
+    const iAd       = idx('utm_content');
+    const iLp       = idx('landing_page_path');
+    const iSessions = idx('sessions');
+    const iCvr      = idx('conversion_rate');
+    // Match column the existing /api/shopify-metrics query produces.
+    const iCompleted = idx('sessions_that_completed_checkout') >= 0
+      ? idx('sessions_that_completed_checkout')
+      : idx('sessions_that_reached_and_completed_checkout');
     for (const row of shopifyTable.rows) {
       const get = (i) => i < 0 ? null : (Array.isArray(row) ? row[i] : row[shopifyTable.columns[i].name]);
       const ad = String(get(iAd) ?? '').trim();
       const lp = String(get(iLp) ?? '').trim();
-      if (!ad) continue;
+      if (!ad && !lp) continue;
+      // skip Shopify totals row (both keys empty) — already filtered above
       const k = ad + '||' + lp;
-      const orders = parseFloat(get(iOrd)) || 0;
-      const revenue = parseFloat(get(iNet)) || parseFloat(get(iTotal)) || parseFloat(get(iGross)) || 0;
-      const aov = parseFloat(get(iAov)) || (orders > 0 ? revenue / orders : 0);
-      const returning = parseFloat(get(iRet)) || 0;
-      const newCustomerOrders = Math.max(orders - returning, 0);
-      shop.set(k, {
-        orders, revenue, aov,
-        returning,
-        new_customer_orders: newCustomerOrders,
-        pct_new: orders > 0 ? newCustomerOrders / orders : 0,
-      });
+      const sessions = parseFloat(get(iSessions)) || 0;
+      let cvrRaw = parseFloat(get(iCvr));
+      // ShopifyQL returns CVR as 0–1 in some setups, 0–100 in others
+      if (isFinite(cvrRaw) && cvrRaw > 1) cvrRaw = cvrRaw / 100;
+      const completedCheckout = parseFloat(get(iCompleted)) || 0;
+      const orders = completedCheckout || (isFinite(cvrRaw) ? sessions * cvrRaw : 0);
+
+      // Same (utm_content, lp) may show up across multiple utm_sources (FB + IG)
+      // — sum their sessions/orders, recompute weighted CVR.
+      const existing = shop.get(k);
+      if (existing) {
+        existing.sessions += sessions;
+        existing.orders   += orders;
+        existing.site_cvr = existing.sessions > 0 ? existing.orders / existing.sessions : 0;
+      } else {
+        shop.set(k, {
+          sessions, orders,
+          revenue: 0, aov: 0,                 // not available in `sessions` topic
+          new_customer_orders: 0, pct_new: 0,
+          site_cvr: isFinite(cvrRaw) ? cvrRaw : 0,
+        });
+      }
     }
   }
 
@@ -854,6 +873,7 @@ async function loadData() {
   const cs    = document.getElementById('c-start').value;
   const cu    = document.getElementById('c-end').value;
   const utm   = document.getElementById('utm-sources').value.trim();
+  const utmM  = document.getElementById('utm-medium').value.trim();
   const status = document.getElementById('status');
   const btn = document.getElementById('btn-load');
 
@@ -866,7 +886,7 @@ async function loadData() {
   try {
     const metaParams = new URLSearchParams({ account_id: acct, since, until });
     if (cs && cu) { metaParams.set('compare_since', cs); metaParams.set('compare_until', cu); }
-    const shopParams = new URLSearchParams({ since, until, utm_sources: utm });
+    const shopParams = new URLSearchParams({ since, until, utm_sources: utm, utm_medium: utmM });
 
     const [metaResp, shopResp] = await Promise.all([
       fetch('/api/diag-meta?' + metaParams.toString()),
@@ -884,7 +904,7 @@ async function loadData() {
     const shopData = await shopResp.json();
 
     state.config = readConfig();
-    state.rows = buildRows(metaData.current || [], metaData.prior || [], shopData.orders);
+    state.rows = buildRows(metaData.current || [], metaData.prior || [], shopData.sessions);
     state.benchmarks = computeBenchmarks(state.rows, state.config);
 
     // Bucket each row
@@ -900,7 +920,11 @@ async function loadData() {
     renderTable();
     renderInsufficient();
 
-    status.textContent = `Loaded ${state.rows.length} ad×LP rows · ${metaData.current.length} ads (current) · ${(metaData.prior || []).length} ads (prior).`;
+    const shopOrdersTotal = state.rows.reduce((s, r) => s + r.shopify_orders, 0);
+    const note = shopOrdersTotal === 0
+      ? ' · ⚠ No Shopify data joined — check that ads use utm_content={{ad.name}}.'
+      : ' · Shopify revenue/AOV/%new unavailable on this store (only sessions topic exposed); rules that need them are skipped.';
+    status.textContent = `Loaded ${state.rows.length} ad×LP rows · ${metaData.current.length} ads (current) · ${(metaData.prior || []).length} ads (prior).${note}`;
     document.getElementById('summary-card').style.display = '';
     document.getElementById('table-card').style.display = '';
   } catch (err) {

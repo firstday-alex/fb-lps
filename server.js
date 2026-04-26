@@ -1430,44 +1430,60 @@ app.get('/api/diag-shopify', async (req, res) => {
     return res.status(400).json({ error: 'since and until query params required (YYYY-MM-DD)' });
   }
   const escapeQL = (v) => String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-  const whitelist = (req.query.utm_sources || 'facebook,instagram,fb,ig,meta')
-    .split(',').map(s => escapeQL(s.trim())).filter(Boolean);
-  const sourceClause = whitelist.length === 1
-    ? `utm_source = '${whitelist[0]}'`
-    : `(${whitelist.map(s => `utm_source = '${s}'`).join(' OR ')})`;
+  // Match the syntax of /api/meta-cvr-impact-data: single utm_source + utm_medium
+  // (ShopifyQL on this store rejects OR / IN clauses; AND-joined equality is the
+  // pattern that works everywhere else in this app). To capture multiple
+  // sources (e.g. facebook + instagram) we run one query per source and merge.
+  const sources = (req.query.utm_sources || 'facebook')
+    .split(',').map(s => s.trim()).filter(Boolean);
+  const medium = escapeQL((req.query.utm_medium || 'paid_social').trim());
 
   const endpoint = `https://${SHOPIFY_URL}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
   const gqlQuery = `query RunShopifyQL($q: String!) {
     shopifyqlQuery(query: $q) { tableData { columns { name dataType } rows } parseErrors }
   }`;
 
-  const ordersQL = `FROM orders
-  SHOW orders, gross_sales, net_sales, average_order_value, ordered_item_quantity, returning_customer_orders, total_sales
-  WHERE ${sourceClause}
+  // Mirrors the proven /api/meta-cvr-impact-data and /api/shopify-metrics
+  // patterns: FROM sessions, SHOW sessions + conversion_rate + completed-checkout
+  // count, WHERE utm_source = X AND utm_medium = Y, GROUP BY utm_content,
+  // landing_page_path. This Shopify store doesn't expose `orders` / `sales`
+  // datasets — revenue / AOV / %new aren't reachable; the dashboard handles
+  // null values and skips rules that need them.
+  const buildQL = (source) => `FROM sessions
+  SHOW sessions, conversion_rate, sessions_that_completed_checkout
+  WHERE utm_source = '${escapeQL(source)}' AND utm_medium = '${medium}'
   GROUP BY utm_content, landing_page_path
   SINCE ${since} UNTIL ${until}
-  ORDER BY orders DESC`;
+  ORDER BY sessions DESC`;
 
-  console.log('\n[diag-shopify] orders query:\n' + ordersQL);
+  const run = async (ql) => {
+    const r = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
+      body: JSON.stringify({ query: gqlQuery, variables: { q: ql } }),
+    });
+    const j = await r.json();
+    if (j.data?.shopifyqlQuery?.parseErrors?.length) {
+      const err = new Error('ShopifyQL parse error: ' + JSON.stringify(j.data.shopifyqlQuery.parseErrors));
+      err.parseErrors = j.data.shopifyqlQuery.parseErrors;
+      throw err;
+    }
+    return j.data?.shopifyqlQuery?.tableData || null;
+  };
 
   try {
-    const run = async (ql) => {
-      const r = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
-        body: JSON.stringify({ query: gqlQuery, variables: { q: ql } }),
-      });
-      const j = await r.json();
-      if (j.data?.shopifyqlQuery?.parseErrors?.length) {
-        throw new Error('ShopifyQL parse error: ' + JSON.stringify(j.data.shopifyqlQuery.parseErrors));
-      }
-      return j.data?.shopifyqlQuery?.tableData || null;
-    };
+    // Run one query per utm_source in parallel and concat their rows.
+    const queries = sources.map(buildQL);
+    queries.forEach(q => console.log('\n[diag-shopify] query:\n' + q));
+    const tables = await Promise.all(queries.map(run));
 
-    const orders = await run(ordersQL);
+    // Merge: union the rows under a single columns array (all queries share schema).
+    const cols = tables.find(t => t && t.columns)?.columns || null;
+    const rows = tables.flatMap(t => t?.rows || []);
     res.json({
-      query: ordersQL,
-      orders,
+      sources, medium,
+      queries,
+      sessions: cols ? { columns: cols, rows } : null,
       since, until,
     });
   } catch (err) {
