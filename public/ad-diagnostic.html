@@ -296,6 +296,21 @@
     .ad-name-link:hover { color: var(--fb-blue); text-decoration: underline; }
     .ad-name-link__chev { color: var(--text-secondary); font-size: 0.8em; }
     .ad-name-link.is-loading { opacity: 0.6; }
+    .ad-count-badge {
+      display: inline-block;
+      margin-left: 6px;
+      padding: 1px 6px;
+      font-size: 0.66rem;
+      font-weight: 700;
+      background: var(--neutral-bg);
+      color: var(--text-secondary);
+      border-radius: 8px;
+      vertical-align: middle;
+    }
+    .ad-count-badge.warn {
+      background: #fef3c7;
+      color: #92400e;
+    }
     .lp-cell {
       max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       color: var(--text-secondary); font-family: ui-monospace, SFMono-Regular, monospace;
@@ -789,10 +804,19 @@ function renderBucketRule(rule, cfg) {
 // JOIN: Meta + Shopify → AdRow[]
 // ─────────────────────────────────────────────
 function buildRows(metaCurrent, metaPrior, shopifyTable) {
-  // Aggregate Meta current/prior by (ad_name, landing_page_path)
+  // Aggregate Meta current/prior by (ad_name, landing_page_path).
+  // Dedup by ad_id first — a pagination quirk could otherwise double-count an
+  // ad that appears on two pages. Also keep each ad_id's individual spend so
+  // the detail panel can show the per-ad breakdown.
   const aggregateMeta = (rows) => {
     const map = new Map();
+    const seenAdIds = new Set();
+    let dupeCount = 0;
     for (const r of rows) {
+      if (r.ad_id) {
+        if (seenAdIds.has(r.ad_id)) { dupeCount++; continue; }
+        seenAdIds.add(r.ad_id);
+      }
       const lp = r.landing_page_path || '(unknown)';
       const key = (r.ad_name || '') + '||' + lp;
       let g = map.get(key);
@@ -810,6 +834,7 @@ function buildRows(metaCurrent, metaPrior, shopifyTable) {
           preview_shareable_link: r.preview_shareable_link || null,
           creative_link_url: r.creative_link_url || null,
           ad_name_parsed: r.ad_name_parsed,
+          per_ad: [],                             // breakdown for detail panel
         };
         map.set(key, g);
       }
@@ -828,10 +853,19 @@ function buildRows(metaCurrent, metaPrior, shopifyTable) {
       g.meta_atc += r.meta_atc; g.meta_ic += r.meta_ic;
       g.post_reactions += r.post_reactions; g.post_comments += r.post_comments;
       g.post_shares    += r.post_shares;    g.post_saves    += r.post_saves;
-      // Prefer first-seen preview/creative but allow upgrade if missing
       g.preview_shareable_link = g.preview_shareable_link || r.preview_shareable_link || null;
       g.creative_link_url      = g.creative_link_url      || r.creative_link_url      || null;
+      g.per_ad.push({
+        ad_id: r.ad_id,
+        adset_name: r.adset_name,
+        campaign_name: r.campaign_name,
+        spend: r.spend,
+        impressions: r.impressions,
+        link_clicks: r.link_clicks,
+        meta_purchases: r.meta_purchases,
+      });
     }
+    if (dupeCount > 0) console.warn(`[diag] dropped ${dupeCount} duplicate ad_id row(s) from Meta response`);
     return map;
   };
 
@@ -941,6 +975,7 @@ function buildRows(metaCurrent, metaPrior, shopifyTable) {
       ad_ids: [...c.ad_ids],
       campaign_names: [...c.campaign_names],
       adset_names: [...c.adset_names],
+      per_ad: c.per_ad || [],
       preview_shareable_link: c.preview_shareable_link,
       creative_link_url: c.creative_link_url,
       ad_name_parsed: c.ad_name_parsed,
@@ -1563,6 +1598,7 @@ function renderTable() {
       <td>${bucketChip(r.bucket)}${secondary}</td>
       <td>
         <a class="ad-name-link" href="#" data-key="${esc(rowKey)}" title="${esc(r.ad_name)}\nClick to open Meta preview in a new tab">${esc(adShort)}<span class="ad-name-link__chev"> ↗</span></a>
+        ${r.ad_ids.length > 1 ? `<span class="ad-count-badge${r.ad_ids.length >= 5 ? ' warn' : ''}" title="Aggregated across ${r.ad_ids.length} ad_ids that share this name & landing page (different ad sets / campaigns). Spend is the sum across all of them.">+${r.ad_ids.length - 1} ads</span>` : ''}
       </td>
       <td><div class="lp-cell" title="${esc(r.landing_page_path)}">${esc(lpShort)}</div></td>
       <td class="r">${fmtUSD(r.spend)}</td>
@@ -1855,6 +1891,32 @@ function openDetail(key) {
         ${metaList('Ad sets', r.adset_names.join(', ') || '—')}
       </div>
     </div>
+    ${r.per_ad && r.per_ad.length > 1 ? `
+    <div class="detail-section">
+      <div class="detail-section__h">Per-ad breakdown · ${r.per_ad.length} ad_ids merged into this row</div>
+      <div style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:6px">
+        These ads all share the same <code>ad_name</code> + <code>landing_page_path</code>, so their spend / impressions / orders are summed into a single row above. Each line below is one underlying ad_id.
+      </div>
+      <table class="pop-table">
+        <thead><tr>
+          <th>Ad ID</th><th>Ad set</th>
+          <th class="r">Spend</th><th class="r">Impr</th>
+          <th class="r">Link clicks</th><th class="r">Meta purch</th>
+        </tr></thead>
+        <tbody>
+          ${[...r.per_ad].sort((a, b) => b.spend - a.spend).map(p => `
+            <tr>
+              <td style="font-family:ui-monospace,SFMono-Regular,monospace;font-size:0.74rem">${esc(p.ad_id || '—')}</td>
+              <td title="${esc(p.adset_name || '')}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc((p.adset_name || '—').slice(0, 30))}</td>
+              <td class="r">${fmtUSD(p.spend)}</td>
+              <td class="r">${fmtN(p.impressions)}</td>
+              <td class="r">${fmtN(p.link_clicks)}</td>
+              <td class="r">${fmtN(p.meta_purchases)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>` : ''}
   `;
 
   document.getElementById('detail-overlay').classList.add('open');
