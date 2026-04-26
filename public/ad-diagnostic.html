@@ -1812,12 +1812,15 @@ function renderInsufficient() {
 // Shopify response we cached on `state.shopifyRaw` to surface near-misses:
 //   - Did the utm_content show up at all (with any LP)?
 //   - Did the landing_page_path show up at all (with any utm_content)?
+//   - Is Shopify's utm_content a TRUNCATED prefix of the Meta ad_name?
+//     (Common cause: '#' or other URL-fragment chars in the ad name strip
+//     everything after them before reaching Shopify.)
 // Returns null when the ad already has Shopify orders (no diagnostic needed).
 function shopifyMatchDiagnostic(r) {
   if (r.shopify_orders > 0 || r.shopify_sessions > 0) return null;
   const raw = state.shopifyRaw;
   if (!raw || !raw.columns || !raw.rows) {
-    return { kind: 'no-shopify-data', adNameMatches: [], lpMatches: [], expected: { ad: r.ad_name, lp: r.landing_page_path } };
+    return { kind: 'no-shopify-data', adNameMatches: [], lpMatches: [], truncatedMatches: [], expected: { ad: r.ad_name, lp: r.landing_page_path }, urlBreakChars: [] };
   }
   const cols = raw.columns.map(c => (c.name || '').toLowerCase());
   const iAd  = cols.indexOf('utm_content');
@@ -1825,8 +1828,18 @@ function shopifyMatchDiagnostic(r) {
   const iSess = cols.indexOf('sessions');
   if (iAd < 0 || iLp < 0) return null;
 
-  const adNameMatches = [];
-  const lpMatches     = [];
+  // Detect URL-breaking chars in the Meta ad name. These cause the browser
+  // (or Meta's macro substitution) to truncate before Shopify ever sees it.
+  const URL_BREAK_CHARS = ['#', '?', '&', ' '];
+  const urlBreakChars = URL_BREAK_CHARS.filter(c => r.ad_name.includes(c));
+  const firstBreakIdx = urlBreakChars.length
+    ? Math.min(...urlBreakChars.map(c => r.ad_name.indexOf(c)).filter(i => i >= 0))
+    : -1;
+  const truncatedExpected = firstBreakIdx > 0 ? r.ad_name.slice(0, firstBreakIdx) : null;
+
+  const adNameMatches    = [];   // same utm_content as Meta, different LP
+  const lpMatches        = [];   // same LP as Meta, different utm_content
+  const truncatedMatches = [];   // same LP, utm_content is a prefix of Meta ad_name
   for (const row of raw.rows) {
     const get = (i) => Array.isArray(row) ? row[i] : row[raw.columns[i].name];
     const ad = String(get(iAd) ?? '').trim();
@@ -1836,14 +1849,30 @@ function shopifyMatchDiagnostic(r) {
     if (ad === r.ad_name && lp !== r.landing_page_path) {
       adNameMatches.push({ lp: lp || '(empty)', sessions: sess });
     } else if (lp === r.landing_page_path && ad !== r.ad_name) {
-      lpMatches.push({ ad: ad || '(empty)', sessions: sess });
+      // Is this a truncated version of the Meta ad name? Either the URL-break
+      // prefix, or any prefix at least 12 chars long (covers other oddities).
+      let prefixMatch = false;
+      let exactPrefixOfBreak = false;
+      if (truncatedExpected && ad === truncatedExpected) {
+        prefixMatch = true;
+        exactPrefixOfBreak = true;
+      } else if (ad.length >= 12 && r.ad_name.startsWith(ad)) {
+        prefixMatch = true;
+      }
+      if (prefixMatch) {
+        truncatedMatches.push({ ad, lp, sessions: sess, exactPrefixOfBreak });
+      } else {
+        lpMatches.push({ ad: ad || '(empty)', sessions: sess });
+      }
     }
   }
   adNameMatches.sort((a, b) => b.sessions - a.sessions);
   lpMatches.sort((a, b) => b.sessions - a.sessions);
+  truncatedMatches.sort((a, b) => b.sessions - a.sessions);
 
   let kind;
-  if (adNameMatches.length && lpMatches.length) kind = 'wrong-pair';
+  if (truncatedMatches.length)                  kind = 'truncated';
+  else if (adNameMatches.length && lpMatches.length) kind = 'wrong-pair';
   else if (adNameMatches.length)                kind = 'ad-name-found-lp-mismatch';
   else if (lpMatches.length)                    kind = 'lp-found-ad-name-mismatch';
   else                                          kind = 'no-match-at-all';
@@ -1851,10 +1880,14 @@ function shopifyMatchDiagnostic(r) {
   return {
     kind,
     expected: { ad: r.ad_name, lp: r.landing_page_path },
+    truncatedExpected,
+    urlBreakChars,
     adNameMatches: adNameMatches.slice(0, 8),
     lpMatches: lpMatches.slice(0, 8),
+    truncatedMatches: truncatedMatches.slice(0, 8),
     totalAdNameMatches: adNameMatches.length,
     totalLpMatches: lpMatches.length,
+    totalTruncatedMatches: truncatedMatches.length,
   };
 }
 
@@ -1862,11 +1895,28 @@ function renderShopifyDiagnostic(d) {
   if (!d) return '';
   const headlineByKind = {
     'no-shopify-data': "Couldn't run the diagnostic — no Shopify data was returned.",
+    'truncated': "Shopify HAS this traffic — but stored under a TRUNCATED utm_content (the full Meta ad name was cut off in the URL). This is a UTM-tagging bug, not a missing ad.",
     'wrong-pair': "Both the ad name and the landing page show up in Shopify — but never together.",
     'ad-name-found-lp-mismatch': "Shopify saw this ad name, but pointed at a different landing page. utm_content tagging is fine; the creative URL doesn't match where buyers actually landed.",
     'lp-found-ad-name-mismatch': "Shopify saw traffic to this landing page, but from different utm_content values — utm_content tagging is probably wrong / missing for this ad.",
     'no-match-at-all': "Shopify has no Facebook traffic for either this ad name OR this landing page in the selected window. Either the ad didn't run yet, the UTMs aren't tagged, or utm_source/utm_medium filter is too narrow.",
   };
+
+  // URL-break warning at the top — this is the most actionable signal.
+  const urlBreakWarning = d.urlBreakChars && d.urlBreakChars.length ? `
+    <div style="margin-top:8px;padding:8px 10px;background:#fee2e2;border-left:3px solid #c0392b;border-radius:4px">
+      <div style="font-weight:700;font-size:0.78rem;color:#991b1b;margin-bottom:4px">⚠ URL-breaking character${d.urlBreakChars.length > 1 ? 's' : ''} in ad name: ${d.urlBreakChars.map(c => `<code style="background:#fff;padding:1px 4px;border-radius:2px">${esc(c === ' ' ? '·space·' : c)}</code>`).join(' ')}</div>
+      <div style="font-size:0.76rem;color:#78350f;line-height:1.5">
+        These characters break the URL when Meta substitutes <code>{{ad.name}}</code> into your link without URL-encoding. Browsers strip the rest of the URL before sending to Shopify. ${d.truncatedExpected ? `Shopify likely sees this utm_content truncated to:<br><code style="display:inline-block;margin-top:4px;background:#fff;padding:3px 6px;border-radius:3px;word-break:break-all">${esc(d.truncatedExpected)}</code>` : ''}
+        <br><br><strong>Fix:</strong> rename the ad to remove <code>#</code> / <code>?</code> / <code>&amp;</code> / spaces, or use a URL-encoded macro like <code>{{ad.name | url_encode}}</code> if your account supports it.
+      </div>
+    </div>` : '';
+
+  const truncatedList = d.truncatedMatches && d.truncatedMatches.length ? `
+    <div style="margin-top:8px">
+      <div class="diag-card__h">Likely-truncated utm_content matches at this LP — top ${d.truncatedMatches.length}${d.totalTruncatedMatches > d.truncatedMatches.length ? ` of ${d.totalTruncatedMatches}` : ''}</div>
+      <ul class="diag-list">${d.truncatedMatches.map(m => `<li><span style="word-break:break-all">${esc(m.ad)}${m.exactPrefixOfBreak ? ' <span style="color:var(--negative);font-weight:700">← matches prefix-up-to-break-char</span>' : ''}</span><span class="diag-sess">${fmtN(m.sessions)} sess</span></li>`).join('')}</ul>
+    </div>` : '';
   const adList = d.adNameMatches.length ? `
     <div style="margin-top:8px">
       <div class="diag-card__h">Same ad name, different LP — top ${d.adNameMatches.length}${d.totalAdNameMatches > d.adNameMatches.length ? ` of ${d.totalAdNameMatches}` : ''}</div>
@@ -1875,19 +1925,21 @@ function renderShopifyDiagnostic(d) {
   const lpList = d.lpMatches.length ? `
     <div style="margin-top:8px">
       <div class="diag-card__h">Same LP, different utm_content — top ${d.lpMatches.length}${d.totalLpMatches > d.lpMatches.length ? ` of ${d.totalLpMatches}` : ''}</div>
-      <ul class="diag-list">${d.lpMatches.map(m => `<li><span>${esc(m.ad)}</span><span class="diag-sess">${fmtN(m.sessions)} sess</span></li>`).join('')}</ul>
+      <ul class="diag-list">${d.lpMatches.map(m => `<li><span style="word-break:break-all">${esc(m.ad)}</span><span class="diag-sess">${fmtN(m.sessions)} sess</span></li>`).join('')}</ul>
     </div>` : '';
+  const cardClass = d.kind === 'truncated' ? 'diag-card' : 'diag-card';
   return `
     <div class="detail-section">
       <div class="detail-section__h">Why no Shopify match?</div>
-      <div class="diag-card">
+      <div class="${cardClass}">
         <div class="diag-card__h">Looking for utm_content × landing_page_path</div>
         <div style="font-family:ui-monospace,SFMono-Regular,monospace;font-size:0.78rem;word-break:break-all">
           <strong>utm_content:</strong> ${esc(d.expected.ad || '(empty)')}<br>
           <strong>landing_page_path:</strong> ${esc(d.expected.lp || '(empty)')}
         </div>
         <div style="margin-top:8px">${esc(headlineByKind[d.kind] || '')}</div>
-        ${adList}${lpList}
+        ${urlBreakWarning}
+        ${truncatedList}${adList}${lpList}
       </div>
     </div>`;
 }
