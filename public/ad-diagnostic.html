@@ -1098,17 +1098,9 @@ function openDetail(key) {
 
   const def = BUCKETS[r.bucket] || BUCKETS.UNCATEGORIZED;
 
-  const previewSection = r.preview_shareable_link
-    ? `<div class="detail-section">
+  const previewSection = `<div class="detail-section">
          <div class="detail-section__h">Preview</div>
-         <iframe class="preview-frame" src="${esc(r.preview_shareable_link)}" sandbox="allow-scripts allow-same-origin"></iframe>
-         <div style="margin-top:6px;font-size:0.78rem">
-           <a href="${esc(r.preview_shareable_link)}" target="_blank" rel="noopener">Open preview in new tab ↗</a>
-         </div>
-       </div>`
-    : `<div class="detail-section">
-         <div class="detail-section__h">Preview</div>
-         <div class="preview-fallback">No preview link available.</div>
+         <div id="dp-preview-slot" class="preview-fallback">Loading preview…</div>
        </div>`;
 
   const reasons = (r.reasons || []).map(rsn => `<li class="r-pass">✓ ${esc(rsn)}</li>`).join('');
@@ -1194,6 +1186,37 @@ function openDetail(key) {
 
   document.getElementById('detail-overlay').classList.add('open');
   document.getElementById('detail-panel').style.display = '';
+
+  // Lazy-load preview link for the first ad_id of this row (cached on the row)
+  const slot = document.getElementById('dp-preview-slot');
+  if (slot && r.preview_shareable_link) {
+    slot.outerHTML = `
+      <iframe class="preview-frame" src="${esc(r.preview_shareable_link)}" sandbox="allow-scripts allow-same-origin"></iframe>
+      <div style="margin-top:6px;font-size:0.78rem">
+        <a href="${esc(r.preview_shareable_link)}" target="_blank" rel="noopener">Open preview in new tab ↗</a>
+      </div>`;
+  } else if (slot && r.ad_ids.length > 0) {
+    fetch('/api/diag-ad-preview?ad_id=' + encodeURIComponent(r.ad_ids[0]))
+      .then(resp => resp.ok ? resp.json() : Promise.reject(new Error('preview fetch failed')))
+      .then(data => {
+        // Cache on the row so re-opening doesn't refetch
+        r.preview_shareable_link = data.preview_shareable_link || null;
+        if (data.creative_link_url) r.creative_link_url = data.creative_link_url;
+        if (state.selectedKey !== key) return;          // user already moved on
+        if (data.preview_shareable_link) {
+          slot.outerHTML = `
+            <iframe class="preview-frame" src="${esc(data.preview_shareable_link)}" sandbox="allow-scripts allow-same-origin"></iframe>
+            <div style="margin-top:6px;font-size:0.78rem">
+              <a href="${esc(data.preview_shareable_link)}" target="_blank" rel="noopener">Open preview in new tab ↗</a>
+            </div>`;
+        } else {
+          slot.textContent = 'No preview link available.';
+        }
+      })
+      .catch(() => { if (slot && state.selectedKey === key) slot.textContent = 'Preview unavailable.'; });
+  } else if (slot) {
+    slot.textContent = 'No ad_id to fetch preview.';
+  }
 }
 
 function closeDetail() {

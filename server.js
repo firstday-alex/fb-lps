@@ -1343,77 +1343,67 @@ app.get('/api/diag-meta', requireAuth, async (req, res) => {
     const currentRows = current.map(shapeRow);
     const priorRows   = prior.map(shapeRow);
 
-    // Fetch creative link_url + preview_shareable_link in batches of 50 for current ads only
-    const adIds = [...new Set(currentRows.map(r => r.ad_id))].filter(Boolean);
-    const previewMap = {};   // ad_id → preview_shareable_link
-    const creativeMap = {};  // ad_id → { link_url, story_link, asset_feed_links }
-    const BATCH = 50;
-    for (let i = 0; i < adIds.length; i += BATCH) {
-      const slice = adIds.slice(i, i + BATCH);
-      const batchRequests = slice.map(id => ({
-        method: 'GET',
-        relative_url: `${id}?fields=preview_shareable_link,creative{link_url,object_story_spec,asset_feed_spec}`,
-      }));
-      try {
-        const body = new URLSearchParams({
-          access_token: req.accessToken,
-          appsecret_proof: generateAppSecretProof(req.accessToken),
-          batch: JSON.stringify(batchRequests),
-        });
-        const resp = await fetch(`${META_BASE_URL}/`, {
-          method: 'POST', body, signal: AbortSignal.timeout(20000),
-        });
-        const results = await resp.json();
-        if (Array.isArray(results)) {
-          for (let j = 0; j < slice.length; j++) {
-            const r = results[j];
-            if (!r || r.code !== 200) continue;
-            try {
-              const parsed = JSON.parse(r.body);
-              previewMap[slice[j]] = parsed.preview_shareable_link || null;
-              const creative = parsed.creative || {};
-              const linkUrl = creative.link_url
-                || extractDestinationUrl(creative.object_story_spec || {})
-                || extractAssetFeedUrl(creative.asset_feed_spec || {})
-                || null;
-              creativeMap[slice[j]] = { link_url: linkUrl };
-            } catch {}
-          }
-        }
-      } catch (e) {
-        console.error('[diag-meta] preview batch failed:', e.message);
-      }
-    }
-
-    // Derive landing_page_path per current row: prefer creative link_url's pathname,
-    // fall back to slug parsed from ad name (existing parseAdName helper)
+    // landing_page_path is derived from the ad-name slug only (parseAdName).
+    // Skipping the per-ad creative fetch keeps cold-load fast: for accounts
+    // where ads don't follow the `url:slug` convention, we'll fall back to
+    // '(unknown)' and the join won't match Shopify rows for those ads.
+    // The detail panel separately fetches preview_shareable_link on demand.
     const pathFromUrl = (u) => {
       if (!u) return null;
       try { return new URL(u).pathname || '/'; } catch { return null; }
     };
     const enrich = (r) => {
-      const creativeLink = creativeMap[r.ad_id]?.link_url || null;
-      const pathFromCreative = pathFromUrl(creativeLink);
       const parsed = parseAdName(r.ad_name);
       const pathFromName = parsed.landing_page_url ? pathFromUrl(parsed.landing_page_url) : null;
-      const landing_page_path = pathFromCreative || pathFromName || '(unknown)';
       return {
         ...r,
-        landing_page_path,
-        creative_link_url: creativeLink,
-        preview_shareable_link: previewMap[r.ad_id] || null,
+        landing_page_path: pathFromName || '(unknown)',
+        creative_link_url: parsed.landing_page_url || null,
+        preview_shareable_link: null,        // lazy-loaded
         ad_name_parsed: parsed,
       };
     };
 
     res.json({
       current: currentRows.map(enrich),
-      prior:   priorRows,            // prior keyed-by-ad_id only (no creative enrichment needed for trend math)
+      prior:   priorRows,
       since, until, compare_since: compare_since || null, compare_until: compare_until || null,
     });
   } catch (err) {
     console.error('[diag-meta] error:', err);
     if (err.status === 401) return res.status(401).json({ error: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────
+// DIAGNOSTIC DASHBOARD — preview link for one ad (lazy-loaded by detail panel)
+// ─────────────────────────────────────────────
+app.get('/api/diag-ad-preview', requireAuth, async (req, res) => {
+  const { ad_id } = req.query;
+  if (!ad_id) return res.status(400).json({ error: 'ad_id required' });
+  try {
+    const url = `${META_BASE_URL}/${ad_id}`
+      + `?fields=preview_shareable_link,creative{link_url,object_story_spec,asset_feed_spec}`
+      + `&${metaParams(req.accessToken)}`;
+    const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    const data = await r.json();
+    if (data.error) {
+      if (data.error.code === 190) { clearTokenCookie(res); return res.status(401).json({ error: 'Session expired' }); }
+      return res.status(400).json({ error: data.error.message });
+    }
+    const creative = data.creative || {};
+    const link = creative.link_url
+      || extractDestinationUrl(creative.object_story_spec || {})
+      || extractAssetFeedUrl(creative.asset_feed_spec || {})
+      || null;
+    res.json({
+      ad_id,
+      preview_shareable_link: data.preview_shareable_link || null,
+      creative_link_url: link,
+    });
+  } catch (err) {
+    console.error('[diag-ad-preview] error:', err);
     res.status(500).json({ error: err.message });
   }
 });
