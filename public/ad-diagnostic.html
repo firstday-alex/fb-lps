@@ -231,6 +231,48 @@
     .neg { color: var(--negative); }
     .muted { color: var(--text-secondary); }
 
+    /* ── bucket hover popover ── */
+    .bucket-pop {
+      position: fixed;
+      max-width: 380px;
+      background: #1f2937;
+      color: #f9fafb;
+      padding: 12px 14px;
+      border-radius: 8px;
+      box-shadow: 0 10px 28px rgba(0,0,0,0.32);
+      font-size: 0.78rem;
+      line-height: 1.5;
+      z-index: 9999;
+      pointer-events: none;
+      display: none;
+    }
+    .bucket-pop__title {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 0.84rem; font-weight: 700;
+      margin-bottom: 6px;
+    }
+    .bucket-pop__title .chip__dot { width: 9px; height: 9px; border-radius: 50%; }
+    .bucket-pop__desc { color: #d1d5db; margin-bottom: 8px; }
+    .bucket-pop__h {
+      font-size: 0.65rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.05em; color: #9ca3af; margin-top: 8px; margin-bottom: 3px;
+    }
+    .bucket-pop__rule {
+      background: #111827;
+      border: 1px solid #374151;
+      border-radius: 4px;
+      padding: 6px 8px;
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      font-size: 0.72rem;
+      color: #e5e7eb;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .bucket-pop__action {
+      color: #fde68a;
+      font-style: italic;
+    }
+
     /* ── detail side panel ── */
     .detail-overlay {
       position: fixed; inset: 0;
@@ -420,6 +462,9 @@
 
 </div>
 
+<!-- ── bucket hover popover ── -->
+<div class="bucket-pop" id="bucket-pop"></div>
+
 <!-- ── detail panel ── -->
 <div class="detail-overlay" id="detail-overlay"></div>
 <div class="detail-panel" id="detail-panel" style="display:none">
@@ -476,6 +521,97 @@ const BUCKET_PRIORITY = [
   'RETARGETING_ECHO', 'HOOK_NOT_BODY', 'CHEAP_CLICKS_NO_BIZ',
   'WINNER', 'CLICKBAIT', 'QUALIFIER', 'LOSER',
 ];
+
+// Plain-language description, deterministic rule, and recommended action per
+// bucket. Shown in the hover popover on each summary tile.
+const BUCKET_DOCS = {
+  INSUFFICIENT_DATA: {
+    desc: 'Not enough volume to trust any diagnosis yet.',
+    rule: 'spend < ${min_spend} OR impressions < ${min_impressions}',
+    action: 'Either raise spend or wait — no signal worth acting on.',
+  },
+  TRACKING_ISSUE: {
+    desc: "Meta-reported purchases and Shopify orders don't agree. Don't trust ROAS for this ad until you fix the gap.",
+    rule: '(meta_purchases / shopify_orders) < ${truth_check_lower}\nOR (meta_purchases / shopify_orders) > ${truth_check_upper}\nAND link_clicks > 100',
+    action: 'Audit Pixel + CAPI for this ad/event before declaring it a winner or loser.',
+  },
+  NEGATIVE_ENGAGEMENT: {
+    desc: 'Audiences are reporting or hiding this ad. Negative signals compound across the whole account.',
+    rule: "quality_ranking == 'below_average'\nOR engagement_rate_ranking == 'below_average'",
+    action: 'Pause now. Negative ranking drags down sibling ads in the same account.',
+  },
+  CREATIVE_FATIGUE: {
+    desc: 'Same audiences have seen this too many times — CTR is dropping while costs rise.',
+    rule: 'frequency > ${high_frequency}\nAND ctr_change_pct < ${ctr_decline_pct}%\nAND (cpm_change_pct > 10% OR cpa_change_pct > 15%)',
+    action: 'Launch fresh creative variants under NEW ad IDs (do not edit existing — that resets learning).',
+  },
+  SCALING_SATURATION: {
+    desc: 'Spend went up; performance went down. Saturating the audience faster than the creative can convert it.',
+    rule: 'spend_change_pct > ${spend_increase}%\nAND cpa_change_pct > ${cpa_increase}%\nAND frequency_change_pct > 20%',
+    action: 'Broaden the audience before adding more budget, or run more creative variants in parallel.',
+  },
+  DISCOUNT_HUNTER_TRAP: {
+    desc: "ROAS looks great — but it's repeat customers stacking discounts, not new business.",
+    rule: 'shopify_roas > median\nAND shopify_pct_new < ${discount_pct_new_mult}× median\nAND shopify_aov < median',
+    action: 'Cap discount-led creative as % of spend. Switch the KPI to new-customer ROAS.',
+  },
+  RETARGETING_ECHO: {
+    desc: 'Retargeting an audience that mostly already knows you — likely not driving incremental orders.',
+    rule: 'ad set name matches retargeting pattern\nAND shopify_pct_new < 20%\nAND frequency > 4.0',
+    action: 'Run a geo-holdout test. Cap retargeting frequency. Probably not incremental.',
+  },
+  HOOK_NOT_BODY: {
+    desc: 'Strong thumbstop, weak retention — viewers bail mid-video and the link CTR proves it.',
+    rule: 'hook_rate > median (3-sec views / impressions)\nAND hold_rate < 25% (thruplay / 3-sec views)\nAND link_ctr < median',
+    action: 'Keep the opening; rework the middle and CTA.',
+  },
+  CHEAP_CLICKS_NO_BIZ: {
+    desc: 'Lots of cheap clicks that never turn into orders. Often Audience Network or low-intent placements.',
+    rule: 'cpc < median\nAND ctr > median\nAND cvr < median\nAND shopify_roas < ${target_roas}',
+    action: 'Check the placement breakdown — Audience Network is usually the culprit. Tighten placements / audience.',
+  },
+  WINNER: {
+    desc: 'Engaging AND converting AND profitable AND not yet fatigued. Scale carefully.',
+    rule: 'ctr > median\nAND cvr > median\nAND shopify_roas > ${target_roas}\nAND frequency < ${high_frequency}\nAND quality_ranking != below_average',
+    action: 'Scale carefully (don\'t double budget overnight). Save to a winners library.',
+  },
+  CLICKBAIT: {
+    desc: 'High click-through but the wrong audience or wrong promise — they bounce, fail to convert, or buy nothing.',
+    rule: 'ctr > median\nAND (cvr < median OR pct_new < median OR aov < median)\nAND shopify_roas < ${target_roas}',
+    action: 'Tighten ad-LP message match. Add qualifying language. Re-check the audience.',
+  },
+  QUALIFIER: {
+    desc: "Low CTR but the people who DO click are gold. Don't kill — broaden the hook.",
+    rule: 'ctr < median\nAND cvr > ${qualifier_cvr_mult}× median\nAND shopify_roas ≥ ${target_roas}',
+    action: "Don't kill. Test a broader hook with the same body/offer to expand reach.",
+  },
+  LOSER: {
+    desc: "Low engagement, low conversion, low ROAS. Doesn't deserve more budget.",
+    rule: 'ctr < median\nAND cvr < median\nAND shopify_roas < ${target_roas}',
+    action: 'Kill it. Start over with a fresh angle.',
+  },
+  UNCATEGORIZED: {
+    desc: "No rule matched — usually means the ad's metrics don't fit any extreme pattern. Worth eyeballing.",
+    rule: '(falls through after every other rule)',
+    action: 'Eyeball the metrics manually; tweak thresholds if too many ads land here.',
+  },
+};
+
+function renderBucketRule(rule, cfg) {
+  if (!cfg) return rule;
+  return rule
+    .replaceAll('${min_spend}',         '$' + cfg.minimum_spend)
+    .replaceAll('${min_impressions}',   String(cfg.minimum_impressions))
+    .replaceAll('${truth_check_lower}', String(cfg.truth_check_lower))
+    .replaceAll('${truth_check_upper}', String(cfg.truth_check_upper))
+    .replaceAll('${high_frequency}',    String(cfg.high_frequency))
+    .replaceAll('${ctr_decline_pct}',   String(cfg.ctr_decline_pct))
+    .replaceAll('${spend_increase}',    String(cfg.spend_increase))
+    .replaceAll('${cpa_increase}',      String(cfg.cpa_increase))
+    .replaceAll('${discount_pct_new_mult}', String(cfg.discount_pct_new_mult))
+    .replaceAll('${qualifier_cvr_mult}', String(cfg.qualifier_cvr_mult))
+    .replaceAll('${target_roas}',       cfg.target_roas + 'x');
+}
 
 // ─────────────────────────────────────────────
 // JOIN: Meta + Shopify → AdRow[]
@@ -989,7 +1125,46 @@ function renderTiles() {
       state.bucketFilter = (state.bucketFilter === b) ? '' : b;
       renderTiles(); renderTable();
     });
+    t.addEventListener('mouseenter', () => showBucketPop(t, t.dataset.bucket));
+    t.addEventListener('mousemove', positionBucketPop);
+    t.addEventListener('mouseleave', hideBucketPop);
   });
+}
+
+function showBucketPop(anchor, bucketName) {
+  const pop = document.getElementById('bucket-pop');
+  const def = BUCKETS[bucketName] || BUCKETS.UNCATEGORIZED;
+  const doc = BUCKET_DOCS[bucketName] || BUCKET_DOCS.UNCATEGORIZED;
+  pop.innerHTML = `
+    <div class="bucket-pop__title">
+      <span class="chip__dot" style="background:${def.color}"></span>${esc(def.label)}
+    </div>
+    <div class="bucket-pop__desc">${esc(doc.desc)}</div>
+    <div class="bucket-pop__h">Rule</div>
+    <div class="bucket-pop__rule">${esc(renderBucketRule(doc.rule, state.config))}</div>
+    <div class="bucket-pop__h">Action</div>
+    <div class="bucket-pop__action">${esc(doc.action)}</div>
+  `;
+  pop.style.display = 'block';
+}
+
+function positionBucketPop(e) {
+  const pop = document.getElementById('bucket-pop');
+  if (pop.style.display !== 'block') return;
+  const pad = 14;
+  const rect = pop.getBoundingClientRect();
+  let x = e.clientX + pad;
+  let y = e.clientY + pad;
+  if (x + rect.width  > window.innerWidth  - 8) x = e.clientX - rect.width  - pad;
+  if (y + rect.height > window.innerHeight - 8) y = e.clientY - rect.height - pad;
+  if (x < 4) x = 4;
+  if (y < 4) y = 4;
+  pop.style.left = x + 'px';
+  pop.style.top  = y + 'px';
+}
+
+function hideBucketPop() {
+  document.getElementById('bucket-pop').style.display = 'none';
 }
 
 function renderTable() {
