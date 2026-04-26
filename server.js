@@ -81,6 +81,7 @@ function clearTokenCookie(res) {
 
 const cookieParser = require('cookie-parser');
 app.use(cookieParser());
+app.use(express.json({ limit: '32kb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 function requireAuth(req, res, next) {
@@ -1211,6 +1212,87 @@ VISUALIZE conversion_rate TYPE table`;
   } catch (err) {
     console.error('Meta ad-lp data error:', err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────
+// DIAGNOSTIC DASHBOARD — bucketing-criteria persistence (shared JSON file)
+// ─────────────────────────────────────────────
+const fsp = require('fs').promises;
+// On Vercel the project filesystem is read-only at runtime — fall back to /tmp
+// (per-instance, ephemeral). Override with DIAG_CRITERIA_FILE env var if needed.
+const CRITERIA_FILE = process.env.DIAG_CRITERIA_FILE
+  || (process.env.VERCEL ? '/tmp/diag-criteria.json' : path.join(__dirname, 'data', 'diag-criteria.json'));
+
+const CRITERIA_DEFAULTS = {
+  minimum_spend: 50,
+  minimum_impressions: 1000,
+  target_roas: 2.0,
+  high_frequency: 3.0,
+  ctr_decline_pct: -15,
+  spend_increase: 50,
+  cpa_increase: 25,
+  discount_pct_new_mult: 0.5,
+  qualifier_cvr_mult: 1.5,
+  truth_check_lower: 0.5,
+  truth_check_upper: 2.0,
+  retargeting_patterns: 'rt,retarget,warm,visitors,view-content',
+};
+
+// Coerce incoming values to the same types as the defaults so downstream code
+// can rely on numbers being numbers and strings being strings.
+function coerceCriteria(input) {
+  const out = { ...CRITERIA_DEFAULTS };
+  if (!input || typeof input !== 'object') return out;
+  for (const k of Object.keys(CRITERIA_DEFAULTS)) {
+    if (!(k in input)) continue;
+    if (typeof CRITERIA_DEFAULTS[k] === 'string') {
+      out[k] = String(input[k]).slice(0, 400);
+    } else {
+      const n = parseFloat(input[k]);
+      if (Number.isFinite(n)) out[k] = n;
+    }
+  }
+  return out;
+}
+
+app.get('/api/diag-criteria', async (req, res) => {
+  try {
+    const raw = await fsp.readFile(CRITERIA_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    res.json({
+      criteria: { ...CRITERIA_DEFAULTS, ...parsed },
+      updated_at: parsed.updated_at || null,
+      updated_by: parsed.updated_by || null,
+      source: 'file',
+      file: CRITERIA_FILE,
+    });
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      return res.json({
+        criteria: { ...CRITERIA_DEFAULTS },
+        updated_at: null, updated_by: null,
+        source: 'defaults', file: CRITERIA_FILE,
+      });
+    }
+    console.error('[diag-criteria GET] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/diag-criteria', async (req, res) => {
+  const cleaned = coerceCriteria(req.body);
+  cleaned.updated_at = new Date().toISOString();
+  if (req.body && typeof req.body.updated_by === 'string') {
+    cleaned.updated_by = req.body.updated_by.slice(0, 120);
+  }
+  try {
+    await fsp.mkdir(path.dirname(CRITERIA_FILE), { recursive: true });
+    await fsp.writeFile(CRITERIA_FILE, JSON.stringify(cleaned, null, 2), 'utf8');
+    res.json({ criteria: cleaned, saved: true, file: CRITERIA_FILE });
+  } catch (err) {
+    console.error('[diag-criteria POST] error:', err);
+    res.status(500).json({ error: 'Failed to save: ' + err.message });
   }
 });
 

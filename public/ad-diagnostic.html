@@ -1081,9 +1081,10 @@ const state = {
 };
 
 // ─────────────────────────────────────────────
-// CRITERIA EDITOR — persisted to localStorage per browser
+// CRITERIA EDITOR — persisted to a JSON file on the server (shared across
+// sessions / users), with a localStorage mirror used only as an offline cache.
 // ─────────────────────────────────────────────
-const CRIT_KEY = 'ad-diagnostic.criteria.v1';
+const CRIT_KEY = 'ad-diagnostic.criteria.v1';     // localStorage cache key
 const CRIT_DEFAULTS = {
   minimum_spend: 50,
   minimum_impressions: 1000,
@@ -1113,18 +1114,61 @@ const CRIT_FIELDS = [
   { key: 'retargeting_patterns',  label: 'Retargeting ad-set patterns', type: 'text', hint: 'Comma-separated; lowercase substring match against ad-set name.' },
 ];
 
+// In-memory cache hydrated from server-of-truth on page load. If the server
+// fetch fails, we fall back to the localStorage mirror so the dashboard still
+// works offline / with no auth.
+let _criteriaCache = { ...CRIT_DEFAULTS };
+let _criteriaMeta  = { updated_at: null, updated_by: null, source: 'defaults' };
+
 function loadCriteria() {
+  return { ..._criteriaCache };
+}
+
+async function fetchCriteriaFromServer() {
   try {
-    const raw = localStorage.getItem(CRIT_KEY);
-    if (!raw) return { ...CRIT_DEFAULTS };
-    const parsed = JSON.parse(raw);
-    return { ...CRIT_DEFAULTS, ...parsed };
-  } catch {
-    return { ...CRIT_DEFAULTS };
+    const resp = await fetch('/api/diag-criteria');
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+    _criteriaCache = { ...CRIT_DEFAULTS, ...(data.criteria || {}) };
+    _criteriaMeta  = { updated_at: data.updated_at, updated_by: data.updated_by, source: data.source };
+    // Mirror to localStorage so we can still render if the server is briefly
+    // unreachable on the next load.
+    try { localStorage.setItem(CRIT_KEY, JSON.stringify(_criteriaCache)); } catch {}
+    return _criteriaCache;
+  } catch (err) {
+    console.warn('[criteria] server load failed, falling back to local cache:', err.message);
+    try {
+      const raw = localStorage.getItem(CRIT_KEY);
+      if (raw) _criteriaCache = { ...CRIT_DEFAULTS, ...JSON.parse(raw) };
+      _criteriaMeta = { updated_at: null, updated_by: null, source: 'local-cache' };
+    } catch {}
+    return _criteriaCache;
   }
 }
-function saveCriteria(c) {
-  try { localStorage.setItem(CRIT_KEY, JSON.stringify(c)); } catch {}
+
+async function saveCriteriaToServer(next) {
+  const payload = { ...next };
+  // Optional "who changed it last" — pulled from any name the user has set in
+  // localStorage; otherwise blank.
+  try {
+    const u = localStorage.getItem('ad-diagnostic.username');
+    if (u) payload.updated_by = u;
+  } catch {}
+
+  const resp = await fetch('/api/diag-criteria', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!resp.ok) {
+    const j = await resp.json().catch(() => ({}));
+    throw new Error(j.error || ('HTTP ' + resp.status));
+  }
+  const data = await resp.json();
+  _criteriaCache = { ...CRIT_DEFAULTS, ...(data.criteria || {}) };
+  _criteriaMeta  = { updated_at: data.criteria?.updated_at, updated_by: data.criteria?.updated_by, source: 'file' };
+  try { localStorage.setItem(CRIT_KEY, JSON.stringify(_criteriaCache)); } catch {}
+  return _criteriaCache;
 }
 
 function readConfig() {
@@ -1163,8 +1207,20 @@ function openCriteriaModal() {
       <span class="crit-field__hint">${esc(f.hint || '')}</span>
     </div>`;
   }).join('');
-  document.getElementById('crit-status').textContent = '';
-  document.getElementById('crit-status').className = 'crit-status';
+  // "Last updated" / "by" line so users can see whose change is live.
+  const status = document.getElementById('crit-status');
+  if (_criteriaMeta.source === 'file' && _criteriaMeta.updated_at) {
+    const when = new Date(_criteriaMeta.updated_at).toLocaleString();
+    const who = _criteriaMeta.updated_by ? ` by ${_criteriaMeta.updated_by}` : '';
+    status.textContent = `Server config · last saved ${when}${who}`;
+  } else if (_criteriaMeta.source === 'defaults') {
+    status.textContent = 'No saved server config — showing defaults.';
+  } else if (_criteriaMeta.source === 'local-cache') {
+    status.textContent = 'Server unreachable — editing cached values from this browser.';
+  } else {
+    status.textContent = '';
+  }
+  status.className = 'crit-status';
   document.getElementById('crit-overlay').classList.add('open');
 }
 
@@ -1697,28 +1753,45 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  // Hydrate criteria cache from the server up-front so any subsequent Load
+  // call uses the latest persisted thresholds.
+  fetchCriteriaFromServer();
+
   // Criteria modal
-  document.getElementById('btn-open-criteria').addEventListener('click', openCriteriaModal);
+  document.getElementById('btn-open-criteria').addEventListener('click', async () => {
+    // Always re-fetch on open so two browsers stay in sync.
+    await fetchCriteriaFromServer();
+    openCriteriaModal();
+  });
   document.getElementById('crit-close').addEventListener('click', closeCriteriaModal);
   document.getElementById('crit-cancel').addEventListener('click', closeCriteriaModal);
   document.getElementById('crit-overlay').addEventListener('click', (e) => {
     if (e.target === e.currentTarget) closeCriteriaModal();
   });
   document.getElementById('crit-reset').addEventListener('click', () => {
-    saveCriteria({ ...CRIT_DEFAULTS });
-    openCriteriaModal();                                       // re-render fields with defaults
+    // Just re-fill the form with defaults — user must click Save to persist.
+    _criteriaCache = { ...CRIT_DEFAULTS };
+    openCriteriaModal();
     const s = document.getElementById('crit-status');
-    s.textContent = 'Reset to defaults — click Save & apply to use them.';
+    s.textContent = 'Reset fields to defaults — click Save & apply to write to server.';
     s.className = 'crit-status';
   });
-  document.getElementById('crit-save').addEventListener('click', () => {
+  document.getElementById('crit-save').addEventListener('click', async () => {
     const next = readCriteriaFromModal();
-    saveCriteria(next);
-    applyCriteriaToLoadedData();
     const s = document.getElementById('crit-status');
-    s.textContent = '✓ Saved & applied to current data.';
-    s.className = 'crit-status saved';
-    setTimeout(closeCriteriaModal, 600);
+    s.textContent = 'Saving…';
+    s.className = 'crit-status';
+    try {
+      await saveCriteriaToServer(next);
+      applyCriteriaToLoadedData();
+      const when = _criteriaMeta.updated_at ? new Date(_criteriaMeta.updated_at).toLocaleString() : '';
+      s.textContent = `✓ Saved to server${when ? ' at ' + when : ''} & applied to current data.`;
+      s.className = 'crit-status saved';
+      setTimeout(closeCriteriaModal, 800);
+    } catch (err) {
+      s.textContent = '✗ Save failed: ' + err.message;
+      s.className = 'crit-status';
+    }
   });
 });
 </script>
