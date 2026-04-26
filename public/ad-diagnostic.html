@@ -409,6 +409,9 @@
       display: flex; justify-content: space-between; align-items: flex-start;
       gap: 12px; margin-bottom: 12px;
     }
+    /* The wrapper holding title + sub must claim the flex space, otherwise
+       its children (copy-blocks) collapse to content width. */
+    .detail-panel__head > div:first-child { flex: 1 1 auto; min-width: 0; }
     .detail-panel__title { font-size: 0.95rem; font-weight: 600; word-break: break-all; user-select: text; }
     .detail-panel__sub { font-size: 0.78rem; color: var(--text-secondary); margin-top: 4px; word-break: break-all; user-select: text; }
 
@@ -416,9 +419,8 @@
       display: flex; align-items: stretch; gap: 6px;
       margin-top: 4px;
     }
-    .copy-block input,
-    .copy-block textarea {
-      flex: 1 1 0%;
+    .copy-block input {
+      flex: 1 1 auto;
       width: 100%;
       min-width: 0;                            /* let flex shrink in narrow viewports */
       padding: 8px 10px;
@@ -430,15 +432,7 @@
       color: var(--text-primary);
       user-select: text;
     }
-    .copy-block textarea {
-      resize: vertical;
-      min-height: 48px;
-      max-height: 240px;
-      line-height: 1.4;
-      word-break: break-all;
-      white-space: pre-wrap;
-    }
-    .copy-block button { align-self: flex-start; }
+    .copy-block button { align-self: stretch; flex: 0 0 auto; }
 
     .dp-preview-btn {
       display: inline-flex;
@@ -1835,25 +1829,26 @@ function openDetail(key) {
   state.selectedKey = key;
   document.querySelectorAll('table.diag tbody tr').forEach(tr => tr.classList.toggle('row-selected', tr.dataset.key === key));
 
-  // Copyable header — textareas wrap so you can see the full value at a glance,
-  // and the Copy button is a one-click fallback for the clipboard API.
+  // Copyable header — single-line inputs that grow horizontally to fill the
+  // panel width. Long values overflow with native horizontal scrolling; the
+  // tooltip shows the full string on hover. Copy button as a one-click fallback.
   const labelStyle = 'font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);margin-bottom:3px';
   document.getElementById('dp-title').innerHTML = `
     <div style="${labelStyle}">utm_content (ad name)</div>
     <div class="copy-block">
-      <textarea readonly rows="2" data-copy-target="1">${esc(r.ad_name || '')}</textarea>
+      <input type="text" readonly value="${esc(r.ad_name || '')}" title="${esc(r.ad_name || '')}" data-copy-target="1">
       <button class="dp-copy" data-clip="${esc(r.ad_name || '')}">Copy</button>
     </div>`;
   document.getElementById('dp-sub').innerHTML = `
     <div style="${labelStyle};margin-top:10px">landing_page_path</div>
     <div class="copy-block">
-      <textarea readonly rows="1" data-copy-target="1">${esc(r.landing_page_path || '')}</textarea>
+      <input type="text" readonly value="${esc(r.landing_page_path || '')}" title="${esc(r.landing_page_path || '')}" data-copy-target="1">
       <button class="dp-copy" data-clip="${esc(r.landing_page_path || '')}">Copy</button>
     </div>
     ${r.creative_link_url ? `
       <div style="${labelStyle};margin-top:10px">creative URL</div>
       <div class="copy-block">
-        <textarea readonly rows="2" data-copy-target="1">${esc(r.creative_link_url)}</textarea>
+        <input type="text" readonly value="${esc(r.creative_link_url)}" title="${esc(r.creative_link_url)}" data-copy-target="1">
         <button class="dp-copy" data-clip="${esc(r.creative_link_url)}">Copy</button>
       </div>` : ''}`;
 
