@@ -393,12 +393,17 @@
     }
     .detail-overlay.open { display: block; }
     .detail-panel {
-      position: fixed; right: 0; top: 0; bottom: 0; width: min(640px, 92vw);
+      position: fixed; right: 0; top: 0; bottom: 0;
+      width: 75vw;
+      max-width: 1400px;
       background: var(--surface);
       box-shadow: -4px 0 16px rgba(0,0,0,0.18);
       overflow-y: auto;
-      padding: 18px 22px;
+      padding: 22px 28px;
       z-index: 1001;                          /* must sit ABOVE the overlay */
+    }
+    @media (max-width: 900px) {
+      .detail-panel { width: 95vw; max-width: none; padding: 16px 18px; }
     }
     .detail-panel__head {
       display: flex; justify-content: space-between; align-items: flex-start;
@@ -412,11 +417,13 @@
       margin-top: 4px;
     }
     .copy-block input {
-      flex: 1;
-      padding: 6px 8px;
+      flex: 1 1 0%;
+      width: 100%;
+      min-width: 0;                            /* let flex shrink in narrow viewports */
+      padding: 8px 10px;
       border: 1px solid var(--border);
       border-radius: 4px;
-      font-size: 0.78rem;
+      font-size: 0.84rem;
       font-family: ui-monospace, SFMono-Regular, monospace;
       background: var(--bg);
       color: var(--text-primary);
@@ -497,8 +504,10 @@
     .reasons .r-pass { color: var(--positive); }
     .reasons .r-fail { color: var(--negative); }
     .metric-grid {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 4px 14px;
-      font-size: 0.82rem;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 4px 22px;
+      font-size: 0.84rem;
     }
     .metric-grid > div { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--border); }
     .metric-grid > div:nth-last-child(-n+2) { border-bottom: none; }
@@ -2018,11 +2027,28 @@ function applyQuickRange(days) {
   const start = isoDaysAgo(days);             // days ago
   document.getElementById('d-start').value = start;
   document.getElementById('d-end').value = end;
-  // Comparison: previous N-day window immediately before `start`
-  const cEnd   = isoDaysAgo(days + 1);
-  const cStart = isoDaysAgo(days * 2);
-  document.getElementById('c-start').value = cStart;
-  document.getElementById('c-end').value = cEnd;
+  syncCompareToCurrent();
+}
+
+// Always set the compare window to the same-length window immediately before
+// the current window. Called whenever the user edits the start or end date.
+function syncCompareToCurrent() {
+  const start = document.getElementById('d-start').value;
+  const end   = document.getElementById('d-end').value;
+  if (!start || !end) return;
+  const sd = new Date(start + 'T00:00:00Z');
+  const ed = new Date(end   + 'T00:00:00Z');
+  if (isNaN(sd.getTime()) || isNaN(ed.getTime()) || ed < sd) return;
+  // inclusive day count
+  const days = Math.round((ed - sd) / 86400000) + 1;
+  // Compare end = day before current start
+  const cEnd = new Date(sd);
+  cEnd.setUTCDate(cEnd.getUTCDate() - 1);
+  // Compare start = N-1 days before compare end
+  const cStart = new Date(cEnd);
+  cStart.setUTCDate(cStart.getUTCDate() - (days - 1));
+  document.getElementById('c-start').value = cStart.toISOString().slice(0, 10);
+  document.getElementById('c-end').value   = cEnd.toISOString().slice(0, 10);
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -2038,6 +2064,11 @@ document.addEventListener('DOMContentLoaded', () => {
       applyQuickRange(parseInt(b.dataset.days, 10));
     });
   });
+
+  // Whenever the user picks new start/end dates manually, snap the compare
+  // window to the immediately-preceding window of the same length.
+  document.getElementById('d-start').addEventListener('change', syncCompareToCurrent);
+  document.getElementById('d-end').addEventListener('change', syncCompareToCurrent);
 
   document.getElementById('btn-load').addEventListener('click', loadData);
 
