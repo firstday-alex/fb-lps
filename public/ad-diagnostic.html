@@ -726,6 +726,7 @@ const BUCKETS = {
   INSUFFICIENT_DATA:    { label: 'Insufficient',  color: '#9aa0a6', short: 'NODATA' },
   TRACKING_ISSUE:       { label: 'Tracking',      color: '#7c3aed', short: 'TRACK',  icon: '⚠' },
   NEGATIVE_ENGAGEMENT:  { label: 'Negative Eng.', color: '#a21caf', short: 'NEGENG', icon: '👎' },
+  FRESH_CREATIVE:       { label: 'Fresh',         color: '#0ea5e9', short: 'FRESH',  icon: '🆕' },
   CREATIVE_FATIGUE:     { label: 'Fatigue',       color: '#d97706', short: 'FATIGUE', icon: '🟠' },
   SCALING_SATURATION:   { label: 'Scaling Sat.',  color: '#d97706', short: 'SCALE',  icon: '📈' },
   DISCOUNT_HUNTER_TRAP: { label: 'Discount Trap', color: '#db2777', short: 'DISC',   icon: '🎟' },
@@ -740,6 +741,7 @@ const BUCKETS = {
 };
 const BUCKET_PRIORITY = [
   'INSUFFICIENT_DATA', 'TRACKING_ISSUE', 'NEGATIVE_ENGAGEMENT',
+  'FRESH_CREATIVE',
   'CREATIVE_FATIGUE', 'SCALING_SATURATION', 'DISCOUNT_HUNTER_TRAP',
   'RETARGETING_ECHO', 'HOOK_NOT_BODY', 'CHEAP_CLICKS_NO_BIZ',
   'WINNER', 'CLICKBAIT', 'QUALIFIER', 'LOSER',
@@ -762,6 +764,11 @@ const BUCKET_DOCS = {
     desc: 'Audiences are reporting or hiding this ad. Negative signals compound across the whole account.',
     rule: "quality_ranking == 'below_average'\nOR engagement_rate_ranking == 'below_average'",
     action: 'Pause now. Negative ranking drags down sibling ads in the same account.',
+  },
+  FRESH_CREATIVE: {
+    desc: 'Newly published creative — first ad_id in this row was created during the current window. Too early to call a winner or loser; let it run.',
+    rule: 'earliest ad_id created_time ≥ window start\nAND ≤ window end',
+    action: "Let it accumulate spend before judging — ignore Winner/Loser thresholds for now. Watch frequency + CTR over the next few days.",
   },
   CREATIVE_FATIGUE: {
     desc: 'Same audiences have seen this too many times — CTR is dropping while costs rise.',
@@ -871,12 +878,21 @@ function buildRows(metaCurrent, metaPrior, shopifyTable) {
           creative_link_url: r.creative_link_url || null,
           ad_name_parsed: r.ad_name_parsed,
           per_ad: [],                             // breakdown for detail panel
+          created_time_earliest: null,            // for FRESH_CREATIVE bucket
+          created_time_latest: null,
         };
         map.set(key, g);
       }
       if (r.ad_id) g.ad_ids.add(r.ad_id);
       if (r.campaign_name) g.campaign_names.add(r.campaign_name);
       if (r.adset_name) g.adset_names.add(r.adset_name);
+      if (r.created_time) {
+        const t = Date.parse(r.created_time);
+        if (Number.isFinite(t)) {
+          if (g.created_time_earliest == null || t < g.created_time_earliest) g.created_time_earliest = t;
+          if (g.created_time_latest   == null || t > g.created_time_latest)   g.created_time_latest   = t;
+        }
+      }
       g.spend += r.spend; g.impressions += r.impressions; g.reach += r.reach;
       g.link_clicks += r.link_clicks; g.clicks_all += r.clicks_all;
       g.landing_page_views += r.landing_page_views;
@@ -899,6 +915,7 @@ function buildRows(metaCurrent, metaPrior, shopifyTable) {
         impressions: r.impressions,
         link_clicks: r.link_clicks,
         meta_purchases: r.meta_purchases,
+        created_time: r.created_time || null,
       });
     }
     if (dupeCount > 0) console.warn(`[diag] dropped ${dupeCount} duplicate ad_id row(s) from Meta response`);
@@ -1037,6 +1054,8 @@ function buildRows(metaCurrent, metaPrior, shopifyTable) {
       shopify_bounce_rate:  s.site_bounce_rate  || 0,
       cvr, truth_check_ratio,
       prior,                                        // null when ad is brand-new
+      created_time_earliest: c.created_time_earliest,
+      created_time_latest:   c.created_time_latest,
       bucket: 'UNCATEGORIZED', secondary_flags: [], reasons: [],
     });
   }
@@ -1085,6 +1104,17 @@ const RULES = {
     if (r.quality_ranking === 'below_average_10' || r.quality_ranking === 'below_average_20' || r.quality_ranking === 'below_average_35' || r.quality_ranking === 'below_average') reasons.push(`Quality ranking: ${r.quality_ranking}`);
     if (r.engagement_rate_ranking === 'below_average_10' || r.engagement_rate_ranking === 'below_average_20' || r.engagement_rate_ranking === 'below_average_35' || r.engagement_rate_ranking === 'below_average') reasons.push(`Engagement-rate ranking: ${r.engagement_rate_ranking}`);
     return reasons.length ? { ok: true, reasons } : null;
+  },
+  FRESH_CREATIVE: (r, b, c) => {
+    if (r.created_time_earliest == null) return null;
+    if (c.window_start_ms == null || c.window_end_ms == null) return null;
+    if (r.created_time_earliest < c.window_start_ms) return null;   // existed before this window
+    if (r.created_time_earliest > c.window_end_ms)   return null;   // future-dated (shouldn't happen)
+    const created = new Date(r.created_time_earliest).toISOString().slice(0, 10);
+    return { ok: true, reasons: [
+      `First ad_id published ${created}, inside the current window`,
+      `${r.ad_ids.length} ad_id${r.ad_ids.length === 1 ? '' : 's'} in this row`,
+    ] };
   },
   CREATIVE_FATIGUE: (r, b, c) => {
     if (!r.prior) return null;
@@ -1388,7 +1418,11 @@ function readCriteriaFromModal() {
 // Re-runs bucketing on already-loaded data with the latest config; no re-fetch.
 function applyCriteriaToLoadedData() {
   if (!state.rows.length) return;
+  const ws = state.config?.window_start_ms;
+  const we = state.config?.window_end_ms;
   state.config = readConfig();
+  state.config.window_start_ms = ws;
+  state.config.window_end_ms   = we;
   state.benchmarks = computeBenchmarks(state.rows, state.config);
   for (const r of state.rows) {
     const result = assignBucket(r, state.benchmarks, state.config);
@@ -1439,6 +1473,9 @@ async function loadData() {
     const shopData = await shopResp.json();
 
     state.config = readConfig();
+    // Stash the active window on config so rules (e.g. FRESH_CREATIVE) can use it.
+    state.config.window_start_ms = Date.parse(since + 'T00:00:00Z');
+    state.config.window_end_ms   = Date.parse(until + 'T23:59:59Z');
     state.shopifyRaw = shopData.sessions || null;          // for the why-no-Shopify diagnostic
     state.shopifyQueries = shopData.queries || [];          // for the diagnostic to surface the literal query
     state.rows = buildRows(metaData.current || [], metaData.prior || [], shopData.sessions);
@@ -1915,6 +1952,10 @@ function openDetail(key) {
         ${metaList('Ad IDs', r.ad_ids.join(', ') || '—')}
         ${metaList('Campaigns', r.campaign_names.join(', ') || '—')}
         ${metaList('Ad sets', r.adset_names.join(', ') || '—')}
+        ${metaList('First published',
+          r.created_time_earliest != null ? new Date(r.created_time_earliest).toISOString().slice(0,10) : '—')}
+        ${metaList('Most recent ad published',
+          r.created_time_latest != null ? new Date(r.created_time_latest).toISOString().slice(0,10) : '—')}
       </div>
     </div>
     ${r.per_ad && r.per_ad.length > 1 ? `
@@ -1925,7 +1966,7 @@ function openDetail(key) {
       </div>
       <table class="pop-table">
         <thead><tr>
-          <th>Ad ID</th><th>Ad set</th>
+          <th>Ad ID</th><th>Ad set</th><th>Created</th>
           <th class="r">Spend</th><th class="r">Impr</th>
           <th class="r">Link clicks</th><th class="r">Meta purch</th>
         </tr></thead>
@@ -1934,6 +1975,7 @@ function openDetail(key) {
             <tr>
               <td style="font-family:ui-monospace,SFMono-Regular,monospace;font-size:0.74rem">${esc(p.ad_id || '—')}</td>
               <td title="${esc(p.adset_name || '')}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc((p.adset_name || '—').slice(0, 30))}</td>
+              <td style="font-size:0.74rem;color:var(--text-secondary)">${p.created_time ? esc(p.created_time.slice(0,10)) : '—'}</td>
               <td class="r">${fmtUSD(p.spend)}</td>
               <td class="r">${fmtN(p.impressions)}</td>
               <td class="r">${fmtN(p.link_clicks)}</td>

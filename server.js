@@ -1425,6 +1425,49 @@ app.get('/api/diag-meta', requireAuth, async (req, res) => {
     const currentRows = current.map(shapeRow);
     const priorRows   = prior.map(shapeRow);
 
+    // Batch-fetch created_time for every distinct ad_id that appears in the
+    // current period. Lets the FRESH_CREATIVE bucket flag ads first published
+    // inside [since, until]. Batches of 50 run in parallel — for ~300 ads this
+    // is ~6 concurrent calls, finishing in a few seconds.
+    const adIdsForCreated = [...new Set(currentRows.map(r => r.ad_id))].filter(Boolean);
+    const createdMap = {};
+    const proof2 = generateAppSecretProof(req.accessToken);
+    const batchSlices = [];
+    for (let i = 0; i < adIdsForCreated.length; i += 50) {
+      batchSlices.push(adIdsForCreated.slice(i, i + 50));
+    }
+    const batchResults = await Promise.all(batchSlices.map(async (slice) => {
+      const batchRequests = slice.map(id => ({
+        method: 'GET', relative_url: `${id}?fields=created_time`,
+      }));
+      try {
+        const body = new URLSearchParams({
+          access_token: req.accessToken,
+          appsecret_proof: proof2,
+          batch: JSON.stringify(batchRequests),
+        });
+        const resp = await fetch(`${META_BASE_URL}/`, {
+          method: 'POST', body, signal: AbortSignal.timeout(20000),
+        });
+        return { slice, results: await resp.json() };
+      } catch (e) {
+        console.error('[diag-meta] created_time batch failed:', e.message);
+        return { slice, results: null };
+      }
+    }));
+    for (const { slice, results } of batchResults) {
+      if (!Array.isArray(results)) continue;
+      for (let j = 0; j < slice.length; j++) {
+        const r = results[j];
+        if (r && r.code === 200) {
+          try {
+            const parsed = JSON.parse(r.body);
+            if (parsed.created_time) createdMap[slice[j]] = parsed.created_time;
+          } catch {}
+        }
+      }
+    }
+
     // landing_page_path is derived from the ad-name slug only (parseAdName).
     // Skipping the per-ad creative fetch keeps cold-load fast: for accounts
     // where ads don't follow the `url:slug` convention, we'll fall back to
@@ -1443,6 +1486,7 @@ app.get('/api/diag-meta', requireAuth, async (req, res) => {
         creative_link_url: parsed.landing_page_url || null,
         preview_shareable_link: null,        // lazy-loaded
         ad_name_parsed: parsed,
+        created_time: createdMap[r.ad_id] || null,
       };
     };
 
