@@ -383,13 +383,77 @@
       box-shadow: -4px 0 16px rgba(0,0,0,0.18);
       overflow-y: auto;
       padding: 18px 22px;
+      z-index: 1001;                          /* must sit ABOVE the overlay */
     }
     .detail-panel__head {
       display: flex; justify-content: space-between; align-items: flex-start;
       gap: 12px; margin-bottom: 12px;
     }
-    .detail-panel__title { font-size: 0.95rem; font-weight: 600; word-break: break-all; }
-    .detail-panel__sub { font-size: 0.78rem; color: var(--text-secondary); margin-top: 4px; word-break: break-all; }
+    .detail-panel__title { font-size: 0.95rem; font-weight: 600; word-break: break-all; user-select: text; }
+    .detail-panel__sub { font-size: 0.78rem; color: var(--text-secondary); margin-top: 4px; word-break: break-all; user-select: text; }
+
+    .copy-block {
+      display: flex; align-items: stretch; gap: 6px;
+      margin-top: 4px;
+    }
+    .copy-block input {
+      flex: 1;
+      padding: 6px 8px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-size: 0.78rem;
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      background: var(--bg);
+      color: var(--text-primary);
+      user-select: text;
+    }
+    .copy-block button {
+      padding: 4px 10px;
+      font-size: 0.74rem; font-weight: 600;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--surface);
+      cursor: pointer;
+      color: var(--text-secondary);
+      white-space: nowrap;
+    }
+    .copy-block button:hover { background: var(--bg); color: var(--text-primary); }
+    .copy-block button.copied { color: var(--positive); border-color: var(--positive); }
+
+    .diag-card {
+      padding: 10px 12px;
+      background: #fff7ed;
+      border-left: 3px solid var(--amber, #d97706);
+      border-radius: 4px;
+      font-size: 0.82rem;
+      color: #78350f;
+    }
+    .diag-card__h {
+      font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+      color: #78350f; margin-bottom: 4px;
+    }
+    .diag-card.ok {
+      background: #ecfdf5;
+      border-left-color: var(--positive);
+      color: #065f46;
+    }
+    .diag-card.ok .diag-card__h { color: #065f46; }
+    .diag-list {
+      margin-top: 6px; max-height: 160px; overflow-y: auto;
+      background: #fff; border: 1px solid var(--border); border-radius: 4px;
+      padding: 4px 0;
+    }
+    .diag-list li {
+      list-style: none;
+      padding: 3px 8px;
+      font-size: 0.78rem;
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      border-bottom: 1px dashed var(--border);
+      color: var(--text-primary);
+      display: flex; justify-content: space-between; gap: 12px;
+    }
+    .diag-list li:last-child { border-bottom: none; }
+    .diag-list .diag-sess { color: var(--text-secondary); white-space: nowrap; }
     .detail-close {
       background: transparent; border: none; cursor: pointer;
       font-size: 1.4rem; color: var(--text-secondary); line-height: 1;
@@ -1318,6 +1382,8 @@ async function loadData() {
     const shopData = await shopResp.json();
 
     state.config = readConfig();
+    state.shopifyRaw = shopData.sessions || null;          // for the why-no-Shopify diagnostic
+    state.shopifyQueries = shopData.queries || [];          // for the diagnostic to surface the literal query
     state.rows = buildRows(metaData.current || [], metaData.prior || [], shopData.sessions);
     state.benchmarks = computeBenchmarks(state.rows, state.config);
 
@@ -1593,14 +1659,116 @@ function renderInsufficient() {
 // ─────────────────────────────────────────────
 // DETAIL PANEL
 // ─────────────────────────────────────────────
+// Why didn't this Meta ad join any Shopify rows? Cross-references the raw
+// Shopify response we cached on `state.shopifyRaw` to surface near-misses:
+//   - Did the utm_content show up at all (with any LP)?
+//   - Did the landing_page_path show up at all (with any utm_content)?
+// Returns null when the ad already has Shopify orders (no diagnostic needed).
+function shopifyMatchDiagnostic(r) {
+  if (r.shopify_orders > 0 || r.shopify_sessions > 0) return null;
+  const raw = state.shopifyRaw;
+  if (!raw || !raw.columns || !raw.rows) {
+    return { kind: 'no-shopify-data', adNameMatches: [], lpMatches: [], expected: { ad: r.ad_name, lp: r.landing_page_path } };
+  }
+  const cols = raw.columns.map(c => (c.name || '').toLowerCase());
+  const iAd  = cols.indexOf('utm_content');
+  const iLp  = cols.indexOf('landing_page_path');
+  const iSess = cols.indexOf('sessions');
+  if (iAd < 0 || iLp < 0) return null;
+
+  const adNameMatches = [];
+  const lpMatches     = [];
+  for (const row of raw.rows) {
+    const get = (i) => Array.isArray(row) ? row[i] : row[raw.columns[i].name];
+    const ad = String(get(iAd) ?? '').trim();
+    const lp = String(get(iLp) ?? '').trim();
+    const sess = parseFloat(get(iSess)) || 0;
+    if (!ad && !lp) continue;
+    if (ad === r.ad_name && lp !== r.landing_page_path) {
+      adNameMatches.push({ lp: lp || '(empty)', sessions: sess });
+    } else if (lp === r.landing_page_path && ad !== r.ad_name) {
+      lpMatches.push({ ad: ad || '(empty)', sessions: sess });
+    }
+  }
+  adNameMatches.sort((a, b) => b.sessions - a.sessions);
+  lpMatches.sort((a, b) => b.sessions - a.sessions);
+
+  let kind;
+  if (adNameMatches.length && lpMatches.length) kind = 'wrong-pair';
+  else if (adNameMatches.length)                kind = 'ad-name-found-lp-mismatch';
+  else if (lpMatches.length)                    kind = 'lp-found-ad-name-mismatch';
+  else                                          kind = 'no-match-at-all';
+
+  return {
+    kind,
+    expected: { ad: r.ad_name, lp: r.landing_page_path },
+    adNameMatches: adNameMatches.slice(0, 8),
+    lpMatches: lpMatches.slice(0, 8),
+    totalAdNameMatches: adNameMatches.length,
+    totalLpMatches: lpMatches.length,
+  };
+}
+
+function renderShopifyDiagnostic(d) {
+  if (!d) return '';
+  const headlineByKind = {
+    'no-shopify-data': "Couldn't run the diagnostic — no Shopify data was returned.",
+    'wrong-pair': "Both the ad name and the landing page show up in Shopify — but never together.",
+    'ad-name-found-lp-mismatch': "Shopify saw this ad name, but pointed at a different landing page. utm_content tagging is fine; the creative URL doesn't match where buyers actually landed.",
+    'lp-found-ad-name-mismatch': "Shopify saw traffic to this landing page, but from different utm_content values — utm_content tagging is probably wrong / missing for this ad.",
+    'no-match-at-all': "Shopify has no Facebook traffic for either this ad name OR this landing page in the selected window. Either the ad didn't run yet, the UTMs aren't tagged, or utm_source/utm_medium filter is too narrow.",
+  };
+  const adList = d.adNameMatches.length ? `
+    <div style="margin-top:8px">
+      <div class="diag-card__h">Same ad name, different LP — top ${d.adNameMatches.length}${d.totalAdNameMatches > d.adNameMatches.length ? ` of ${d.totalAdNameMatches}` : ''}</div>
+      <ul class="diag-list">${d.adNameMatches.map(m => `<li><span>${esc(m.lp)}</span><span class="diag-sess">${fmtN(m.sessions)} sess</span></li>`).join('')}</ul>
+    </div>` : '';
+  const lpList = d.lpMatches.length ? `
+    <div style="margin-top:8px">
+      <div class="diag-card__h">Same LP, different utm_content — top ${d.lpMatches.length}${d.totalLpMatches > d.lpMatches.length ? ` of ${d.totalLpMatches}` : ''}</div>
+      <ul class="diag-list">${d.lpMatches.map(m => `<li><span>${esc(m.ad)}</span><span class="diag-sess">${fmtN(m.sessions)} sess</span></li>`).join('')}</ul>
+    </div>` : '';
+  return `
+    <div class="detail-section">
+      <div class="detail-section__h">Why no Shopify match?</div>
+      <div class="diag-card">
+        <div class="diag-card__h">Looking for utm_content × landing_page_path</div>
+        <div style="font-family:ui-monospace,SFMono-Regular,monospace;font-size:0.78rem;word-break:break-all">
+          <strong>utm_content:</strong> ${esc(d.expected.ad || '(empty)')}<br>
+          <strong>landing_page_path:</strong> ${esc(d.expected.lp || '(empty)')}
+        </div>
+        <div style="margin-top:8px">${esc(headlineByKind[d.kind] || '')}</div>
+        ${adList}${lpList}
+      </div>
+    </div>`;
+}
+
 function openDetail(key) {
   const r = state.rows.find(x => (x.ad_name + '||' + x.landing_page_path) === key);
   if (!r) return;
   state.selectedKey = key;
   document.querySelectorAll('table.diag tbody tr').forEach(tr => tr.classList.toggle('row-selected', tr.dataset.key === key));
 
-  document.getElementById('dp-title').textContent = r.ad_name || '(unnamed)';
-  document.getElementById('dp-sub').textContent = r.landing_page_path + (r.creative_link_url ? '  ·  ' + r.creative_link_url : '');
+  // Copyable header — input fields are easier to triple-click + Cmd-C than
+  // free-floating text, plus a one-click Copy button as a fallback.
+  document.getElementById('dp-title').innerHTML = `
+    <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);margin-bottom:2px">utm_content (ad name)</div>
+    <div class="copy-block">
+      <input type="text" readonly value="${esc(r.ad_name || '')}" data-copy-target="1">
+      <button class="dp-copy" data-clip="${esc(r.ad_name || '')}">Copy</button>
+    </div>`;
+  document.getElementById('dp-sub').innerHTML = `
+    <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);margin-top:8px;margin-bottom:2px">landing_page_path</div>
+    <div class="copy-block">
+      <input type="text" readonly value="${esc(r.landing_page_path || '')}" data-copy-target="1">
+      <button class="dp-copy" data-clip="${esc(r.landing_page_path || '')}">Copy</button>
+    </div>
+    ${r.creative_link_url ? `
+      <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);margin-top:8px;margin-bottom:2px">creative URL</div>
+      <div class="copy-block">
+        <input type="text" readonly value="${esc(r.creative_link_url)}" data-copy-target="1">
+        <button class="dp-copy" data-clip="${esc(r.creative_link_url)}">Copy</button>
+      </div>` : ''}`;
 
   const def = BUCKETS[r.bucket] || BUCKETS.UNCATEGORIZED;
 
@@ -1666,6 +1834,7 @@ function openDetail(key) {
         ${metaList('Conv-rate rank', r.conversion_rate_ranking || '—')}
       </div>
     </div>
+    ${renderShopifyDiagnostic(shopifyMatchDiagnostic(r))}
     <div class="detail-section">
       <div class="detail-section__h">Shopify metrics</div>
       <div class="metric-grid">
@@ -1690,6 +1859,33 @@ function openDetail(key) {
 
   document.getElementById('detail-overlay').classList.add('open');
   document.getElementById('detail-panel').style.display = '';
+
+  // Wire Copy buttons (event delegation — content was just re-rendered)
+  const panel = document.getElementById('detail-panel');
+  panel.querySelectorAll('.dp-copy').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const text = btn.dataset.clip || '';
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        // Clipboard API can fail in non-HTTPS / older browsers — fall back to
+        // selecting the sibling input so the user can Cmd-C themselves.
+        const input = btn.parentElement.querySelector('input');
+        if (input) { input.focus(); input.select(); }
+      }
+      const orig = btn.textContent;
+      btn.textContent = '✓ Copied';
+      btn.classList.add('copied');
+      setTimeout(() => { btn.textContent = orig; btn.classList.remove('copied'); }, 1200);
+    });
+  });
+  // Triple-click a readonly input → select all of it for fast Cmd-C
+  panel.querySelectorAll('input[data-copy-target]').forEach(inp => {
+    inp.addEventListener('focus', () => inp.select());
+    inp.addEventListener('click', () => inp.select());
+  });
 
   // Lazy-load preview link for the first ad_id of this row (cached on the row)
   const slot = document.getElementById('dp-preview-slot');
@@ -1815,7 +2011,11 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   document.getElementById('dp-close').addEventListener('click', closeDetail);
-  document.getElementById('detail-overlay').addEventListener('click', closeDetail);
+  // Only close on a click that lands directly on the overlay (the dim
+  // backdrop) — never on bubbled clicks from inside the panel.
+  document.getElementById('detail-overlay').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) closeDetail();
+  });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       closeDetail();
