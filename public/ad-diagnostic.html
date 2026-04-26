@@ -775,7 +775,7 @@ const BUCKET_DOCS = {
   },
   DISCOUNT_HUNTER_TRAP: {
     desc: "ROAS looks great — but it's repeat customers stacking discounts, not new business.",
-    rule: 'shopify_roas > median\nAND shopify_pct_new < ${discount_pct_new_mult}× median\nAND shopify_aov < median',
+    rule: 'DISABLED on this view (needs Shopify revenue / AOV / %new — not exposed by sessions topic).',
     action: 'Cap discount-led creative as % of spend. Switch the KPI to new-customer ROAS.',
   },
   RETARGETING_ECHO: {
@@ -790,27 +790,27 @@ const BUCKET_DOCS = {
   },
   CHEAP_CLICKS_NO_BIZ: {
     desc: 'Lots of cheap clicks that never turn into orders. Often Audience Network or low-intent placements.',
-    rule: 'cpc < median\nAND ctr > median\nAND cvr < median\nAND ROAS < ${target_roas}',
+    rule: 'cpc < median\nAND ctr > median\nAND cvr < median\nAND Meta ROAS < ${target_roas}',
     action: 'Check the placement breakdown — Audience Network is usually the culprit. Tighten placements / audience.',
   },
   WINNER: {
     desc: 'Engaging AND converting AND profitable AND not yet fatigued. Scale carefully.',
-    rule: 'ctr > median\nAND cvr > median\nAND ROAS > ${target_roas}\nAND frequency < ${high_frequency}\nAND quality_ranking != below_average',
+    rule: 'ctr > median\nAND cvr > median\nAND Meta ROAS > ${target_roas}\nAND frequency < ${high_frequency}\nAND quality_ranking != below_average',
     action: 'Scale carefully (don\'t double budget overnight). Save to a winners library.',
   },
   CLICKBAIT: {
     desc: 'High click-through but the wrong audience or wrong promise — they bounce, fail to convert, or buy nothing.',
-    rule: 'ctr > median\nAND (cvr < median OR pct_new < median OR aov < median)\nAND ROAS < ${target_roas}',
+    rule: 'ctr > median\nAND cvr < median\nAND Meta ROAS < ${target_roas}',
     action: 'Tighten ad-LP message match. Add qualifying language. Re-check the audience.',
   },
   QUALIFIER: {
     desc: "Low CTR but the people who DO click are gold. Don't kill — broaden the hook.",
-    rule: 'ctr < median\nAND cvr > ${qualifier_cvr_mult}× median\nAND ROAS ≥ ${target_roas}',
+    rule: 'ctr < median\nAND cvr > ${qualifier_cvr_mult}× median\nAND Meta ROAS ≥ ${target_roas}',
     action: "Don't kill. Test a broader hook with the same body/offer to expand reach.",
   },
   LOSER: {
     desc: "Low engagement, low conversion, low ROAS. Doesn't deserve more budget.",
-    rule: 'ctr < median\nAND cvr < median\nAND ROAS < ${target_roas}',
+    rule: 'ctr < median\nAND cvr < median\nAND Meta ROAS < ${target_roas}',
     action: 'Kill it. Start over with a fresh angle.',
   },
   UNCATEGORIZED: {
@@ -984,7 +984,6 @@ function buildRows(metaCurrent, metaPrior, shopifyTable) {
     const hold_rate = c.v3 > 0 && c.vthru > 0 ? c.vthru / c.v3 : null;
     const cvr = c.link_clicks > 0 ? s.orders / c.link_clicks : 0;
     const meta_roas = c.spend > 0 ? c.meta_purchase_value / c.spend : 0;
-    const shopify_roas = c.spend > 0 ? s.revenue / c.spend : 0;
     const truth_check_ratio = s.orders > 0 ? c.meta_purchases / s.orders : null;
     const lpv_ratio = c.link_clicks > 0 ? c.landing_page_views / c.link_clicks : null;
 
@@ -1004,12 +1003,6 @@ function buildRows(metaCurrent, metaPrior, shopifyTable) {
         spend_change_pct: p.spend > 0 ? ((c.spend - p.spend) / p.spend) * 100 : null,
       };
     }
-
-    // effective_roas = real Shopify ROAS when revenue is available, otherwise
-    // fall back to Meta-attributed ROAS so the bucketing rules still have a
-    // signal on stores where Shopify doesn't expose revenue (e.g. only
-    // `sessions` topic is available). Shop-revenue stores → behaves as before.
-    const effective_roas = shopify_roas > 0 ? shopify_roas : meta_roas;
 
     rows.push({
       ad_name: c.ad_name,
@@ -1038,7 +1031,6 @@ function buildRows(metaCurrent, metaPrior, shopifyTable) {
       post_shares: c.post_shares, post_saves: c.post_saves,
       shopify_sessions: s.sessions || 0,
       shopify_orders: s.orders, shopify_revenue: s.revenue, shopify_aov: s.aov,
-      shopify_roas, effective_roas,
       shopify_new_customer_orders: s.new_customer_orders,
       shopify_pct_new: s.pct_new,
       shopify_avg_duration: s.site_avg_duration || 0,
@@ -1066,8 +1058,7 @@ function computeBenchmarks(rows, config) {
     median_cvr: median(elig.map(r => r.cvr).filter(x => x > 0)),
     median_aov: median(elig.map(r => r.shopify_aov).filter(x => x > 0)),
     median_pct_new: median(elig.map(r => r.shopify_pct_new).filter(x => x > 0)),
-    median_shopify_roas: median(elig.map(r => r.shopify_roas).filter(x => x > 0)),
-    median_effective_roas: median(elig.map(r => r.effective_roas).filter(x => x > 0)),
+    median_meta_roas: median(elig.map(r => r.meta_roas).filter(x => x > 0)),
     median_frequency: median(elig.map(r => r.frequency).filter(x => x > 0)),
   };
 }
@@ -1120,18 +1111,10 @@ const RULES = {
       `Frequency up ${r.prior.frequency_change_pct.toFixed(0)}%`,
     ] };
   },
-  DISCOUNT_HUNTER_TRAP: (r, b, c) => {
-    if (b.median_shopify_roas <= 0) return null;
-    const roasOk  = r.shopify_roas > b.median_shopify_roas;
-    const newLow  = b.median_pct_new > 0 && r.shopify_pct_new < b.median_pct_new * c.discount_pct_new_mult;
-    const aovLow  = b.median_aov > 0 && r.shopify_aov < b.median_aov;
-    if (roasOk && newLow && aovLow) return { ok: true, reasons: [
-      `ROAS ${r.shopify_roas.toFixed(2)}x > median ${b.median_shopify_roas.toFixed(2)}x`,
-      `% new ${(r.shopify_pct_new*100).toFixed(0)}% < ${(b.median_pct_new*c.discount_pct_new_mult*100).toFixed(0)}% (${c.discount_pct_new_mult}× median)`,
-      `AOV $${r.shopify_aov.toFixed(0)} < median $${b.median_aov.toFixed(0)}`,
-    ] };
-    return null;
-  },
+  // Disabled on this view: requires Shopify revenue/AOV/%new which the
+  // `sessions` topic doesn't expose. Left here so it lights up automatically
+  // if revenue is wired in later.
+  DISCOUNT_HUNTER_TRAP: () => null,
   RETARGETING_ECHO: (r, b, c) => {
     const adsetText = r.adset_names.join(' ').toLowerCase();
     if (!c.retargeting_patterns.some(p => adsetText.includes(p))) return null;
@@ -1159,64 +1142,59 @@ const RULES = {
     if (r.cpc >= b.median_cpc) return null;
     if (r.ctr <= b.median_ctr) return null;
     if (r.cvr >= b.median_cvr) return null;
-    if (r.effective_roas >= c.target_roas) return null;
+    if (r.meta_roas >= c.target_roas) return null;
     return { ok: true, reasons: [
       `CPC $${r.cpc.toFixed(2)} < median $${b.median_cpc.toFixed(2)}`,
       `CTR ${r.ctr.toFixed(2)}% > median ${b.median_ctr.toFixed(2)}%`,
       `CVR ${(r.cvr*100).toFixed(2)}% < median ${(b.median_cvr*100).toFixed(2)}%`,
-      `ROAS ${r.effective_roas.toFixed(2)}x < target ${c.target_roas.toFixed(2)}x`,
+      `Meta ROAS ${r.meta_roas.toFixed(2)}x < target ${c.target_roas.toFixed(2)}x`,
     ] };
   },
   WINNER: (r, b, c) => {
     if (b.median_ctr <= 0 || b.median_cvr <= 0) return null;
     if (r.ctr <= b.median_ctr) return null;
     if (r.cvr <= b.median_cvr) return null;
-    if (r.effective_roas <= c.target_roas) return null;
+    if (r.meta_roas <= c.target_roas) return null;
     if (r.frequency >= c.high_frequency) return null;
     if (r.quality_ranking && /below/i.test(r.quality_ranking)) return null;
     return { ok: true, reasons: [
       `CTR ${r.ctr.toFixed(2)}% > median ${b.median_ctr.toFixed(2)}%`,
       `CVR ${(r.cvr*100).toFixed(2)}% > median ${(b.median_cvr*100).toFixed(2)}%`,
-      `ROAS ${r.effective_roas.toFixed(2)}x > target ${c.target_roas.toFixed(2)}x`,
+      `Meta ROAS ${r.meta_roas.toFixed(2)}x > target ${c.target_roas.toFixed(2)}x`,
       `Frequency ${r.frequency.toFixed(2)} < ${c.high_frequency}`,
     ] };
   },
   CLICKBAIT: (r, b, c) => {
     if (b.median_ctr <= 0) return null;
     if (r.ctr <= b.median_ctr) return null;
-    const cvrLow = b.median_cvr > 0 && r.cvr < b.median_cvr;
-    const newLow = b.median_pct_new > 0 && r.shopify_pct_new < b.median_pct_new;
-    const aovLow = b.median_aov > 0 && r.shopify_aov < b.median_aov;
-    if (!(cvrLow || newLow || aovLow)) return null;
-    if (r.effective_roas >= c.target_roas) return null;
+    if (b.median_cvr <= 0 || r.cvr >= b.median_cvr) return null;
+    if (r.meta_roas >= c.target_roas) return null;
     return { ok: true, reasons: [
       `CTR ${r.ctr.toFixed(2)}% > median ${b.median_ctr.toFixed(2)}%`,
-      cvrLow ? `CVR ${(r.cvr*100).toFixed(2)}% < median ${(b.median_cvr*100).toFixed(2)}%` : null,
-      newLow ? `% new ${(r.shopify_pct_new*100).toFixed(0)}% < median ${(b.median_pct_new*100).toFixed(0)}%` : null,
-      aovLow ? `AOV $${r.shopify_aov.toFixed(0)} < median $${b.median_aov.toFixed(0)}` : null,
-      `ROAS ${r.effective_roas.toFixed(2)}x < target ${c.target_roas.toFixed(2)}x`,
-    ].filter(Boolean) };
+      `CVR ${(r.cvr*100).toFixed(2)}% < median ${(b.median_cvr*100).toFixed(2)}%`,
+      `Meta ROAS ${r.meta_roas.toFixed(2)}x < target ${c.target_roas.toFixed(2)}x`,
+    ] };
   },
   QUALIFIER: (r, b, c) => {
     if (b.median_ctr <= 0 || b.median_cvr <= 0) return null;
     if (r.ctr >= b.median_ctr) return null;
     if (r.cvr < b.median_cvr * c.qualifier_cvr_mult) return null;
-    if (r.effective_roas < c.target_roas) return null;
+    if (r.meta_roas < c.target_roas) return null;
     return { ok: true, reasons: [
       `CTR ${r.ctr.toFixed(2)}% < median ${b.median_ctr.toFixed(2)}%`,
       `CVR ${(r.cvr*100).toFixed(2)}% > ${c.qualifier_cvr_mult}× median (${(b.median_cvr*c.qualifier_cvr_mult*100).toFixed(2)}%)`,
-      `ROAS ${r.effective_roas.toFixed(2)}x ≥ target ${c.target_roas.toFixed(2)}x`,
+      `Meta ROAS ${r.meta_roas.toFixed(2)}x ≥ target ${c.target_roas.toFixed(2)}x`,
     ] };
   },
   LOSER: (r, b, c) => {
     if (b.median_ctr <= 0) return null;
     if (r.ctr >= b.median_ctr) return null;
     if (b.median_cvr > 0 && r.cvr >= b.median_cvr) return null;
-    if (r.effective_roas >= c.target_roas) return null;
+    if (r.meta_roas >= c.target_roas) return null;
     return { ok: true, reasons: [
       `CTR ${r.ctr.toFixed(2)}% < median ${b.median_ctr.toFixed(2)}%`,
       `CVR ${(r.cvr*100).toFixed(2)}% < median ${(b.median_cvr*100).toFixed(2)}%`,
-      `ROAS ${r.effective_roas.toFixed(2)}x < target ${c.target_roas.toFixed(2)}x`,
+      `Meta ROAS ${r.meta_roas.toFixed(2)}x < target ${c.target_roas.toFixed(2)}x`,
     ] };
   },
 };
@@ -1271,7 +1249,7 @@ const CRIT_DEFAULTS = {
 const CRIT_FIELDS = [
   { key: 'minimum_spend',         label: 'Minimum spend per ad ($)',  step: 5,    hint: 'Below this → INSUFFICIENT_DATA bucket.' },
   { key: 'minimum_impressions',   label: 'Minimum impressions',       step: 100,  hint: 'Below this → INSUFFICIENT_DATA bucket.' },
-  { key: 'target_roas',           label: 'Target Shopify ROAS (x)',   step: 0.1,  hint: 'Account-level breakeven multiple.' },
+  { key: 'target_roas',           label: 'Target Meta ROAS (x)',      step: 0.1,  hint: 'Bucketing uses Meta-attributed ROAS on this view (Shopify revenue is not exposed by the sessions topic).' },
   { key: 'high_frequency',        label: 'High-frequency threshold',  step: 0.1,  hint: 'Required for Creative Fatigue bucket.' },
   { key: 'ctr_decline_pct',       label: 'CTR decline % for Fatigue', step: 1,    hint: 'Negative number — e.g. -15 means CTR dropped >15%.' },
   { key: 'spend_increase',        label: 'Spend increase % for Scaling Saturation', step: 5, hint: 'Spend grew by more than this vs prior window.' },
@@ -1539,7 +1517,7 @@ function renderTiles() {
 
   document.getElementById('summary-meta').textContent =
     state.benchmarks
-      ? ` · CTR ${state.benchmarks.median_ctr.toFixed(2)}% · CVR ${(state.benchmarks.median_cvr*100).toFixed(2)}% · ROAS ${(state.benchmarks.median_effective_roas || 0).toFixed(2)}x (account medians)`
+      ? ` · CTR ${state.benchmarks.median_ctr.toFixed(2)}% · CVR ${(state.benchmarks.median_cvr*100).toFixed(2)}% · Meta ROAS ${(state.benchmarks.median_meta_roas || 0).toFixed(2)}x (account medians)`
       : '';
 
   tiles.querySelectorAll('.tile').forEach(t => {
