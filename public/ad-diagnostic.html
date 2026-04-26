@@ -284,6 +284,18 @@
       max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       font-weight: 500;
     }
+    .ad-name-link {
+      display: inline-block;
+      max-width: 320px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      color: var(--text-primary);
+      font-weight: 500;
+      text-decoration: none;
+      vertical-align: middle;
+    }
+    .ad-name-link:hover { color: var(--fb-blue); text-decoration: underline; }
+    .ad-name-link__chev { color: var(--text-secondary); font-size: 0.8em; }
+    .ad-name-link.is-loading { opacity: 0.6; }
     .lp-cell {
       max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       color: var(--text-secondary); font-family: ui-monospace, SFMono-Regular, monospace;
@@ -498,16 +510,15 @@
         <thead>
           <tr>
             <th data-sort="bucket">Bucket</th>
-            <th data-sort="ad_name">Ad name</th>
+            <th data-sort="ad_name" title="Click an ad name to open the Meta preview in a new tab. Click anywhere else on the row to open the diagnosis side panel.">Ad name</th>
             <th data-sort="landing_page_path">LP</th>
             <th class="r" data-sort="spend">Spend</th>
-            <th class="r" data-sort="shopify_roas" title="Shopify revenue / spend">Shop ROAS</th>
-            <th class="r" data-sort="meta_roas" title="Meta-attributed">Meta ROAS</th>
+            <th class="r" data-sort="meta_roas" title="Meta-attributed: meta_purchase_value / spend">Meta ROAS</th>
             <th class="r" data-sort="ctr">CTR</th>
             <th class="r" data-sort="hook_rate" title="3-sec views / impressions">Hook</th>
             <th class="r" data-sort="cvr" title="Shopify orders / link clicks">CVR</th>
-            <th class="r" data-sort="shopify_pct_new" title="% new customers">% New</th>
-            <th class="r" data-sort="shopify_aov">AOV</th>
+            <th class="r" data-sort="shopify_avg_duration" title="Shopify average session duration (seconds)">Avg Dur</th>
+            <th class="r" data-sort="shopify_bounce_rate" title="Shopify bounce rate">Bounce</th>
             <th class="r" data-sort="frequency">Freq</th>
           </tr>
         </thead>
@@ -776,6 +787,8 @@ function buildRows(metaCurrent, metaPrior, shopifyTable) {
     const iLp       = idx('landing_page_path');
     const iSessions = idx('sessions');
     const iCvr      = idx('conversion_rate');
+    const iAvgDur   = idx('average_session_duration');
+    const iBounce   = idx('bounce_rate');
     // Match column the existing /api/shopify-metrics query produces.
     const iCompleted = idx('sessions_that_completed_checkout') >= 0
       ? idx('sessions_that_completed_checkout')
@@ -789,24 +802,34 @@ function buildRows(metaCurrent, metaPrior, shopifyTable) {
       const k = ad + '||' + lp;
       const sessions = parseFloat(get(iSessions)) || 0;
       let cvrRaw = parseFloat(get(iCvr));
-      // ShopifyQL returns CVR as 0–1 in some setups, 0–100 in others
+      // ShopifyQL returns rate columns as 0–1 in some setups, 0–100 in others
       if (isFinite(cvrRaw) && cvrRaw > 1) cvrRaw = cvrRaw / 100;
+      let bounceRaw = parseFloat(get(iBounce));
+      if (isFinite(bounceRaw) && bounceRaw > 1) bounceRaw = bounceRaw / 100;
+      const avgDur = parseFloat(get(iAvgDur)) || 0;            // seconds
       const completedCheckout = parseFloat(get(iCompleted)) || 0;
       const orders = completedCheckout || (isFinite(cvrRaw) ? sessions * cvrRaw : 0);
 
       // Same (utm_content, lp) may show up across multiple utm_sources (FB + IG)
-      // — sum their sessions/orders, recompute weighted CVR.
+      // — sum sessions/orders, weight rate columns by sessions.
       const existing = shop.get(k);
       if (existing) {
-        existing.sessions += sessions;
+        const totalSess = existing.sessions + sessions;
+        if (totalSess > 0) {
+          existing.site_bounce_rate = (existing.site_bounce_rate * existing.sessions + (bounceRaw || 0) * sessions) / totalSess;
+          existing.site_avg_duration = (existing.site_avg_duration * existing.sessions + avgDur * sessions) / totalSess;
+        }
+        existing.sessions = totalSess;
         existing.orders   += orders;
-        existing.site_cvr = existing.sessions > 0 ? existing.orders / existing.sessions : 0;
+        existing.site_cvr = totalSess > 0 ? existing.orders / totalSess : 0;
       } else {
         shop.set(k, {
           sessions, orders,
           revenue: 0, aov: 0,                 // not available in `sessions` topic
           new_customer_orders: 0, pct_new: 0,
           site_cvr: isFinite(cvrRaw) ? cvrRaw : 0,
+          site_bounce_rate: isFinite(bounceRaw) ? bounceRaw : 0,
+          site_avg_duration: avgDur,
         });
       }
     }
@@ -872,9 +895,12 @@ function buildRows(metaCurrent, metaPrior, shopifyTable) {
       conversion_rate_ranking: c.conversion_rate_ranking,
       post_reactions: c.post_reactions, post_comments: c.post_comments,
       post_shares: c.post_shares, post_saves: c.post_saves,
+      shopify_sessions: s.sessions || 0,
       shopify_orders: s.orders, shopify_revenue: s.revenue, shopify_aov: s.aov,
       shopify_roas, shopify_new_customer_orders: s.new_customer_orders,
       shopify_pct_new: s.pct_new,
+      shopify_avg_duration: s.site_avg_duration || 0,
+      shopify_bounce_rate:  s.site_bounce_rate  || 0,
       cvr, truth_check_ratio,
       prior,                                        // null when ad is brand-new
       bucket: 'UNCATEGORIZED', secondary_flags: [], reasons: [],
@@ -1443,9 +1469,11 @@ function renderTable() {
     bucket: r => r.bucket,
     ad_name: r => r.ad_name.toLowerCase(),
     landing_page_path: r => r.landing_page_path,
-    spend: r => r.spend, shopify_roas: r => r.shopify_roas, meta_roas: r => r.meta_roas,
+    spend: r => r.spend, meta_roas: r => r.meta_roas,
     ctr: r => r.ctr, hook_rate: r => r.hook_rate || 0, cvr: r => r.cvr,
-    shopify_pct_new: r => r.shopify_pct_new, shopify_aov: r => r.shopify_aov, frequency: r => r.frequency,
+    shopify_avg_duration: r => r.shopify_avg_duration,
+    shopify_bounce_rate:  r => r.shopify_bounce_rate,
+    frequency: r => r.frequency,
   };
   const kf = keyFns[state.sort.key] || keyFns.spend;
   const dir = state.sort.dir === 'desc' ? -1 : 1;
@@ -1464,18 +1492,20 @@ function renderTable() {
       ? r.secondary_flags.map(s => `<span class="chip-secondary" title="${esc(BUCKETS[s]?.label || s)}">${esc(BUCKETS[s]?.short || s)}</span>`).join('')
       : '';
     const sel = state.selectedKey === r.ad_name + '||' + r.landing_page_path ? 'row-selected' : '';
-    return `<tr class="${sel}" data-key="${esc(r.ad_name + '||' + r.landing_page_path)}">
+    const rowKey = r.ad_name + '||' + r.landing_page_path;
+    return `<tr class="${sel}" data-key="${esc(rowKey)}">
       <td>${bucketChip(r.bucket)}${secondary}</td>
-      <td><div class="ad-name-cell" title="${esc(r.ad_name)}">${esc(adShort)}</div></td>
+      <td>
+        <a class="ad-name-link" href="#" data-key="${esc(rowKey)}" title="${esc(r.ad_name)}\nClick to open Meta preview in a new tab">${esc(adShort)}<span class="ad-name-link__chev"> ↗</span></a>
+      </td>
       <td><div class="lp-cell" title="${esc(r.landing_page_path)}">${esc(lpShort)}</div></td>
       <td class="r">${fmtUSD(r.spend)}</td>
-      <td class="r ${r.shopify_roas >= state.config.target_roas ? 'pos' : 'neg'}">${fmtX(r.shopify_roas)}</td>
-      <td class="r muted">${fmtX(r.meta_roas)}</td>
+      <td class="r ${r.meta_roas >= state.config.target_roas ? 'pos' : 'neg'}">${fmtX(r.meta_roas)}</td>
       <td class="r">${fmtPctRaw(r.ctr)}</td>
       <td class="r">${r.hook_rate != null ? fmtPct(r.hook_rate, 1) : '—'}</td>
       <td class="r">${r.cvr > 0 ? fmtPct(r.cvr, 2) : '—'}</td>
-      <td class="r">${r.shopify_orders > 0 ? fmtPct(r.shopify_pct_new, 0) : '—'}</td>
-      <td class="r">${r.shopify_aov > 0 ? fmtUSD(r.shopify_aov) : '—'}</td>
+      <td class="r">${r.shopify_avg_duration > 0 ? Math.round(r.shopify_avg_duration) + 's' : '—'}</td>
+      <td class="r">${r.shopify_bounce_rate > 0 ? fmtPct(r.shopify_bounce_rate, 0) : '—'}</td>
       <td class="r">${fmtN(r.frequency, 2)}</td>
     </tr>`;
   }).join('');
@@ -1497,6 +1527,48 @@ function renderTable() {
   tbody.querySelectorAll('tr').forEach(tr => {
     tr.addEventListener('click', () => openDetail(tr.dataset.key));
   });
+  tbody.querySelectorAll('.ad-name-link').forEach(a => {
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();                       // don't trigger row click → detail panel
+      openAdPreview(a);
+    });
+  });
+}
+
+// Open the Meta preview for an ad in a new tab.
+// We call window.open('about:blank') SYNCHRONOUSLY so popup blockers allow it,
+// then navigate the new tab once the fetch resolves. If the row has a cached
+// preview link from a prior detail-panel open, we use it directly.
+async function openAdPreview(linkEl) {
+  const key = linkEl.dataset.key;
+  const r = state.rows.find(x => (x.ad_name + '||' + x.landing_page_path) === key);
+  if (!r) return;
+  if (r.preview_shareable_link) {
+    window.open(r.preview_shareable_link, '_blank', 'noopener');
+    return;
+  }
+  if (!r.ad_ids || r.ad_ids.length === 0) return;
+  const w = window.open('about:blank', '_blank');
+  if (!w) return;                                // popup blocked
+  w.document.write('<title>Loading preview…</title><p style="font:14px -apple-system,Segoe UI,sans-serif;color:#65676b;padding:24px">Loading Meta preview…</p>');
+  linkEl.classList.add('is-loading');
+  try {
+    const resp = await fetch('/api/diag-ad-preview?ad_id=' + encodeURIComponent(r.ad_ids[0]));
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+    r.preview_shareable_link = data.preview_shareable_link || null;
+    if (data.creative_link_url) r.creative_link_url = data.creative_link_url;
+    if (data.preview_shareable_link) {
+      w.location.href = data.preview_shareable_link;
+    } else {
+      w.document.body.innerHTML = '<p style="font:14px -apple-system;color:#c0392b;padding:24px">No preview link returned by Meta for this ad.</p>';
+    }
+  } catch (err) {
+    w.document.body.innerHTML = '<p style="font:14px -apple-system;color:#c0392b;padding:24px">Failed to fetch preview: ' + err.message + '</p>';
+  } finally {
+    linkEl.classList.remove('is-loading');
+  }
 }
 
 function renderInsufficient() {
@@ -1597,13 +1669,11 @@ function openDetail(key) {
     <div class="detail-section">
       <div class="detail-section__h">Shopify metrics</div>
       <div class="metric-grid">
-        ${metaList('Orders', fmtN(r.shopify_orders))}
-        ${metaList('Revenue', fmtUSD(r.shopify_revenue))}
-        ${metaList('AOV', r.shopify_aov > 0 ? fmtUSD(r.shopify_aov) : '—')}
-        ${metaList('Shop ROAS', fmtX(r.shopify_roas))}
-        ${metaList('CVR (orders/link clicks)', r.cvr > 0 ? fmtPct(r.cvr, 2) : '—')}
-        ${metaList('% new', r.shopify_orders > 0 ? fmtPct(r.shopify_pct_new, 0) : '—')}
-        ${metaList('New-customer orders', fmtN(r.shopify_new_customer_orders))}
+        ${metaList('Sessions', fmtN(r.shopify_sessions || 0))}
+        ${metaList('Orders (completed checkouts)', fmtN(r.shopify_orders))}
+        ${metaList('Site CVR', r.cvr > 0 ? fmtPct(r.cvr, 2) : '—')}
+        ${metaList('Avg session duration', r.shopify_avg_duration > 0 ? Math.round(r.shopify_avg_duration) + 's' : '—')}
+        ${metaList('Bounce rate', r.shopify_bounce_rate > 0 ? fmtPct(r.shopify_bounce_rate, 1) : '—')}
         ${metaList('Truth-check (Meta/Shop)', r.truth_check_ratio != null ? r.truth_check_ratio.toFixed(2) : '—')}
       </div>
     </div>

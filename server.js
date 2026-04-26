@@ -1522,7 +1522,7 @@ app.get('/api/diag-shopify', async (req, res) => {
   // datasets — revenue / AOV / %new aren't reachable; the dashboard handles
   // null values and skips rules that need them.
   const buildQL = (source) => `FROM sessions
-  SHOW sessions, conversion_rate, sessions_that_completed_checkout
+  SHOW sessions, conversion_rate, sessions_that_completed_checkout, average_session_duration, bounce_rate
   WHERE utm_source = '${escapeQL(source)}' AND utm_medium = '${medium}'
   GROUP BY utm_content, landing_page_path
   SINCE ${since} UNTIL ${until}
