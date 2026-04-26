@@ -49,6 +49,90 @@
       border-radius: 6px;
     }
     .header__back:hover { background: rgba(255,255,255,0.15); }
+    .header__criteria-btn {
+      color: rgba(255,255,255,0.92);
+      background: rgba(255,255,255,0.12);
+      text-decoration: none;
+      font-size: 0.84rem;
+      font-weight: 600;
+      border: 1px solid rgba(255,255,255,0.35);
+      padding: 6px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .header__criteria-btn:hover { background: rgba(255,255,255,0.2); }
+
+    /* ── criteria editor modal ── */
+    .crit-overlay {
+      position: fixed; inset: 0; z-index: 2000;
+      background: rgba(0,0,0,0.42);
+      display: none;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 40px 16px;
+      overflow-y: auto;
+    }
+    .crit-overlay.open { display: flex; }
+    .crit-modal {
+      background: var(--surface);
+      border-radius: 10px;
+      box-shadow: 0 16px 48px rgba(0,0,0,0.32);
+      width: min(720px, 100%);
+      padding: 22px 26px;
+    }
+    .crit-modal__head {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      gap: 12px; margin-bottom: 6px;
+    }
+    .crit-modal__head h2 { font-size: 1.05rem; font-weight: 700; }
+    .crit-modal__head p  { font-size: 0.82rem; color: var(--text-secondary); margin-top: 2px; }
+    .crit-modal__close {
+      border: none; background: transparent; cursor: pointer;
+      font-size: 1.4rem; color: var(--text-secondary); line-height: 1; padding: 0 4px;
+    }
+    .crit-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px 18px;
+      margin-top: 14px;
+    }
+    @media (max-width: 600px) { .crit-grid { grid-template-columns: 1fr; } }
+    .crit-field { display: flex; flex-direction: column; gap: 3px; }
+    .crit-field label {
+      font-size: 0.74rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text-secondary);
+    }
+    .crit-field input {
+      padding: 7px 10px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-size: 0.86rem;
+      font-family: inherit;
+    }
+    .crit-field__hint {
+      font-size: 0.72rem;
+      color: var(--text-secondary);
+      font-weight: 400;
+      text-transform: none;
+      letter-spacing: normal;
+      margin-top: 2px;
+    }
+    .crit-actions {
+      margin-top: 18px;
+      display: flex; gap: 10px; justify-content: flex-end;
+      border-top: 1px solid var(--border);
+      padding-top: 14px;
+    }
+    .crit-actions .btn-primary { padding: 8px 22px; }
+    .crit-status {
+      font-size: 0.78rem; color: var(--text-secondary); align-self: center;
+      margin-right: auto;
+    }
+    .crit-status.saved { color: var(--positive); }
 
     .wrap {
       max-width: 1400px;
@@ -344,6 +428,7 @@
     <h1>Ad Diagnostic Dashboard</h1>
     <p>Meta × Shopify joined at <code>ad_name × landing_page_path</code> with rule-based bucketing</p>
   </div>
+  <button type="button" class="header__criteria-btn" id="btn-open-criteria" style="margin-left:auto" title="Edit bucket thresholds (saved to your browser)">Criteria ⚙</button>
 </header>
 
 <div class="wrap">
@@ -380,14 +465,6 @@
         </label>
         <label>utm_medium
           <input type="text" id="utm-medium" value="paid_social">
-        </label>
-      </div>
-      <div class="controls__group">
-        <label>Target ROAS
-          <input type="number" id="cfg-target-roas" value="2.0" step="0.1" min="0" style="min-width:90px">
-        </label>
-        <label>Min spend
-          <input type="number" id="cfg-min-spend" value="50" step="5" min="0" style="min-width:90px">
         </label>
       </div>
       <button class="btn-primary" id="btn-load">Load</button>
@@ -460,6 +537,26 @@
     </details>
   </div>
 
+</div>
+
+<!-- ── criteria editor modal ── -->
+<div class="crit-overlay" id="crit-overlay">
+  <div class="crit-modal" role="dialog" aria-labelledby="crit-title">
+    <div class="crit-modal__head">
+      <div>
+        <h2 id="crit-title">Bucketing criteria</h2>
+        <p>These thresholds drive every bucket assignment. Saved to your browser only — not shared with other users.</p>
+      </div>
+      <button class="crit-modal__close" id="crit-close" title="Close">&times;</button>
+    </div>
+    <div class="crit-grid" id="crit-grid"></div>
+    <div class="crit-actions">
+      <span class="crit-status" id="crit-status"></span>
+      <button type="button" class="btn-ghost" id="crit-reset">Reset to defaults</button>
+      <button type="button" class="btn-ghost" id="crit-cancel">Cancel</button>
+      <button type="button" class="btn-primary" id="crit-save">Save &amp; apply</button>
+    </div>
+  </div>
 </div>
 
 <!-- ── bucket hover popover ── -->
@@ -983,23 +1080,122 @@ const state = {
   selectedKey: null,
 };
 
+// ─────────────────────────────────────────────
+// CRITERIA EDITOR — persisted to localStorage per browser
+// ─────────────────────────────────────────────
+const CRIT_KEY = 'ad-diagnostic.criteria.v1';
+const CRIT_DEFAULTS = {
+  minimum_spend: 50,
+  minimum_impressions: 1000,
+  target_roas: 2.0,
+  high_frequency: 3.0,
+  ctr_decline_pct: -15,
+  spend_increase: 50,
+  cpa_increase: 25,
+  discount_pct_new_mult: 0.5,
+  qualifier_cvr_mult: 1.5,
+  truth_check_lower: 0.5,
+  truth_check_upper: 2.0,
+  retargeting_patterns: 'rt,retarget,warm,visitors,view-content',
+};
+const CRIT_FIELDS = [
+  { key: 'minimum_spend',         label: 'Minimum spend per ad ($)',  step: 5,    hint: 'Below this → INSUFFICIENT_DATA bucket.' },
+  { key: 'minimum_impressions',   label: 'Minimum impressions',       step: 100,  hint: 'Below this → INSUFFICIENT_DATA bucket.' },
+  { key: 'target_roas',           label: 'Target Shopify ROAS (x)',   step: 0.1,  hint: 'Account-level breakeven multiple.' },
+  { key: 'high_frequency',        label: 'High-frequency threshold',  step: 0.1,  hint: 'Required for Creative Fatigue bucket.' },
+  { key: 'ctr_decline_pct',       label: 'CTR decline % for Fatigue', step: 1,    hint: 'Negative number — e.g. -15 means CTR dropped >15%.' },
+  { key: 'spend_increase',        label: 'Spend increase % for Scaling Saturation', step: 5, hint: 'Spend grew by more than this vs prior window.' },
+  { key: 'cpa_increase',          label: 'CPA increase % for Scaling Saturation',   step: 5, hint: 'CPA grew by more than this vs prior window.' },
+  { key: 'discount_pct_new_mult', label: 'Discount-Hunter %new multiplier',         step: 0.1, hint: '% new customers below (this × median) flags Discount Hunter.' },
+  { key: 'qualifier_cvr_mult',    label: 'Qualifier CVR multiplier',  step: 0.1,  hint: 'CVR above (this × median) qualifies as Qualifier despite low CTR.' },
+  { key: 'truth_check_lower',     label: 'Tracking lower bound',      step: 0.05, hint: 'Meta/Shopify purchase ratio below this → Tracking Issue.' },
+  { key: 'truth_check_upper',     label: 'Tracking upper bound',      step: 0.05, hint: 'Meta/Shopify purchase ratio above this → Tracking Issue.' },
+  { key: 'retargeting_patterns',  label: 'Retargeting ad-set patterns', type: 'text', hint: 'Comma-separated; lowercase substring match against ad-set name.' },
+];
+
+function loadCriteria() {
+  try {
+    const raw = localStorage.getItem(CRIT_KEY);
+    if (!raw) return { ...CRIT_DEFAULTS };
+    const parsed = JSON.parse(raw);
+    return { ...CRIT_DEFAULTS, ...parsed };
+  } catch {
+    return { ...CRIT_DEFAULTS };
+  }
+}
+function saveCriteria(c) {
+  try { localStorage.setItem(CRIT_KEY, JSON.stringify(c)); } catch {}
+}
+
 function readConfig() {
-  const tr = parseFloat(document.getElementById('cfg-target-roas').value) || 2.0;
-  const ms = parseFloat(document.getElementById('cfg-min-spend').value) || 50;
+  const c = loadCriteria();
+  // Normalize the retargeting_patterns string → array
+  const patterns = (typeof c.retargeting_patterns === 'string'
+    ? c.retargeting_patterns.split(',')
+    : (c.retargeting_patterns || []))
+    .map(s => String(s).trim().toLowerCase())
+    .filter(Boolean);
   return {
-    minimum_spend: ms,
-    minimum_impressions: 1000,
-    target_roas: tr,
-    high_frequency: 3.0,
-    ctr_decline_pct: -15,
-    spend_increase: 50,
-    cpa_increase: 25,
-    discount_pct_new_mult: 0.5,
-    qualifier_cvr_mult: 1.5,
-    truth_check_lower: 0.5,
-    truth_check_upper: 2.0,
-    retargeting_patterns: ['rt', 'retarget', 'warm', 'visitors', 'view-content'],
+    minimum_spend:          parseFloat(c.minimum_spend)          || CRIT_DEFAULTS.minimum_spend,
+    minimum_impressions:    parseFloat(c.minimum_impressions)    || CRIT_DEFAULTS.minimum_impressions,
+    target_roas:            parseFloat(c.target_roas)            || CRIT_DEFAULTS.target_roas,
+    high_frequency:         parseFloat(c.high_frequency)         || CRIT_DEFAULTS.high_frequency,
+    ctr_decline_pct:        parseFloat(c.ctr_decline_pct),
+    spend_increase:         parseFloat(c.spend_increase)         || CRIT_DEFAULTS.spend_increase,
+    cpa_increase:           parseFloat(c.cpa_increase)           || CRIT_DEFAULTS.cpa_increase,
+    discount_pct_new_mult:  parseFloat(c.discount_pct_new_mult)  || CRIT_DEFAULTS.discount_pct_new_mult,
+    qualifier_cvr_mult:     parseFloat(c.qualifier_cvr_mult)     || CRIT_DEFAULTS.qualifier_cvr_mult,
+    truth_check_lower:      parseFloat(c.truth_check_lower)      || CRIT_DEFAULTS.truth_check_lower,
+    truth_check_upper:      parseFloat(c.truth_check_upper)      || CRIT_DEFAULTS.truth_check_upper,
+    retargeting_patterns:   patterns,
   };
+}
+
+function openCriteriaModal() {
+  const grid = document.getElementById('crit-grid');
+  const c = loadCriteria();
+  grid.innerHTML = CRIT_FIELDS.map(f => {
+    const t = f.type || 'number';
+    const val = c[f.key] != null ? c[f.key] : CRIT_DEFAULTS[f.key];
+    return `<div class="crit-field">
+      <label for="crit-${f.key}">${esc(f.label)}</label>
+      <input id="crit-${f.key}" type="${t}" ${t === 'number' ? `step="${f.step}"` : ''} value="${esc(val)}">
+      <span class="crit-field__hint">${esc(f.hint || '')}</span>
+    </div>`;
+  }).join('');
+  document.getElementById('crit-status').textContent = '';
+  document.getElementById('crit-status').className = 'crit-status';
+  document.getElementById('crit-overlay').classList.add('open');
+}
+
+function closeCriteriaModal() {
+  document.getElementById('crit-overlay').classList.remove('open');
+}
+
+function readCriteriaFromModal() {
+  const out = {};
+  for (const f of CRIT_FIELDS) {
+    const el = document.getElementById('crit-' + f.key);
+    if (!el) continue;
+    out[f.key] = (f.type === 'text') ? el.value.trim() : parseFloat(el.value);
+  }
+  return out;
+}
+
+// Re-runs bucketing on already-loaded data with the latest config; no re-fetch.
+function applyCriteriaToLoadedData() {
+  if (!state.rows.length) return;
+  state.config = readConfig();
+  state.benchmarks = computeBenchmarks(state.rows, state.config);
+  for (const r of state.rows) {
+    const result = assignBucket(r, state.benchmarks, state.config);
+    r.bucket = result.primary;
+    r.secondary_flags = result.secondary;
+    r.reasons = result.reasons;
+  }
+  renderTiles();
+  renderTable();
+  renderInsufficient();
 }
 
 async function loadData() {
@@ -1125,13 +1321,13 @@ function renderTiles() {
       state.bucketFilter = (state.bucketFilter === b) ? '' : b;
       renderTiles(); renderTable();
     });
-    t.addEventListener('mouseenter', () => showBucketPop(t, t.dataset.bucket));
+    t.addEventListener('mouseenter', (e) => showBucketPop(t, t.dataset.bucket, e));
     t.addEventListener('mousemove', positionBucketPop);
     t.addEventListener('mouseleave', hideBucketPop);
   });
 }
 
-function showBucketPop(anchor, bucketName) {
+function showBucketPop(anchor, bucketName, event) {
   const pop = document.getElementById('bucket-pop');
   const def = BUCKETS[bucketName] || BUCKETS.UNCATEGORIZED;
   const doc = BUCKET_DOCS[bucketName] || BUCKET_DOCS.UNCATEGORIZED;
@@ -1146,6 +1342,13 @@ function showBucketPop(anchor, bucketName) {
     <div class="bucket-pop__action">${esc(doc.action)}</div>
   `;
   pop.style.display = 'block';
+  // Position immediately so it doesn't flash at the page origin before mousemove
+  if (event) {
+    positionBucketPop(event);
+  } else if (anchor) {
+    const r = anchor.getBoundingClientRect();
+    positionBucketPop({ clientX: r.left + r.width / 2, clientY: r.bottom + 4 });
+  }
 }
 
 function positionBucketPop(e) {
@@ -1487,7 +1690,36 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('dp-close').addEventListener('click', closeDetail);
   document.getElementById('detail-overlay').addEventListener('click', closeDetail);
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDetail(); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      closeDetail();
+      closeCriteriaModal();
+    }
+  });
+
+  // Criteria modal
+  document.getElementById('btn-open-criteria').addEventListener('click', openCriteriaModal);
+  document.getElementById('crit-close').addEventListener('click', closeCriteriaModal);
+  document.getElementById('crit-cancel').addEventListener('click', closeCriteriaModal);
+  document.getElementById('crit-overlay').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) closeCriteriaModal();
+  });
+  document.getElementById('crit-reset').addEventListener('click', () => {
+    saveCriteria({ ...CRIT_DEFAULTS });
+    openCriteriaModal();                                       // re-render fields with defaults
+    const s = document.getElementById('crit-status');
+    s.textContent = 'Reset to defaults — click Save & apply to use them.';
+    s.className = 'crit-status';
+  });
+  document.getElementById('crit-save').addEventListener('click', () => {
+    const next = readCriteriaFromModal();
+    saveCriteria(next);
+    applyCriteriaToLoadedData();
+    const s = document.getElementById('crit-status');
+    s.textContent = '✓ Saved & applied to current data.';
+    s.className = 'crit-status saved';
+    setTimeout(closeCriteriaModal, 600);
+  });
 });
 </script>
 </body>
