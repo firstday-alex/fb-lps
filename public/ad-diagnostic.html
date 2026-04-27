@@ -847,7 +847,13 @@ function renderBucketRule(rule, cfg) {
 // JOIN: Meta + Shopify → AdRow[]
 // ─────────────────────────────────────────────
 function buildRows(metaCurrent, metaPrior, shopifyTable) {
-  // Aggregate Meta current/prior by (ad_name, landing_page_path).
+  // If the strip-date-prefix toggle is on, build join keys from the ad_name
+  // with any leading "YYYY/MM/DD_" stripped — merges daily duplicates and
+  // post-launch renames into a single row.
+  const stripDateRe = /^\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}_+/;
+  const stripJoinName = (s) => (state.config?.strip_date_prefix ? String(s || '').replace(stripDateRe, '') : String(s || ''));
+
+  // Aggregate Meta current/prior by (joinName, landing_page_path).
   // Dedup by ad_id first — a pagination quirk could otherwise double-count an
   // ad that appears on two pages. Also keep each ad_id's individual spend so
   // the detail panel can show the per-ad breakdown.
@@ -861,7 +867,8 @@ function buildRows(metaCurrent, metaPrior, shopifyTable) {
         seenAdIds.add(r.ad_id);
       }
       const lp = r.landing_page_path || '(unknown)';
-      const key = (r.ad_name || '') + '||' + lp;
+      const joinAdName = stripJoinName(r.ad_name);
+      const key = joinAdName + '||' + lp;
       let g = map.get(key);
       if (!g) {
         g = {
@@ -950,7 +957,7 @@ function buildRows(metaCurrent, metaPrior, shopifyTable) {
       const lp = String(get(iLp) ?? '').trim();
       if (!ad && !lp) continue;
       // skip Shopify totals row (both keys empty) — already filtered above
-      const k = ad + '||' + lp;
+      const k = stripJoinName(ad) + '||' + lp;
       const sessions = parseFloat(get(iSessions)) || 0;
       let cvrRaw = parseFloat(get(iCvr));
       // ShopifyQL returns rate columns as 0–1 in some setups, 0–100 in others
@@ -1275,6 +1282,7 @@ const CRIT_DEFAULTS = {
   truth_check_lower: 0.5,
   truth_check_upper: 2.0,
   retargeting_patterns: 'rt,retarget,warm,visitors,view-content',
+  strip_date_prefix: true,
 };
 const CRIT_FIELDS = [
   { key: 'minimum_spend',         label: 'Minimum spend per ad ($)',  step: 5,    hint: 'Below this → INSUFFICIENT_DATA bucket.' },
@@ -1289,6 +1297,7 @@ const CRIT_FIELDS = [
   { key: 'truth_check_lower',     label: 'Tracking lower bound',      step: 0.05, hint: 'Meta/Shopify purchase ratio below this → Tracking Issue.' },
   { key: 'truth_check_upper',     label: 'Tracking upper bound',      step: 0.05, hint: 'Meta/Shopify purchase ratio above this → Tracking Issue.' },
   { key: 'retargeting_patterns',  label: 'Retargeting ad-set patterns', type: 'text', hint: 'Comma-separated; lowercase substring match against ad-set name.' },
+  { key: 'strip_date_prefix',     label: 'Strip leading YYYY/MM/DD_ from ad_name when joining', type: 'boolean', hint: 'Merges daily-duplicated / renamed ads (2026/04/21_… and 2026/04/22_…) into a single dashboard row by stripping the leading date before joining Meta to Shopify.' },
 ];
 
 // In-memory cache hydrated from server-of-truth on page load. If the server
@@ -1413,6 +1422,7 @@ function readConfig() {
     truth_check_lower:      parseFloat(c.truth_check_lower)      || CRIT_DEFAULTS.truth_check_lower,
     truth_check_upper:      parseFloat(c.truth_check_upper)      || CRIT_DEFAULTS.truth_check_upper,
     retargeting_patterns:   patterns,
+    strip_date_prefix:      c.strip_date_prefix === false ? false : (c.strip_date_prefix === 'false' ? false : !!c.strip_date_prefix),
   };
 }
 
@@ -1422,6 +1432,15 @@ function openCriteriaModal() {
   grid.innerHTML = CRIT_FIELDS.map(f => {
     const t = f.type || 'number';
     const val = c[f.key] != null ? c[f.key] : CRIT_DEFAULTS[f.key];
+    if (t === 'boolean') {
+      return `<div class="crit-field" style="grid-column:1 / -1">
+        <label for="crit-${f.key}" style="display:flex;align-items:center;gap:8px;text-transform:none;letter-spacing:normal;font-size:0.86rem;color:var(--text-primary)">
+          <input id="crit-${f.key}" type="checkbox" ${val ? 'checked' : ''} style="width:16px;height:16px">
+          ${esc(f.label)}
+        </label>
+        <span class="crit-field__hint">${esc(f.hint || '')}</span>
+      </div>`;
+    }
     return `<div class="crit-field">
       <label for="crit-${f.key}">${esc(f.label)}</label>
       <input id="crit-${f.key}" type="${t}" ${t === 'number' ? `step="${f.step}"` : ''} value="${esc(val)}">
@@ -1464,7 +1483,9 @@ function readCriteriaFromModal() {
   for (const f of CRIT_FIELDS) {
     const el = document.getElementById('crit-' + f.key);
     if (!el) continue;
-    out[f.key] = (f.type === 'text') ? el.value.trim() : parseFloat(el.value);
+    if (f.type === 'boolean')      out[f.key] = !!el.checked;
+    else if (f.type === 'text')    out[f.key] = el.value.trim();
+    else                           out[f.key] = parseFloat(el.value);
   }
   return out;
 }
@@ -1837,9 +1858,17 @@ function shopifyMatchDiagnostic(r) {
     : -1;
   const truncatedExpected = firstBreakIdx > 0 ? r.ad_name.slice(0, firstBreakIdx) : null;
 
+  // Strip a leading "YYYY/MM/DD_" or "YYYY-MM-DD_" prefix so we can detect
+  // matches that differ only in the date stamp (very common when ads are
+  // duplicated daily or renamed).
+  const stripDate = (s) => s.replace(/^\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}_+/, '');
+  const adBodyMeta = stripDate(r.ad_name);
+  const hasDatePrefix = adBodyMeta !== r.ad_name;
+
   const adNameMatches    = [];   // same utm_content as Meta, different LP
   const lpMatches        = [];   // same LP as Meta, different utm_content
   const truncatedMatches = [];   // same LP, utm_content is a prefix of Meta ad_name
+  const dateOnlyMatches  = [];   // same LP, identical body but different date prefix
   for (const row of raw.rows) {
     const get = (i) => Array.isArray(row) ? row[i] : row[raw.columns[i].name];
     const ad = String(get(iAd) ?? '').trim();
@@ -1849,8 +1878,11 @@ function shopifyMatchDiagnostic(r) {
     if (ad === r.ad_name && lp !== r.landing_page_path) {
       adNameMatches.push({ lp: lp || '(empty)', sessions: sess });
     } else if (lp === r.landing_page_path && ad !== r.ad_name) {
-      // Is this a truncated version of the Meta ad name? Either the URL-break
-      // prefix, or any prefix at least 12 chars long (covers other oddities).
+      // Date-only match takes priority — it's the most actionable diagnosis.
+      const adBodyShopify = stripDate(ad);
+      const datePrefixDiffers = hasDatePrefix && adBodyShopify === adBodyMeta && adBodyShopify !== ad;
+      // Truncation: utm_content is a prefix of the Meta ad name (e.g. cut off
+      // at a `#` URL fragment).
       let prefixMatch = false;
       let exactPrefixOfBreak = false;
       if (truncatedExpected && ad === truncatedExpected) {
@@ -1859,7 +1891,11 @@ function shopifyMatchDiagnostic(r) {
       } else if (ad.length >= 12 && r.ad_name.startsWith(ad)) {
         prefixMatch = true;
       }
-      if (prefixMatch) {
+      if (datePrefixDiffers) {
+        const shopDate = ad.match(/^\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}/)?.[0] || '';
+        const metaDate = r.ad_name.match(/^\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}/)?.[0] || '';
+        dateOnlyMatches.push({ ad, lp, sessions: sess, shopDate, metaDate });
+      } else if (prefixMatch) {
         truncatedMatches.push({ ad, lp, sessions: sess, exactPrefixOfBreak });
       } else {
         lpMatches.push({ ad: ad || '(empty)', sessions: sess });
@@ -1869,13 +1905,27 @@ function shopifyMatchDiagnostic(r) {
   adNameMatches.sort((a, b) => b.sessions - a.sessions);
   lpMatches.sort((a, b) => b.sessions - a.sessions);
   truncatedMatches.sort((a, b) => b.sessions - a.sessions);
+  dateOnlyMatches.sort((a, b) => b.sessions - a.sessions);
 
   let kind;
-  if (truncatedMatches.length)                  kind = 'truncated';
+  if (dateOnlyMatches.length)                   kind = 'date-prefix-mismatch';
+  else if (truncatedMatches.length)             kind = 'truncated';
   else if (adNameMatches.length && lpMatches.length) kind = 'wrong-pair';
   else if (adNameMatches.length)                kind = 'ad-name-found-lp-mismatch';
   else if (lpMatches.length)                    kind = 'lp-found-ad-name-mismatch';
   else                                          kind = 'no-match-at-all';
+
+  // Also collect ALL Shopify rows at this LP for a raw debug listing —
+  // helps when the heuristic detectors miss a near-match.
+  const allLpRows = [];
+  for (const row of raw.rows) {
+    const get = (i) => Array.isArray(row) ? row[i] : row[raw.columns[i].name];
+    const ad = String(get(iAd) ?? '').trim();
+    const lp = String(get(iLp) ?? '').trim();
+    const sess = parseFloat(get(iSess)) || 0;
+    if (lp === r.landing_page_path) allLpRows.push({ ad: ad || '(empty)', sessions: sess });
+  }
+  allLpRows.sort((a, b) => b.sessions - a.sessions);
 
   return {
     kind,
@@ -1885,9 +1935,12 @@ function shopifyMatchDiagnostic(r) {
     adNameMatches: adNameMatches.slice(0, 8),
     lpMatches: lpMatches.slice(0, 8),
     truncatedMatches: truncatedMatches.slice(0, 8),
+    dateOnlyMatches: dateOnlyMatches.slice(0, 8),
+    allLpRows,
     totalAdNameMatches: adNameMatches.length,
     totalLpMatches: lpMatches.length,
     totalTruncatedMatches: truncatedMatches.length,
+    totalDateOnlyMatches: dateOnlyMatches.length,
   };
 }
 
@@ -1895,6 +1948,7 @@ function renderShopifyDiagnostic(d) {
   if (!d) return '';
   const headlineByKind = {
     'no-shopify-data': "Couldn't run the diagnostic — no Shopify data was returned.",
+    'date-prefix-mismatch': "Shopify HAS this traffic — but under a different leading date in the ad name. Likely a daily-duplicate or rename: a near-twin ad_id with the same body but different date stamp captured the orders.",
     'truncated': "Shopify HAS this traffic — but stored under a TRUNCATED utm_content (the full Meta ad name was cut off in the URL). This is a UTM-tagging bug, not a missing ad.",
     'wrong-pair': "Both the ad name and the landing page show up in Shopify — but never together.",
     'ad-name-found-lp-mismatch': "Shopify saw this ad name, but pointed at a different landing page. utm_content tagging is fine; the creative URL doesn't match where buyers actually landed.",
@@ -1902,16 +1956,27 @@ function renderShopifyDiagnostic(d) {
     'no-match-at-all': "Shopify has no Facebook traffic for either this ad name OR this landing page in the selected window. Either the ad didn't run yet, the UTMs aren't tagged, or utm_source/utm_medium filter is too narrow.",
   };
 
-  // URL-break warning at the top — this is the most actionable signal.
-  const urlBreakWarning = d.urlBreakChars && d.urlBreakChars.length ? `
+  // URL-break warning — only show when we found ACTUAL truncated rows in
+  // Shopify. Character-presence alone gives false positives (Meta or your
+  // landing page may URL-encode '#' correctly so it arrives intact).
+  const urlBreakWarning = d.urlBreakChars && d.urlBreakChars.length && d.totalTruncatedMatches > 0 ? `
     <div style="margin-top:8px;padding:8px 10px;background:#fee2e2;border-left:3px solid #c0392b;border-radius:4px">
-      <div style="font-weight:700;font-size:0.78rem;color:#991b1b;margin-bottom:4px">⚠ URL-breaking character${d.urlBreakChars.length > 1 ? 's' : ''} in ad name: ${d.urlBreakChars.map(c => `<code style="background:#fff;padding:1px 4px;border-radius:2px">${esc(c === ' ' ? '·space·' : c)}</code>`).join(' ')}</div>
+      <div style="font-weight:700;font-size:0.78rem;color:#991b1b;margin-bottom:4px">⚠ URL-breaking character${d.urlBreakChars.length > 1 ? 's' : ''} are actually truncating utm_content here: ${d.urlBreakChars.map(c => `<code style="background:#fff;padding:1px 4px;border-radius:2px">${esc(c === ' ' ? '·space·' : c)}</code>`).join(' ')}</div>
       <div style="font-size:0.76rem;color:#78350f;line-height:1.5">
         These characters break the URL when Meta substitutes <code>{{ad.name}}</code> into your link without URL-encoding. Browsers strip the rest of the URL before sending to Shopify. ${d.truncatedExpected ? `Shopify likely sees this utm_content truncated to:<br><code style="display:inline-block;margin-top:4px;background:#fff;padding:3px 6px;border-radius:3px;word-break:break-all">${esc(d.truncatedExpected)}</code>` : ''}
         <br><br><strong>Fix:</strong> rename the ad to remove <code>#</code> / <code>?</code> / <code>&amp;</code> / spaces, or use a URL-encoded macro like <code>{{ad.name | url_encode}}</code> if your account supports it.
       </div>
     </div>` : '';
 
+  const dateMismatchList = d.dateOnlyMatches && d.dateOnlyMatches.length ? `
+    <div style="margin-top:8px;padding:8px 10px;background:#fef3c7;border-left:3px solid #d97706;border-radius:4px">
+      <div class="diag-card__h" style="color:#78350f">Same body, different leading date — top ${d.dateOnlyMatches.length}${d.totalDateOnlyMatches > d.dateOnlyMatches.length ? ` of ${d.totalDateOnlyMatches}` : ''}</div>
+      <ul class="diag-list">${d.dateOnlyMatches.map(m => `<li><span style="word-break:break-all"><strong style="color:#92400e">Shopify ${esc(m.shopDate)}</strong> vs <strong style="color:var(--fb-blue)">Meta ${esc(m.metaDate)}</strong></span><span class="diag-sess">${fmtN(m.sessions)} sess</span></li>`).join('')}</ul>
+      <div style="margin-top:6px;font-size:0.76rem;color:#78350f;line-height:1.5">
+        <strong>Likely cause:</strong> a near-twin ad_id was duplicated/renamed with a different date prefix and captured the orders.
+        <br><strong>Fix options:</strong> (a) drop the date stamp from <code>ad_name</code> — it shouldn't carry through to UTMs anyway; (b) join on <code>{{ad.id}}</code> instead of <code>{{ad.name}}</code> so renames don't break attribution; (c) accept it as-is and merge the two rows manually using the per-ad breakdown below.
+      </div>
+    </div>` : '';
   const truncatedList = d.truncatedMatches && d.truncatedMatches.length ? `
     <div style="margin-top:8px">
       <div class="diag-card__h">Likely-truncated utm_content matches at this LP — top ${d.truncatedMatches.length}${d.totalTruncatedMatches > d.truncatedMatches.length ? ` of ${d.totalTruncatedMatches}` : ''}</div>
@@ -1927,11 +1992,18 @@ function renderShopifyDiagnostic(d) {
       <div class="diag-card__h">Same LP, different utm_content — top ${d.lpMatches.length}${d.totalLpMatches > d.lpMatches.length ? ` of ${d.totalLpMatches}` : ''}</div>
       <ul class="diag-list">${d.lpMatches.map(m => `<li><span style="word-break:break-all">${esc(m.ad)}</span><span class="diag-sess">${fmtN(m.sessions)} sess</span></li>`).join('')}</ul>
     </div>` : '';
-  const cardClass = d.kind === 'truncated' ? 'diag-card' : 'diag-card';
+  // Always-on raw listing of every Shopify row at this LP — for debugging
+  // when the heuristic detectors miss a near-match. Collapsed by default.
+  const allLpDebug = d.allLpRows && d.allLpRows.length ? `
+    <details style="margin-top:10px;font-size:0.78rem">
+      <summary style="cursor:pointer;color:var(--text-secondary);font-weight:600">All ${d.allLpRows.length} Shopify utm_contents at this LP (debug)</summary>
+      <ul class="diag-list" style="max-height:300px;margin-top:6px">${d.allLpRows.map(m => `<li><span style="word-break:break-all">${esc(m.ad)}</span><span class="diag-sess">${fmtN(m.sessions)} sess</span></li>`).join('')}</ul>
+    </details>` : '';
+
   return `
     <div class="detail-section">
       <div class="detail-section__h">Why no Shopify match?</div>
-      <div class="${cardClass}">
+      <div class="diag-card">
         <div class="diag-card__h">Looking for utm_content × landing_page_path</div>
         <div style="font-family:ui-monospace,SFMono-Regular,monospace;font-size:0.78rem;word-break:break-all">
           <strong>utm_content:</strong> ${esc(d.expected.ad || '(empty)')}<br>
@@ -1939,7 +2011,8 @@ function renderShopifyDiagnostic(d) {
         </div>
         <div style="margin-top:8px">${esc(headlineByKind[d.kind] || '')}</div>
         ${urlBreakWarning}
-        ${truncatedList}${adList}${lpList}
+        ${dateMismatchList}${truncatedList}${adList}${lpList}
+        ${allLpDebug}
       </div>
     </div>`;
 }

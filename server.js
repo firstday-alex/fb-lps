@@ -1282,6 +1282,7 @@ const CRITERIA_DEFAULTS = {
   truth_check_lower: 0.5,
   truth_check_upper: 2.0,
   retargeting_patterns: 'rt,retarget,warm,visitors,view-content',
+  strip_date_prefix: true,
 };
 
 // Coerce incoming values to the same types as the defaults so downstream code
@@ -1291,7 +1292,10 @@ function coerceCriteria(input) {
   if (!input || typeof input !== 'object') return out;
   for (const k of Object.keys(CRITERIA_DEFAULTS)) {
     if (!(k in input)) continue;
-    if (typeof CRITERIA_DEFAULTS[k] === 'string') {
+    const def = CRITERIA_DEFAULTS[k];
+    if (typeof def === 'boolean') {
+      out[k] = (input[k] === true || input[k] === 'true');
+    } else if (typeof def === 'string') {
       out[k] = String(input[k]).slice(0, 400);
     } else {
       const n = parseFloat(input[k]);
