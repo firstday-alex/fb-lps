@@ -1490,14 +1490,19 @@ function readCriteriaFromModal() {
   return out;
 }
 
-// Re-runs bucketing on already-loaded data with the latest config; no re-fetch.
+// Re-runs the join + bucketing on already-loaded data with the latest config;
+// no Meta/Shopify re-fetch. Rebuilding from raw responses is needed because
+// flipping `strip_date_prefix` changes the join key.
 function applyCriteriaToLoadedData() {
-  if (!state.rows.length) return;
+  if (!state.metaCurrent || !state.metaCurrent.length) return;
   const ws = state.config?.window_start_ms;
   const we = state.config?.window_end_ms;
   state.config = readConfig();
   state.config.window_start_ms = ws;
   state.config.window_end_ms   = we;
+  // Rebuild from cached responses so any join-key change (e.g. strip-date
+  // toggle) takes effect.
+  state.rows = buildRows(state.metaCurrent, state.metaPrior || [], state.shopifyRaw);
   state.benchmarks = computeBenchmarks(state.rows, state.config);
   for (const r of state.rows) {
     const result = assignBucket(r, state.benchmarks, state.config);
@@ -1505,6 +1510,7 @@ function applyCriteriaToLoadedData() {
     r.secondary_flags = result.secondary;
     r.reasons = result.reasons;
   }
+  populateFilters();
   renderTiles();
   renderTable();
   renderInsufficient();
@@ -1551,9 +1557,13 @@ async function loadData() {
     // Stash the active window on config so rules (e.g. FRESH_CREATIVE) can use it.
     state.config.window_start_ms = Date.parse(since + 'T00:00:00Z');
     state.config.window_end_ms   = Date.parse(until + 'T23:59:59Z');
-    state.shopifyRaw = shopData.sessions || null;          // for the why-no-Shopify diagnostic
+    // Cache raw responses so Save & apply can rebuild rows when the join-key
+    // toggle (strip_date_prefix) flips, without re-fetching from Meta/Shopify.
+    state.metaCurrent    = metaData.current || [];
+    state.metaPrior      = metaData.prior   || [];
+    state.shopifyRaw     = shopData.sessions || null;       // for the why-no-Shopify diagnostic
     state.shopifyQueries = shopData.queries || [];          // for the diagnostic to surface the literal query
-    state.rows = buildRows(metaData.current || [], metaData.prior || [], shopData.sessions);
+    state.rows = buildRows(state.metaCurrent, state.metaPrior, state.shopifyRaw);
     state.benchmarks = computeBenchmarks(state.rows, state.config);
 
     // Bucket each row
