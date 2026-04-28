@@ -1226,14 +1226,19 @@ VISUALIZE conversion_rate TYPE table`;
     const cmpISessTot    = idx(cmpCols, 'sessions__totals');
     const cmpICvrTot     = idx(cmpCols, 'conversion_rate__totals');
 
-    // Index compare rows
+    // Index compare rows. ShopifyQL's `WITH TOTALS` doesn't emit a separate
+    // empty-dimension row — it adds `__totals` columns to every data row.
+    // Read the grand totals from the first row's `__totals` columns and skip
+    // the search for a totals row.
     const cmpMap = new Map();
-    let cmpTotals = null;
+    const cmpTotals = compare.rows.length > 0
+      ? toArray(compare.rows[0], cmpColNames)
+      : null;
     for (const row of compare.rows) {
       const arr = toArray(row, cmpColNames);
       const c = String(arr[cmpICampaign] ?? '').trim();
       const l = String(arr[cmpILp]       ?? '').trim();
-      if (!c && !l) { cmpTotals = arr; continue; }
+      if (!c && !l) continue;
       cmpMap.set(c + '||' + l, arr);
     }
 
