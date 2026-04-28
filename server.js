@@ -1200,9 +1200,19 @@ VISUALIZE conversion_rate TYPE table`;
     //
     // ShopifyQL can return rows as either arrays OR objects keyed by column
     // name. Normalize to arrays before merging so we can spread + append.
+    if (!main || !Array.isArray(main.rows) || !Array.isArray(main.columns)) {
+      throw new Error('Main Shopify response missing rows/columns array (got ' + typeof main + ')');
+    }
+    if (!compare || !Array.isArray(compare.rows) || !Array.isArray(compare.columns)) {
+      throw new Error('Compare Shopify response missing rows/columns array (got ' + typeof compare + ')');
+    }
     const mainColNames = main.columns.map(c => c.name);
     const cmpColNames  = compare.columns.map(c => c.name);
-    const toArray = (row, names) => Array.isArray(row) ? row : names.map(n => row?.[n]);
+    const toArray = (row, names) => {
+      if (Array.isArray(row)) return row;
+      if (row && typeof row === 'object') return names.map(n => row[n]);
+      return [];                                // unknown shape — degrade gracefully
+    };
 
     const cols = mainColNames.map(n => (n || '').toLowerCase());
     const cmpCols = cmpColNames.map(n => (n || '').toLowerCase());
