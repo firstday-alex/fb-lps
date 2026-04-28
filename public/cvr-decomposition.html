@@ -1,0 +1,1321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CVR Decomposition · Rate / Mix / Entry / Exit</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --fb-blue: #1877f2;
+      --fb-blue-dark: #166fe5;
+      --bg: #f0f2f5;
+      --surface: #fff;
+      --text-primary: #1c1e21;
+      --text-secondary: #65676b;
+      --border: #dddfe2;
+      --positive: #1a7f37;
+      --positive-bg: #dcfce7;
+      --negative: #c0392b;
+      --negative-bg: #fee2e2;
+      --neutral-bg: #e4e6eb;
+      --shadow: 0 1px 3px rgba(0,0,0,0.12);
+      --radius: 8px;
+      --c-rate:  #1877f2;
+      --c-mix:   #7c3aed;
+      --c-entry: #f59e0b;
+      --c-exit:  #ef4444;
+      --amber: #d97706;
+      --amber-bg: #fef3c7;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text-primary);
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    /* Header */
+    header {
+      background: var(--fb-blue);
+      color: white;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .header__back {
+      color: rgba(255,255,255,0.85);
+      text-decoration: none;
+      font-size: 0.875rem;
+      border: 1px solid rgba(255,255,255,0.3);
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+    }
+    .header__back:hover { background: rgba(255,255,255,0.15); color: white; }
+    header h1 { font-size: 1.2rem; font-weight: 700; }
+    header p { font-size: 0.8rem; opacity: 0.75; }
+
+    /* Picker screen */
+    #picker-screen {
+      max-width: 640px;
+      margin: 60px auto;
+      padding: 0 24px;
+    }
+    .picker-card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 28px 32px;
+    }
+    .picker-card h2 { font-size: 1.1rem; margin-bottom: 6px; }
+    .picker-card .lede { font-size: 0.86rem; color: var(--text-secondary); margin-bottom: 20px; }
+
+    .field-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px 16px;
+      margin-bottom: 16px;
+    }
+    .field-grid .full { grid-column: 1 / -1; }
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .field label {
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-secondary);
+    }
+    .field input {
+      padding: 7px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 0.88rem;
+      font-family: inherit;
+    }
+    .field input:focus {
+      outline: none;
+      border-color: var(--fb-blue);
+      box-shadow: 0 0 0 2px rgba(24,119,242,0.15);
+    }
+    .period-block {
+      grid-column: 1 / -1;
+      padding: 12px 14px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: #f9fafc;
+    }
+    .period-block h3 {
+      font-size: 0.74rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-secondary);
+      margin-bottom: 8px;
+    }
+    .period-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .picker-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 6px;
+    }
+    .btn-primary {
+      flex: 1;
+      padding: 12px 18px;
+      background: #96bf48;
+      color: #fff;
+      border: none;
+      border-radius: var(--radius);
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-primary:hover { background: #7ea93e; }
+    .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+    .btn-preset {
+      padding: 10px 12px;
+      background: var(--surface);
+      color: var(--text-secondary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn-preset:hover { background: var(--bg); color: var(--text-primary); }
+    .picker-status {
+      margin-top: 12px;
+      font-size: 0.84rem;
+      color: var(--text-secondary);
+      min-height: 1.4em;
+    }
+    .picker-status.error { color: var(--negative); }
+    .picker-status.warn  { color: var(--amber); }
+    .threshold-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.78rem;
+      color: var(--text-secondary);
+    }
+    .threshold-row input { width: 80px; padding: 5px 8px; }
+
+    /* Results */
+    #results-screen { display: none; }
+    .results-wrap {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .top-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .top-bar__info { font-size: 0.82rem; color: var(--text-secondary); }
+    .top-bar__info strong { color: var(--text-primary); }
+    .btn-reset {
+      font-size: 0.82rem;
+      padding: 6px 14px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--surface);
+      cursor: pointer;
+      color: var(--text-secondary);
+    }
+    .btn-reset:hover { background: var(--bg); }
+
+    .card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 18px 20px;
+    }
+
+    /* Headline */
+    .headline {
+      display: flex;
+      gap: 24px;
+      align-items: baseline;
+      flex-wrap: wrap;
+    }
+    .headline__big {
+      font-size: 2.2rem;
+      font-weight: 700;
+      line-height: 1;
+    }
+    .headline__big.up   { color: var(--positive); }
+    .headline__big.down { color: var(--negative); }
+    .headline__sub { font-size: 0.88rem; color: var(--text-secondary); }
+    .headline__sub strong { color: var(--text-primary); }
+
+    .recon-badge {
+      margin-left: auto;
+      font-size: 0.75rem;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-weight: 600;
+    }
+    .recon-ok   { background: var(--positive-bg); color: var(--positive); }
+    .recon-warn { background: var(--amber-bg);    color: var(--amber); }
+    .recon-bad  { background: var(--negative-bg); color: var(--negative); }
+
+    /* Component cards (the four buckets) */
+    .components {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+    }
+    @media (max-width: 800px) { .components { grid-template-columns: repeat(2, 1fr); } }
+    .comp-card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 14px 16px;
+      cursor: pointer;
+      border: 2px solid transparent;
+      transition: border-color 0.15s, transform 0.15s;
+    }
+    .comp-card:hover  { transform: translateY(-1px); }
+    .comp-card.active { border-color: var(--fb-blue); }
+    .comp-card__head {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin-bottom: 8px;
+    }
+    .comp-card__dot {
+      width: 10px; height: 10px; border-radius: 50%;
+    }
+    .comp-card__title {
+      font-size: 0.78rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.05em;
+      color: var(--text-secondary);
+    }
+    .comp-card__bp {
+      font-size: 1.4rem;
+      font-weight: 700;
+      line-height: 1.05;
+    }
+    .comp-card__bp.pos { color: var(--positive); }
+    .comp-card__bp.neg { color: var(--negative); }
+    .comp-card__pct {
+      font-size: 0.72rem;
+      color: var(--text-secondary);
+      margin-top: 2px;
+    }
+    .comp-card__count {
+      font-size: 0.7rem;
+      color: var(--text-secondary);
+      margin-top: 4px;
+    }
+
+    /* Stacked bar */
+    .stacked-bar-wrap { padding: 16px 20px; }
+    .stacked-bar-wrap h3 {
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-secondary);
+      margin-bottom: 10px;
+    }
+    .stacked-bar {
+      position: relative;
+      height: 38px;
+      border-radius: 6px;
+      overflow: hidden;
+      background: var(--neutral-bg);
+      display: flex;
+    }
+    .stacked-bar__seg {
+      height: 100%;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-size: 0.74rem;
+      font-weight: 700;
+      transition: opacity 0.15s, filter 0.15s;
+      overflow: hidden;
+      white-space: nowrap;
+      padding: 0 4px;
+    }
+    .stacked-bar__seg:hover { filter: brightness(1.1); }
+    .stacked-bar__seg.dim    { opacity: 0.35; }
+    .stacked-bar__zero {
+      position: absolute;
+      top: 0; bottom: 0;
+      width: 2px;
+      background: rgba(0,0,0,0.4);
+      pointer-events: none;
+    }
+    .stacked-bar__legend {
+      display: flex;
+      gap: 14px;
+      margin-top: 8px;
+      flex-wrap: wrap;
+      font-size: 0.78rem;
+      color: var(--text-secondary);
+    }
+    .legend-dot {
+      display: inline-block;
+      width: 10px; height: 10px; border-radius: 50%;
+      margin-right: 5px;
+      vertical-align: middle;
+    }
+
+    /* Drill-down table */
+    .drill-card { padding: 18px 20px; }
+    .drill-card h3 {
+      font-size: 0.96rem; font-weight: 700; margin-bottom: 4px;
+    }
+    .drill-card__sub {
+      font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 12px;
+    }
+    .drill-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+    }
+    .drill-table th {
+      text-align: left;
+      padding: 8px 10px;
+      font-size: 0.68rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-secondary);
+      border-bottom: 2px solid var(--border);
+      white-space: nowrap;
+      cursor: pointer;
+      user-select: none;
+    }
+    .drill-table th.r { text-align: right; }
+    .drill-table th:hover { color: var(--fb-blue); }
+    .drill-table th.active { color: var(--fb-blue); }
+    .drill-table td {
+      padding: 9px 10px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+    .drill-table td.r { text-align: right; font-variant-numeric: tabular-nums; }
+    .drill-table td.ad-name {
+      max-width: 380px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-family: ui-monospace, SF Mono, Menlo, monospace;
+      font-size: 0.74rem;
+    }
+    .drill-table tbody tr:hover { background: #f7f9ff; }
+    .drill-table .pos { color: var(--positive); font-weight: 600; }
+    .drill-table .neg { color: var(--negative); font-weight: 600; }
+    .drill-table tfoot td {
+      padding: 9px 10px;
+      font-weight: 700;
+      background: var(--bg);
+      border-top: 2px solid var(--border);
+    }
+    .drill-table tfoot td.r { text-align: right; }
+
+    .drill-empty {
+      text-align: center;
+      color: var(--text-secondary);
+      padding: 24px;
+      font-size: 0.86rem;
+    }
+
+    /* Token chips on drill rows */
+    .ad-tokens {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 4px;
+    }
+    .ad-token {
+      font-size: 0.66rem;
+      padding: 1px 6px;
+      background: #eef3ff;
+      color: var(--fb-blue);
+      border-radius: 3px;
+      font-family: ui-monospace, SF Mono, Menlo, monospace;
+    }
+    .ad-token__k { opacity: 0.7; }
+
+    /* Debug panel */
+    .debug-link {
+      font-size: 0.78rem;
+      color: var(--fb-blue);
+      cursor: pointer;
+      text-decoration: underline;
+    }
+    .debug-panel {
+      display: none;
+      margin-top: 10px;
+      padding: 12px;
+      background: #1c1e21;
+      color: #c8d3e1;
+      border-radius: var(--radius);
+      font-family: ui-monospace, SF Mono, Menlo, monospace;
+      font-size: 0.74rem;
+      max-height: 360px;
+      overflow: auto;
+      white-space: pre;
+    }
+    .debug-panel.open { display: block; }
+
+    .hidden { display: none !important; }
+
+    /* Loading spinner */
+    .spinner {
+      display: inline-block;
+      width: 14px; height: 14px;
+      border: 2px solid rgba(0,0,0,0.1);
+      border-top-color: var(--fb-blue);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+<header>
+  <a class="header__back" href="/">&#8592; Ads Viewer</a>
+  <div>
+    <h1>CVR Decomposition</h1>
+    <p>Rate / Mix / Entry / Exit attribution for a UTM slice across two periods</p>
+  </div>
+</header>
+
+<!-- ───────────────────────────── PICKER ───────────────────────────── -->
+<div id="picker-screen">
+  <div class="picker-card">
+    <h2>Slice picker</h2>
+    <p class="lede">
+      Decompose a CVR change into four ad-level causes:
+      <strong>Rate</strong> (continuing ads' own CVR shifted),
+      <strong>Mix</strong> (continuing ads' session share shifted),
+      <strong>Entry</strong> (new ads launched in period&nbsp;B),
+      <strong>Exit</strong> (ads that ran in A but not B).
+    </p>
+
+    <div class="field-grid">
+      <div class="field">
+        <label>utm_source</label>
+        <input type="text" id="f-source" value="facebook">
+      </div>
+      <div class="field">
+        <label>utm_medium</label>
+        <input type="text" id="f-medium" value="paid_social">
+      </div>
+      <div class="field full">
+        <label>landing_page_path contains <span style="font-weight:400;color:var(--text-secondary);text-transform:none;letter-spacing:normal">(substring; leave blank for whole slice)</span></label>
+        <input type="text" id="f-lp" placeholder="e.g. /pages/tdk-behind-the-science-lp">
+      </div>
+
+      <div class="period-block">
+        <h3>Period A · before</h3>
+        <div class="period-row">
+          <div class="field"><label>start</label><input type="date" id="a-start"></div>
+          <div class="field"><label>end</label><input type="date" id="a-end"></div>
+        </div>
+      </div>
+
+      <div class="period-block">
+        <h3>Period B · after</h3>
+        <div class="period-row">
+          <div class="field"><label>start</label><input type="date" id="b-start"></div>
+          <div class="field"><label>end</label><input type="date" id="b-end"></div>
+        </div>
+      </div>
+
+      <div class="full threshold-row">
+        <label for="f-threshold" style="font-weight:700;text-transform:uppercase;font-size:0.7rem;letter-spacing:0.05em">Continuing threshold</label>
+        <input type="number" id="f-threshold" value="100" min="1" step="10">
+        <span>sessions in <em>each</em> period required to count as a continuing ad</span>
+      </div>
+    </div>
+
+    <div class="picker-actions">
+      <button class="btn-preset" id="btn-preset-tdk" title="Load the TDK March vs April example from the PRD">↺ TDK Mar→Apr example</button>
+      <button class="btn-primary" id="btn-run">Run decomposition</button>
+    </div>
+    <div class="picker-status" id="picker-status"></div>
+  </div>
+</div>
+
+<!-- ───────────────────────────── RESULTS ──────────────────────────── -->
+<div id="results-screen">
+  <div class="results-wrap">
+
+    <div class="top-bar">
+      <div class="top-bar__info" id="top-bar-info"></div>
+      <div>
+        <span class="debug-link" id="debug-toggle">show debug</span>
+        &nbsp;·&nbsp;
+        <span class="debug-link" id="debug-copy">copy debug payload</span>
+        &nbsp;·&nbsp;
+        <button class="btn-reset" id="btn-back">&#8592; New query</button>
+      </div>
+    </div>
+
+    <pre class="debug-panel" id="debug-panel"></pre>
+
+    <!-- Headline -->
+    <div class="card" id="headline-card"></div>
+
+    <!-- Four component KPIs -->
+    <div class="components" id="components"></div>
+
+    <!-- Stacked bar -->
+    <div class="card stacked-bar-wrap" id="stacked-bar-card"></div>
+
+    <!-- Drill-down -->
+    <div class="card drill-card" id="drill-card"></div>
+
+  </div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────────────────────────────
+// CONSTANTS
+// ─────────────────────────────────────────────────────────────────────
+const COMP_META = {
+  rate:  { label: 'Rate',  color: 'var(--c-rate)',  desc: 'Continuing ads — own CVR shifted between periods.' },
+  mix:   { label: 'Mix',   color: 'var(--c-mix)',   desc: 'Continuing ads — session share shifted between high- and low-CVR ads.' },
+  entry: { label: 'Entry', color: 'var(--c-entry)', desc: 'Ads launched in period B (or below threshold in A) compared to the continuing baseline.' },
+  exit:  { label: 'Exit',  color: 'var(--c-exit)',  desc: 'Ads that ran in A but not B (or fell below threshold in B) compared to the continuing baseline.' },
+};
+
+// Skip post-conversion landing pages — they're not a real ad destination.
+const POST_CONVERSION_LP = /^\/(checkout|checkouts|orders|payment-methods|gift_cards)(\/|$)/i;
+
+// ─────────────────────────────────────────────────────────────────────
+// DEBUG LOGGER
+// ─────────────────────────────────────────────────────────────────────
+// Captures everything to both the console AND an in-page debug panel so
+// we can debug in production without devtools open.
+const _debugLog = [];
+function dbg(label, ...args) {
+  const ts = new Date().toISOString().slice(11, 23);
+  console.log(`[cvr-decomp ${ts}]`, label, ...args);
+  try {
+    _debugLog.push(`[${ts}] ${label} ${args.map(a => {
+      if (a == null) return String(a);
+      if (typeof a === 'string') return a;
+      try { return JSON.stringify(a); } catch { return String(a); }
+    }).join(' ')}`);
+    const panel = document.getElementById('debug-panel');
+    if (panel) panel.textContent = _debugLog.slice(-200).join('\n');
+  } catch (e) { /* never let logging break the app */ }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────────────────────────────
+function normCvr(v) {
+  // ShopifyQL `conversion_rate` comes back as either a fraction (0.015) or
+  // a percentage (1.5). Normalise to fraction.
+  if (v == null || isNaN(v)) return 0;
+  return v > 1 ? v / 100 : v;
+}
+function fmtPct(fraction, places = 2) {
+  if (fraction == null || isNaN(fraction)) return '—';
+  return (fraction * 100).toFixed(places) + '%';
+}
+function fmtBp(fraction, places = 0) {
+  // 1 basis point = 0.01% = 0.0001 fraction.
+  if (fraction == null || isNaN(fraction)) return '—';
+  const bp = fraction * 10000;
+  const sign = bp >= 0 ? '+' : '';
+  return `${sign}${bp.toFixed(places)} bp`;
+}
+function fmtInt(n) {
+  if (n == null || isNaN(n)) return '—';
+  return Math.round(n).toLocaleString();
+}
+function todayMinusDays(d) {
+  const dt = new Date();
+  dt.setUTCDate(dt.getUTCDate() - d);
+  return dt.toISOString().slice(0, 10);
+}
+function firstOfThisMonth() {
+  const dt = new Date();
+  return dt.toISOString().slice(0, 7) + '-01';
+}
+function firstOfPrevMonth() {
+  const dt = new Date();
+  dt.setUTCMonth(dt.getUTCMonth() - 1);
+  return dt.toISOString().slice(0, 7) + '-01';
+}
+function lastDayOfPrevMonth() {
+  const dt = new Date();
+  dt.setUTCDate(0);
+  return dt.toISOString().slice(0, 10);
+}
+
+// Same convention as meta-cvr-impact.html — parses
+//   batch:multi#0161a_stage:MOFU_url:HOMEPAGE_creator:foo_…
+// into {batch, stage, url, creator, …}. Unkeyed segments become _pos<i>.
+function parseAdTokens(adName) {
+  const out = {};
+  if (!adName) return out;
+  for (const seg of adName.split('_')) {
+    if (!seg) continue;
+    const colon = seg.indexOf(':');
+    if (colon < 0) continue;
+    const k = seg.slice(0, colon).trim().toLowerCase();
+    const v = seg.slice(colon + 1).trim();
+    if (k && v && out[k] == null) out[k] = v;
+  }
+  return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// SHOPIFY QL ROW PARSER
+// ─────────────────────────────────────────────────────────────────────
+// Returns Map(key → { ad, lp, sessions, cvr, orders }) where key is
+// `${ad}||${lp}`. `orders` is a derived integer = round(sessions × cvr).
+function parsePeriod(period, label, lpFilter) {
+  const { columns, rows } = period;
+  if (!columns || !rows) {
+    dbg(`parse(${label}) NO ROWS`);
+    return new Map();
+  }
+  const colNames = columns.map(c => (c.name || '').toLowerCase());
+  const iAd   = colNames.findIndex(s => s === 'utm_content');
+  const iLp   = colNames.findIndex(s => s === 'landing_page_path');
+  const iSess = colNames.findIndex(s => s === 'sessions');
+  const iCvr  = colNames.findIndex(s => s === 'conversion_rate');
+  if (iAd < 0 || iSess < 0 || iCvr < 0) {
+    dbg(`parse(${label}) MISSING COLUMNS`, colNames);
+    return new Map();
+  }
+
+  const getVal = (row, idx) => Array.isArray(row) ? row[idx] : row[columns[idx].name];
+  const lpFilterLower = (lpFilter || '').trim().toLowerCase();
+
+  const map = new Map();
+  let raw = 0, kept = 0, droppedTotals = 0, droppedPostConv = 0, droppedLp = 0, droppedEmpty = 0;
+  for (const row of rows) {
+    raw++;
+    const ad = String(getVal(row, iAd) ?? '').trim();
+    const lp = String(getVal(row, iLp) ?? '').trim();
+    if (!ad && !lp) { droppedTotals++; continue; }
+    if (!ad) { droppedEmpty++; continue; }
+    if (POST_CONVERSION_LP.test(lp)) { droppedPostConv++; continue; }
+    if (lpFilterLower && !lp.toLowerCase().includes(lpFilterLower)) { droppedLp++; continue; }
+
+    const sessions = Math.round(parseFloat(getVal(row, iSess)) || 0);
+    const cvr      = normCvr(parseFloat(getVal(row, iCvr)) || 0);
+    if (sessions <= 0) continue;
+
+    const key = ad + '||' + lp;
+    // ShopifyQL groups should already be unique by (utm_content,
+    // landing_page_path) but defend against accidental duplicates.
+    const prev = map.get(key);
+    if (prev) {
+      const totalSess = prev.sessions + sessions;
+      const totalOrd  = prev.orders + Math.round(sessions * cvr);
+      map.set(key, {
+        ad, lp,
+        sessions: totalSess,
+        cvr: totalSess > 0 ? totalOrd / totalSess : 0,
+        orders: totalOrd,
+      });
+    } else {
+      map.set(key, { ad, lp, sessions, cvr, orders: Math.round(sessions * cvr) });
+    }
+    kept++;
+  }
+  dbg(`parse(${label}) raw=${raw} kept=${kept} totals=${droppedTotals} postConv=${droppedPostConv} lpFilter=${droppedLp} emptyAd=${droppedEmpty} unique=${map.size}`);
+  return map;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// AGGREGATE LP ROWS → ONE ROW PER ad
+// ─────────────────────────────────────────────────────────────────────
+// The decomposition treats "one ad" = one utm_content. After the LP filter
+// we sum sessions and orders across all surviving LPs for that ad.
+function collapseToAd(perLpMap, label) {
+  const map = new Map();   // ad → { sessions, orders, cvr, lps:Set }
+  for (const r of perLpMap.values()) {
+    const key = r.ad;
+    const prev = map.get(key) || { ad: r.ad, sessions: 0, orders: 0, lps: new Set() };
+    prev.sessions += r.sessions;
+    prev.orders   += r.orders;
+    prev.lps.add(r.lp);
+    map.set(key, prev);
+  }
+  for (const v of map.values()) {
+    v.cvr = v.sessions > 0 ? v.orders / v.sessions : 0;
+  }
+  dbg(`collapseToAd(${label}) ads=${map.size} totalSessions=${[...map.values()].reduce((s, x) => s + x.sessions, 0)}`);
+  return map;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// FOUR-COMPONENT DECOMPOSITION (Rate / Mix / Entry / Exit)
+// ─────────────────────────────────────────────────────────────────────
+function decompose(adsA, adsB, threshold) {
+  // categorise every ad we know about
+  const allKeys = new Set([...adsA.keys(), ...adsB.keys()]);
+  const continuing = [], entries = [], exits = [];
+  for (const k of allKeys) {
+    const a = adsA.get(k);
+    const b = adsB.get(k);
+    const aOk = a && a.sessions >= threshold;
+    const bOk = b && b.sessions >= threshold;
+    if (aOk && bOk) continuing.push({ ad: k, a, b });
+    else if (bOk)   entries.push({ ad: k, b, aSess: a ? a.sessions : 0 });
+    else if (aOk)   exits.push({ ad: k, a, bSess: b ? b.sessions : 0 });
+    // else: below threshold in both periods — treat as noise, drop entirely
+  }
+
+  // Slice totals (used for weights). Important: weights are computed across
+  // the whole slice (continuing + entries/exits) so reconciliation works.
+  const totalA = continuing.reduce((s, x) => s + x.a.sessions, 0)
+               + exits.reduce((s, x) => s + x.a.sessions, 0);
+  const totalB = continuing.reduce((s, x) => s + x.b.sessions, 0)
+               + entries.reduce((s, x) => s + x.b.sessions, 0);
+
+  // Slice-level CVRs. Use ORDER counts so this is a true session-weighted
+  // CVR, not an average of per-ad rates.
+  const ordersA = continuing.reduce((s, x) => s + x.a.orders, 0)
+                + exits.reduce((s, x) => s + x.a.orders, 0);
+  const ordersB = continuing.reduce((s, x) => s + x.b.orders, 0)
+                + entries.reduce((s, x) => s + x.b.orders, 0);
+  const cvrA = totalA > 0 ? ordersA / totalA : 0;
+  const cvrB = totalB > 0 ? ordersB / totalB : 0;
+  const dCvr = cvrB - cvrA;
+
+  // Continuing-ads baseline CVR (session-weighted across BOTH periods)
+  const contSess   = continuing.reduce((s, x) => s + x.a.sessions + x.b.sessions, 0);
+  const contOrders = continuing.reduce((s, x) => s + x.a.orders   + x.b.orders,   0);
+  const cvrContAvg = contSess > 0 ? contOrders / contSess : 0;
+
+  dbg('decompose totals', {
+    threshold,
+    continuing: continuing.length, entries: entries.length, exits: exits.length,
+    sessionsA: totalA, sessionsB: totalB,
+    ordersA, ordersB,
+    cvrA, cvrB, dCvr, cvrContAvg,
+  });
+
+  // Per-ad contributions
+  const rateContribs = continuing.map(({ ad, a, b }) => {
+    const wA = totalA > 0 ? a.sessions / totalA : 0;
+    const wB = totalB > 0 ? b.sessions / totalB : 0;
+    return {
+      ad,
+      bp: wA * (b.cvr - a.cvr),
+      sessA: a.sessions, sessB: b.sessions,
+      cvrA: a.cvr, cvrB: b.cvr,
+      ordA: a.orders, ordB: b.orders,
+      wA, wB,
+      lps: [...new Set([...(a.lps || []), ...(b.lps || [])])],
+    };
+  });
+  const mixContribs = continuing.map(({ ad, a, b }) => {
+    const wA = totalA > 0 ? a.sessions / totalA : 0;
+    const wB = totalB > 0 ? b.sessions / totalB : 0;
+    return {
+      ad,
+      bp: (wB - wA) * a.cvr,
+      sessA: a.sessions, sessB: b.sessions,
+      cvrA: a.cvr, cvrB: b.cvr,
+      ordA: a.orders, ordB: b.orders,
+      wA, wB,
+      lps: [...new Set([...(a.lps || []), ...(b.lps || [])])],
+    };
+  });
+  const entryContribs = entries.map(({ ad, b, aSess }) => {
+    const wB = totalB > 0 ? b.sessions / totalB : 0;
+    return {
+      ad,
+      bp: wB * (b.cvr - cvrContAvg),
+      sessA: aSess, sessB: b.sessions,
+      cvrA: null, cvrB: b.cvr,
+      ordA: 0, ordB: b.orders,
+      wA: 0, wB,
+      lps: [...(b.lps || [])],
+    };
+  });
+  const exitContribs = exits.map(({ ad, a, bSess }) => {
+    const wA = totalA > 0 ? a.sessions / totalA : 0;
+    return {
+      ad,
+      bp: wA * (cvrContAvg - a.cvr),
+      sessA: a.sessions, sessB: bSess,
+      cvrA: a.cvr, cvrB: null,
+      ordA: a.orders, ordB: 0,
+      wA, wB: 0,
+      lps: [...(a.lps || [])],
+    };
+  });
+
+  const sumRate  = rateContribs.reduce((s, x) => s + x.bp, 0);
+  const sumMix   = mixContribs.reduce((s, x) => s + x.bp, 0);
+  const sumEntry = entryContribs.reduce((s, x) => s + x.bp, 0);
+  const sumExit  = exitContribs.reduce((s, x) => s + x.bp, 0);
+  const sum      = sumRate + sumMix + sumEntry + sumExit;
+  const reconDriftBp = (sum - dCvr) * 10000;
+
+  dbg('decompose components (bp)', {
+    rate:  +(sumRate  * 10000).toFixed(2),
+    mix:   +(sumMix   * 10000).toFixed(2),
+    entry: +(sumEntry * 10000).toFixed(2),
+    exit:  +(sumExit  * 10000).toFixed(2),
+    sum:   +(sum      * 10000).toFixed(2),
+    deltaCvr: +(dCvr  * 10000).toFixed(2),
+    reconDriftBp: +reconDriftBp.toFixed(3),
+  });
+
+  return {
+    threshold,
+    totals: { totalA, totalB, ordersA, ordersB, cvrA, cvrB, dCvr, cvrContAvg },
+    counts: { continuing: continuing.length, entries: entries.length, exits: exits.length },
+    components: {
+      rate:  { sum: sumRate,  contribs: rateContribs  },
+      mix:   { sum: sumMix,   contribs: mixContribs   },
+      entry: { sum: sumEntry, contribs: entryContribs },
+      exit:  { sum: sumExit,  contribs: exitContribs  },
+    },
+    reconDriftBp,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// RENDERERS
+// ─────────────────────────────────────────────────────────────────────
+let _state = null;          // last decomposition result
+let _activeComponent = null;  // 'rate' | 'mix' | 'entry' | 'exit' | null
+let _drillSort = { key: 'bpAbs', dir: 'desc' };
+let _lastResponse = null;   // raw /api/cvr-decomp-data response (for debug copy)
+
+function renderTopBar(meta) {
+  const { source, medium, lp, periodA, periodB, recon, capped, queryA, queryB } = meta;
+  const lpHtml = lp ? ` · LP <strong>~${lp}</strong>` : '';
+  const reconBp = Math.abs(recon).toFixed(2);
+  const reconClass = Math.abs(recon) <= 2 ? 'recon-ok' : (Math.abs(recon) <= 10 ? 'recon-warn' : 'recon-bad');
+  const reconLabel = Math.abs(recon) <= 2 ? '✓ reconciles' : '⚠ drift';
+
+  const cappedHtml = (capped?.period_a || capped?.period_b)
+    ? `<span class="recon-badge recon-warn" title="Hit the 5000-row cap from ShopifyQL on at least one period. Long-tail ads may be missing — narrow the slice (e.g. add a landing-page filter) for full coverage.">⚠ row cap${capped.period_a && capped.period_b ? ' (A & B)' : capped.period_a ? ' (A)' : ' (B)'}</span>`
+    : '';
+
+  // Stash the queries so the "show ShopifyQL" link can pop them up.
+  document.getElementById('top-bar-info').dataset.queryA = queryA || '';
+  document.getElementById('top-bar-info').dataset.queryB = queryB || '';
+
+  document.getElementById('top-bar-info').innerHTML =
+    `<strong>${source}</strong> / <strong>${medium}</strong>${lpHtml} · ` +
+    `<strong>A</strong> ${periodA} <em>vs</em> <strong>B</strong> ${periodB} ` +
+    `<span class="recon-badge ${reconClass}" title="Sum of components vs ΔCVR. Goal: ≤ 2 bp. >2 bp typically indicates the Mix×Rate interaction term that this Laspeyres-style decomposition drops.">${reconLabel} ${reconBp} bp</span> ` +
+    cappedHtml +
+    ` <a href="#" id="show-ql-link" style="color:var(--fb-blue);font-size:0.78rem;margin-left:6px;text-decoration:underline">show ShopifyQL</a>`;
+
+  document.getElementById('show-ql-link').addEventListener('click', (e) => {
+    e.preventDefault();
+    alert('--- Period A ---\n' + (queryA || '(none)') + '\n\n--- Period B ---\n' + (queryB || '(none)'));
+  });
+}
+
+function renderHeadline(state) {
+  const { totals } = state;
+  const dir = totals.dCvr >= 0 ? 'up' : 'down';
+  const arrow = totals.dCvr >= 0 ? '↑' : '↓';
+  const html = `
+    <div class="headline">
+      <div>
+        <div class="headline__big ${dir}">${arrow} ${fmtBp(totals.dCvr, 1)}</div>
+        <div class="headline__sub" style="margin-top:4px">
+          ΔCVR · period&nbsp;A <strong>${fmtPct(totals.cvrA)}</strong>
+          → period&nbsp;B <strong>${fmtPct(totals.cvrB)}</strong>
+        </div>
+      </div>
+      <div class="headline__sub">
+        <div>Sessions A <strong>${fmtInt(totals.totalA)}</strong> → B <strong>${fmtInt(totals.totalB)}</strong></div>
+        <div>Orders   A <strong>${fmtInt(totals.ordersA)}</strong> → B <strong>${fmtInt(totals.ordersB)}</strong></div>
+        <div style="margin-top:4px;font-size:0.78rem">Continuing-ads avg CVR: <strong>${fmtPct(totals.cvrContAvg)}</strong></div>
+      </div>
+    </div>
+  `;
+  document.getElementById('headline-card').innerHTML = html;
+}
+
+function renderComponents(state) {
+  // Signed % of ΔCVR: positive when component pushes CVR in the same direction
+  // as the total move. Sums across all four to ~100% (modulo reconciliation
+  // drift). When |ΔCVR| is essentially zero we fall back to "n/a" since the
+  // ratio is undefined.
+  const dCvrBp = state.totals.dCvr * 10000;
+  const showPct = Math.abs(dCvrBp) >= 0.5;   // < 0.5 bp counts as "no movement"
+  const html = ['rate', 'mix', 'entry', 'exit'].map(key => {
+    const meta = COMP_META[key];
+    const sum  = state.components[key].sum;
+    const count = state.components[key].contribs.length;
+    const pctOfTotal = showPct ? (sum / state.totals.dCvr) * 100 : null;
+    const cls = sum >= 0 ? 'pos' : 'neg';
+    const active = _activeComponent === key ? 'active' : '';
+    const sign = sum >= 0 ? '+' : '';
+    const pctLabel = showPct
+      ? `${pctOfTotal >= 0 ? '+' : ''}${pctOfTotal.toFixed(0)}% of ΔCVR`
+      : 'n/a (ΔCVR ≈ 0)';
+    return `
+      <div class="comp-card ${active}" data-comp="${key}" title="${meta.desc}">
+        <div class="comp-card__head">
+          <div class="comp-card__dot" style="background:${meta.color}"></div>
+          <div class="comp-card__title">${meta.label}</div>
+        </div>
+        <div class="comp-card__bp ${cls}">${sign}${(sum * 10000).toFixed(1)} bp</div>
+        <div class="comp-card__pct">${pctLabel}</div>
+        <div class="comp-card__count">${count} ad${count === 1 ? '' : 's'}</div>
+      </div>
+    `;
+  }).join('');
+  document.getElementById('components').innerHTML = html;
+  document.querySelectorAll('.comp-card').forEach(el => {
+    el.addEventListener('click', () => selectComponent(el.dataset.comp));
+  });
+}
+
+function renderStackedBar(state) {
+  // Build absolute-magnitude segments for visual proportions; track the sign
+  // separately so negatives render to the left of zero.
+  const segs = ['rate', 'mix', 'entry', 'exit'].map(k => ({
+    key: k,
+    sum: state.components[k].sum,
+    abs: Math.abs(state.components[k].sum),
+    color: COMP_META[k].color,
+    label: COMP_META[k].label,
+  }));
+  const totalAbs = segs.reduce((s, x) => s + x.abs, 0) || 1e-9;
+
+  const segsHtml = segs.map(s => {
+    const w = (s.abs / totalAbs) * 100;
+    const dim = (_activeComponent && _activeComponent !== s.key) ? 'dim' : '';
+    const signLabel = s.sum >= 0 ? '+' : '';
+    return `<div class="stacked-bar__seg ${dim}" data-comp="${s.key}"
+              style="width:${w}%;background:${s.color}"
+              title="${s.label}: ${signLabel}${(s.sum * 10000).toFixed(1)} bp">
+              ${w >= 9 ? `${s.label} ${signLabel}${(s.sum * 10000).toFixed(0)}bp` : ''}
+            </div>`;
+  }).join('');
+
+  const legend = ['rate', 'mix', 'entry', 'exit'].map(k => `
+    <span><span class="legend-dot" style="background:${COMP_META[k].color}"></span>${COMP_META[k].label}</span>
+  `).join('');
+
+  document.getElementById('stacked-bar-card').innerHTML = `
+    <h3>Decomposition · width = |contribution|</h3>
+    <div class="stacked-bar">${segsHtml}</div>
+    <div class="stacked-bar__legend">${legend}<span style="margin-left:auto;color:var(--text-secondary)">click any segment to drill down</span></div>
+  `;
+  document.querySelectorAll('.stacked-bar__seg').forEach(el => {
+    el.addEventListener('click', () => selectComponent(el.dataset.comp));
+  });
+}
+
+function tokenChips(adName) {
+  const t = parseAdTokens(adName);
+  // Show the most useful keys first when present.
+  const order = ['url', 'stage', 'medium', 'style', 'angle', 'creator', 'wl', 'type', 'batch'];
+  const keys = order.filter(k => t[k]);
+  if (!keys.length) return '';
+  return `<div class="ad-tokens">${keys.map(k =>
+    `<span class="ad-token"><span class="ad-token__k">${k}:</span>${t[k]}</span>`
+  ).join('')}</div>`;
+}
+
+function renderDrill(state) {
+  const card = document.getElementById('drill-card');
+  if (!_activeComponent) {
+    card.innerHTML = `
+      <h3>Drill-down</h3>
+      <p class="drill-card__sub">Click a component above to see the ranked list of ads driving it.</p>
+    `;
+    return;
+  }
+  const meta = COMP_META[_activeComponent];
+  const contribs = state.components[_activeComponent].contribs.slice();
+  const sortKey = _drillSort.key;
+  const dir = _drillSort.dir === 'asc' ? 1 : -1;
+  contribs.sort((a, b) => {
+    const av = sortKey === 'bpAbs' ? Math.abs(a.bp)
+             : sortKey === 'bp'    ? a.bp
+             : sortKey === 'cvrDelta' ? ((a.cvrB || 0) - (a.cvrA || 0))
+             : a[sortKey] || 0;
+    const bv = sortKey === 'bpAbs' ? Math.abs(b.bp)
+             : sortKey === 'bp'    ? b.bp
+             : sortKey === 'cvrDelta' ? ((b.cvrB || 0) - (b.cvrA || 0))
+             : b[sortKey] || 0;
+    return (av < bv ? -1 : av > bv ? 1 : 0) * dir;
+  });
+
+  const totalBp = state.components[_activeComponent].sum * 10000;
+  const sumDir = totalBp >= 0 ? 'pos' : 'neg';
+
+  const arrow = (k) => sortKey === k ? (_drillSort.dir === 'asc' ? '↑' : '↓') : '';
+  const cls   = (k) => sortKey === k ? 'active' : '';
+
+  const empty = contribs.length === 0
+    ? `<div class="drill-empty">No ads in this bucket.</div>`
+    : '';
+
+  const rows = contribs.map(c => {
+    const bp = c.bp * 10000;
+    const bpCls = bp >= 0 ? 'pos' : 'neg';
+    const dCvr = (c.cvrA != null && c.cvrB != null) ? (c.cvrB - c.cvrA) : null;
+    const dCvrCell = dCvr == null
+      ? '<span style="color:var(--text-secondary)">—</span>'
+      : `<span class="${dCvr >= 0 ? 'pos' : 'neg'}">${fmtBp(dCvr, 0)}</span>`;
+    return `
+      <tr>
+        <td class="ad-name" title="${(c.ad || '').replace(/"/g, '&quot;')}">
+          ${c.ad || '<em>(unnamed)</em>'}
+          ${tokenChips(c.ad)}
+        </td>
+        <td class="r">${fmtInt(c.sessA)}</td>
+        <td class="r">${fmtInt(c.sessB)}</td>
+        <td class="r">${c.cvrA == null ? '—' : fmtPct(c.cvrA)}</td>
+        <td class="r">${c.cvrB == null ? '—' : fmtPct(c.cvrB)}</td>
+        <td class="r">${dCvrCell}</td>
+        <td class="r">${fmtInt(c.ordA)}</td>
+        <td class="r">${fmtInt(c.ordB)}</td>
+        <td class="r ${bpCls}">${bp >= 0 ? '+' : ''}${bp.toFixed(2)}</td>
+      </tr>
+    `;
+  }).join('');
+
+  card.innerHTML = `
+    <h3>${meta.label} · drill-down</h3>
+    <p class="drill-card__sub">
+      ${meta.desc}
+      Total: <strong class="${sumDir}">${totalBp >= 0 ? '+' : ''}${totalBp.toFixed(1)} bp</strong>
+      across ${contribs.length} ad${contribs.length === 1 ? '' : 's'}.
+    </p>
+    ${empty}
+    ${contribs.length ? `
+    <div style="overflow-x:auto">
+      <table class="drill-table">
+        <thead>
+          <tr>
+            <th data-sort="ad">Ad (utm_content) ${arrow('ad')}</th>
+            <th class="r ${cls('sessA')}" data-sort="sessA">Sess A ${arrow('sessA')}</th>
+            <th class="r ${cls('sessB')}" data-sort="sessB">Sess B ${arrow('sessB')}</th>
+            <th class="r ${cls('cvrA')}"  data-sort="cvrA">CVR A ${arrow('cvrA')}</th>
+            <th class="r ${cls('cvrB')}"  data-sort="cvrB">CVR B ${arrow('cvrB')}</th>
+            <th class="r ${cls('cvrDelta')}" data-sort="cvrDelta">ΔCVR ${arrow('cvrDelta')}</th>
+            <th class="r ${cls('ordA')}"  data-sort="ordA">Ord A ${arrow('ordA')}</th>
+            <th class="r ${cls('ordB')}"  data-sort="ordB">Ord B ${arrow('ordB')}</th>
+            <th class="r ${cls('bpAbs') || cls('bp')}" data-sort="bpAbs">bp impact ${arrow('bpAbs')}</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+        <tfoot>
+          <tr>
+            <td>Total</td>
+            <td class="r"></td><td class="r"></td>
+            <td class="r"></td><td class="r"></td><td class="r"></td>
+            <td class="r"></td><td class="r"></td>
+            <td class="r ${sumDir}">${totalBp >= 0 ? '+' : ''}${totalBp.toFixed(1)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    ` : ''}
+  `;
+  card.querySelectorAll('th[data-sort]').forEach(th => {
+    th.addEventListener('click', () => {
+      const k = th.dataset.sort;
+      if (_drillSort.key === k) {
+        _drillSort.dir = _drillSort.dir === 'asc' ? 'desc' : 'asc';
+      } else {
+        _drillSort.key = k;
+        _drillSort.dir = (k === 'ad') ? 'asc' : 'desc';
+      }
+      renderDrill(_state);
+    });
+  });
+}
+
+function selectComponent(key) {
+  _activeComponent = (_activeComponent === key) ? null : key;
+  dbg('selectComponent', _activeComponent);
+  renderComponents(_state);
+  renderStackedBar(_state);
+  renderDrill(_state);
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// PIPELINE
+// ─────────────────────────────────────────────────────────────────────
+async function runDecomposition() {
+  const btn    = document.getElementById('btn-run');
+  const status = document.getElementById('picker-status');
+  const source = document.getElementById('f-source').value.trim() || 'facebook';
+  const medium = document.getElementById('f-medium').value.trim() || 'paid_social';
+  const lp     = document.getElementById('f-lp').value.trim();
+  const aStart = document.getElementById('a-start').value;
+  const aEnd   = document.getElementById('a-end').value;
+  const bStart = document.getElementById('b-start').value;
+  const bEnd   = document.getElementById('b-end').value;
+  const threshold = Math.max(1, parseInt(document.getElementById('f-threshold').value, 10) || 100);
+
+  if (!aStart || !aEnd || !bStart || !bEnd) {
+    status.className = 'picker-status error';
+    status.textContent = 'All four period dates are required.';
+    return;
+  }
+  if (aStart > aEnd || bStart > bEnd) {
+    status.className = 'picker-status error';
+    status.textContent = 'Each period’s start must be on or before its end.';
+    return;
+  }
+
+  btn.disabled = true;
+  status.className = 'picker-status';
+  status.innerHTML = '<span class="spinner"></span>Querying Shopify…';
+  dbg('runDecomposition START', { source, medium, lp, aStart, aEnd, bStart, bEnd, threshold });
+
+  try {
+    const params = new URLSearchParams({
+      source, medium,
+      period_a_start: aStart, period_a_end: aEnd,
+      period_b_start: bStart, period_b_end: bEnd,
+    });
+    if (lp) params.set('lp_filter', lp);
+    const url = `/api/cvr-decomp-data?${params.toString()}`;
+    dbg('fetch', url);
+    const t0 = performance.now();
+    const resp = await fetch(url);
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${resp.status}`);
+    }
+    const data = await resp.json();
+    dbg(`response in ${(performance.now() - t0).toFixed(0)}ms`,
+        { rowsA: data.period_a?.rows?.length, rowsB: data.period_b?.rows?.length });
+
+    status.innerHTML = '<span class="spinner"></span>Decomposing…';
+
+    const perLpA = parsePeriod(data.period_a, 'A', lp);
+    const perLpB = parsePeriod(data.period_b, 'B', lp);
+    if (perLpA.size === 0 && perLpB.size === 0) {
+      status.className = 'picker-status warn';
+      status.textContent = 'No matching rows in either period. Check filters and date range.';
+      btn.disabled = false;
+      return;
+    }
+    // Degenerate case: only one period has data. Decomposition is still
+    // mathematically valid (period A's CVR is treated as 0), but the headline
+    // bp number will be enormous and misleading — surface it loudly.
+    if (perLpA.size === 0 || perLpB.size === 0) {
+      const empty = perLpA.size === 0 ? 'period A' : 'period B';
+      dbg(`⚠ ${empty} returned 0 ads after filter — decomposition will treat its CVR as 0`);
+    }
+    const adsA = collapseToAd(perLpA, 'A');
+    const adsB = collapseToAd(perLpB, 'B');
+
+    const result = decompose(adsA, adsB, threshold);
+    _state = result;
+    _activeComponent = null;
+    _drillSort = { key: 'bpAbs', dir: 'desc' };
+
+    // Surface reconciliation issues prominently.
+    if (Math.abs(result.reconDriftBp) > 2) {
+      dbg('⚠ reconciliation drift exceeds ±2bp', result.reconDriftBp);
+    }
+
+    renderTopBar({
+      source, medium, lp,
+      periodA: `${aStart}→${aEnd}`,
+      periodB: `${bStart}→${bEnd}`,
+      recon: result.reconDriftBp,
+      capped: data.capped,
+      queryA: data.period_a?.query,
+      queryB: data.period_b?.query,
+    });
+    // Stash the latest server response for the "copy debug payload" button.
+    _lastResponse = data;
+    renderHeadline(result);
+    renderComponents(result);
+    renderStackedBar(result);
+    renderDrill(result);
+
+    document.getElementById('picker-screen').style.display = 'none';
+    document.getElementById('results-screen').style.display = 'block';
+    btn.disabled = false;
+    status.className = 'picker-status';
+    status.textContent = '';
+  } catch (err) {
+    dbg('runDecomposition ERROR', err.message);
+    status.className = 'picker-status error';
+    status.textContent = err.message;
+    btn.disabled = false;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// WIRE UP
+// ─────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  // Defaults: previous full month vs the current month-to-date.
+  const aStart = firstOfPrevMonth();
+  const aEnd   = lastDayOfPrevMonth();
+  const bStart = firstOfThisMonth();
+  const bEnd   = todayMinusDays(0);
+  document.getElementById('a-start').value = aStart;
+  document.getElementById('a-end').value   = aEnd;
+  document.getElementById('b-start').value = bStart;
+  document.getElementById('b-end').value   = bEnd;
+
+  document.getElementById('btn-run').addEventListener('click', runDecomposition);
+  document.getElementById('btn-back').addEventListener('click', () => {
+    document.getElementById('results-screen').style.display = 'none';
+    document.getElementById('picker-screen').style.display  = 'block';
+  });
+  document.getElementById('btn-preset-tdk').addEventListener('click', () => {
+    document.getElementById('f-source').value = 'facebook';
+    document.getElementById('f-medium').value = 'paid_social';
+    document.getElementById('f-lp').value     = '/pages/tdk-behind-the-science-lp';
+    document.getElementById('a-start').value  = '2026-03-01';
+    document.getElementById('a-end').value    = '2026-03-31';
+    document.getElementById('b-start').value  = '2026-04-01';
+    document.getElementById('b-end').value    = '2026-04-30';
+    document.getElementById('f-threshold').value = '100';
+    dbg('TDK preset loaded');
+  });
+  document.getElementById('debug-toggle').addEventListener('click', () => {
+    document.getElementById('debug-panel').classList.toggle('open');
+  });
+  document.getElementById('debug-copy').addEventListener('click', async () => {
+    const payload = {
+      logs: _debugLog.slice(-200),
+      state_summary: _state ? {
+        threshold: _state.threshold,
+        totals: _state.totals,
+        counts: _state.counts,
+        component_sums_bp: {
+          rate:  +(_state.components.rate.sum  * 10000).toFixed(2),
+          mix:   +(_state.components.mix.sum   * 10000).toFixed(2),
+          entry: +(_state.components.entry.sum * 10000).toFixed(2),
+          exit:  +(_state.components.exit.sum  * 10000).toFixed(2),
+        },
+        recon_drift_bp: _state.reconDriftBp,
+      } : null,
+      response_meta: _lastResponse ? {
+        filter: _lastResponse.filter,
+        row_limit: _lastResponse.row_limit,
+        capped: _lastResponse.capped,
+        period_a_rows: _lastResponse.period_a?.rows?.length,
+        period_b_rows: _lastResponse.period_b?.rows?.length,
+        period_a_query: _lastResponse.period_a?.query,
+        period_b_query: _lastResponse.period_b?.query,
+      } : null,
+    };
+    const text = JSON.stringify(payload, null, 2);
+    try {
+      await navigator.clipboard.writeText(text);
+      dbg('debug payload copied to clipboard', `(${text.length} chars)`);
+      const el = document.getElementById('debug-copy');
+      const orig = el.textContent;
+      el.textContent = '✓ copied';
+      setTimeout(() => { el.textContent = orig; }, 1500);
+    } catch (err) {
+      dbg('clipboard write failed, dumping to console', err.message);
+      console.log('[cvr-decomp DEBUG PAYLOAD]\n' + text);
+      alert('Clipboard blocked — payload dumped to console (devtools).');
+    }
+  });
+
+  dbg('init complete', { aStart, aEnd, bStart, bEnd });
+});
+</script>
+</body>
+</html>

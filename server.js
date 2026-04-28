@@ -2030,6 +2030,146 @@ function extractAssetFeedUrl(assetFeedSpec) {
   return null;
 }
 
+// ─────────────────────────────────────────────
+// CVR DECOMPOSITION (Rate / Mix / Entry / Exit)
+// ─────────────────────────────────────────────
+// Returns ad-level (utm_content × landing_page_path) sessions + conversion_rate
+// for two arbitrary periods (period_a = "before", period_b = "after"). The
+// frontend joins the two row sets on (utm_content, landing_page_path), filters
+// by an optional landing_page_path substring, and runs the four-component
+// counterfactual decomposition documented in the PRD.
+//
+// We intentionally run two single-period queries (no COMPARE TO previous_period)
+// because the decomposition tool needs custom, possibly unequal-length periods.
+// ShopifyQL doesn't expose substring matching on landing_page_path reliably, so
+// the LP filter is applied client-side after both row sets land.
+app.get('/api/cvr-decomp-data', async (req, res) => {
+  const t0 = Date.now();
+  if (!SHOPIFY_URL || !SHOPIFY_TOKEN) {
+    console.error('[cvr-decomp] missing Shopify credentials');
+    return res.status(500).json({ error: 'Shopify credentials not configured' });
+  }
+
+  const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+  const {
+    period_a_start, period_a_end,
+    period_b_start, period_b_end,
+  } = req.query;
+
+  if (![period_a_start, period_a_end, period_b_start, period_b_end].every(s => s && dateRe.test(s))) {
+    console.warn('[cvr-decomp] invalid date params:', req.query);
+    return res.status(400).json({
+      error: 'period_a_start, period_a_end, period_b_start, period_b_end required (YYYY-MM-DD)',
+    });
+  }
+
+  const escapeQL = v => String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  const source = escapeQL(req.query.source || 'facebook');
+  const medium = escapeQL(req.query.medium || 'paid_social');
+  const lpFilterRaw = (req.query.lp_filter || '').trim();
+
+  // ShopifyQL doesn't support LIKE — confirmed via parser error. So:
+  //   • If the user gave us something that looks like a literal path (starts
+  //     with `/` and contains no spaces), push it down as an exact-match
+  //     `landing_page_path = '...'`. This is the common case (e.g. PRD's
+  //     `/pages/tdk-behind-the-science-lp`) and avoids the 5000-row cap
+  //     biting on high-traffic slices.
+  //   • Otherwise (substring like "tdk" or "behind-the-science") we leave it
+  //     to the frontend to filter client-side.
+  const lpExactMatch = lpFilterRaw && lpFilterRaw.startsWith('/') && !/\s/.test(lpFilterRaw)
+    ? lpFilterRaw
+    : null;
+
+  // ShopifyQL caps results at 5000 rows on this store; default is 1000.
+  // We hit 1000 in testing on broad slices — bumping LIMIT covers the long
+  // tail of low-traffic ads that matter for the decomposition.
+  const ROW_LIMIT = 5000;
+
+  console.log('\n[cvr-decomp] ───────────────────────────────────────────────');
+  console.log('[cvr-decomp] request:', {
+    source, medium,
+    period_a: `${period_a_start} → ${period_a_end}`,
+    period_b: `${period_b_start} → ${period_b_end}`,
+    lp_filter_raw: lpFilterRaw || '(none)',
+    lp_exact_match_pushdown: lpExactMatch || '(none — client-side substring)',
+    row_limit: ROW_LIMIT,
+  });
+
+  const endpoint = `https://${SHOPIFY_URL}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
+  const gqlQuery = `query RunShopifyQL($q: String!) {
+    shopifyqlQuery(query: $q) {
+      tableData { columns { name dataType } rows }
+      parseErrors
+    }
+  }`;
+
+  const lpClause = lpExactMatch ? ` AND landing_page_path = '${escapeQL(lpExactMatch)}'` : '';
+  const buildQuery = (start, end) => `FROM sessions
+  SHOW sessions, conversion_rate
+  WHERE utm_source = '${source}' AND utm_medium = '${medium}'${lpClause}
+  GROUP BY utm_content, landing_page_path WITH TOTALS
+  SINCE ${start} UNTIL ${end}
+  ORDER BY sessions DESC
+  LIMIT ${ROW_LIMIT}`;
+
+  const queryA = buildQuery(period_a_start, period_a_end);
+  const queryB = buildQuery(period_b_start, period_b_end);
+
+  console.log('[cvr-decomp] period A query:\n' + queryA);
+  console.log('[cvr-decomp] period B query:\n' + queryB);
+
+  const runShopifyQL = async (q, label) => {
+    const tStart = Date.now();
+    const resp = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
+      body: JSON.stringify({ query: gqlQuery, variables: { q } }),
+    });
+    const json = await resp.json();
+    const payload = json.data?.shopifyqlQuery;
+    const ms = Date.now() - tStart;
+    if (payload?.parseErrors?.length) {
+      console.error(`[cvr-decomp] ${label} parse errors after ${ms}ms:`, payload.parseErrors);
+      const err = new Error('ShopifyQL parse error: ' + JSON.stringify(payload.parseErrors));
+      err.parseErrors = payload.parseErrors;
+      throw err;
+    }
+    if (!payload?.tableData) {
+      console.error(`[cvr-decomp] ${label} no tableData after ${ms}ms; raw:`, JSON.stringify(json).slice(0, 400));
+      throw new Error(`No data returned from Shopify for ${label}`);
+    }
+    console.log(`[cvr-decomp] ${label} ✓ ${payload.tableData.rows.length} rows in ${ms}ms`);
+    return payload.tableData;
+  };
+
+  try {
+    const [a, b] = await Promise.all([
+      runShopifyQL(queryA, 'period_a'),
+      runShopifyQL(queryB, 'period_b'),
+    ]);
+
+    const totalMs = Date.now() - t0;
+    const cappedA = a.rows.length >= ROW_LIMIT;
+    const cappedB = b.rows.length >= ROW_LIMIT;
+    if (cappedA || cappedB) {
+      console.warn(`[cvr-decomp] ⚠ row cap hit (LIMIT ${ROW_LIMIT})`,
+        { period_a_capped: cappedA, period_b_capped: cappedB });
+    }
+    console.log(`[cvr-decomp] ✓ done in ${totalMs}ms — A: ${a.rows.length} rows, B: ${b.rows.length} rows`);
+
+    res.json({
+      filter: { source, medium, lp_filter_raw: lpFilterRaw, lp_exact_match_pushdown: lpExactMatch },
+      row_limit: ROW_LIMIT,
+      capped: { period_a: cappedA, period_b: cappedB },
+      period_a: { start: period_a_start, end: period_a_end, columns: a.columns, rows: a.rows, query: queryA },
+      period_b: { start: period_b_start, end: period_b_end, columns: b.columns, rows: b.rows, query: queryB },
+    });
+  } catch (err) {
+    console.error('[cvr-decomp] ✗ error:', err.message, err.parseErrors || '');
+    res.status(500).json({ error: err.message, parseErrors: err.parseErrors });
+  }
+});
+
 // --- Start server ---
 
 app.listen(PORT, () => {
