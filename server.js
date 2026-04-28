@@ -2417,8 +2417,11 @@ app.get('/api/ad-set-fatigue-data', requireAuth, async (req, res) => {
     return res.status(500).json({ error: 'Shopify credentials not configured' });
   }
 
-  // Compute prior comparison period (same length, immediately preceding).
-  const auto = (() => {
+  // Comparison window. By default, same-length window immediately preceding
+  // [since, until]. Override with explicit compare_since / compare_until
+  // params from the picker when the user wants a custom comparison range
+  // (e.g. month-vs-month rather than rolling-14d-vs-prior-14d).
+  const autoCompare = (() => {
     const sd = new Date(since + 'T00:00:00Z');
     const ed = new Date(until + 'T00:00:00Z');
     const days = Math.round((ed - sd) / 86400000) + 1;
@@ -2430,6 +2433,12 @@ app.get('/api/ad-set-fatigue-data', requireAuth, async (req, res) => {
       days,
     };
   })();
+  const cs = req.query.compare_since;
+  const cu = req.query.compare_until;
+  const useCustomCompare = cs && cu && dateRe.test(cs) && dateRe.test(cu);
+  const auto = useCustomCompare
+    ? { since: cs, until: cu, days: Math.round((new Date(cu) - new Date(cs)) / 86400000) + 1, mode: 'custom' }
+    : { ...autoCompare, mode: 'auto-prev-period' };
 
   const source = (req.query.source || 'facebook').replace(/'/g, "\\'");
   const medium = (req.query.medium || 'paid_social').replace(/'/g, "\\'");
@@ -2438,6 +2447,7 @@ app.get('/api/ad-set-fatigue-data', requireAuth, async (req, res) => {
   console.log('[ad-set-fatigue] request', {
     account_id, since, until,
     compare_since: auto.since, compare_until: auto.until,
+    compare_mode: auto.mode,
     period_days: auto.days,
     source, medium,
   });
@@ -2496,7 +2506,11 @@ app.get('/api/ad-set-fatigue-data', requireAuth, async (req, res) => {
     for (let i = 0; i < adsetIds.length; i += 50) slices.push(adsetIds.slice(i, i + 50));
     const proof2 = generateAppSecretProof(req.accessToken);
     const ADSET_FIELDS = 'id,name,effective_status,configured_status,learning_stage_info,daily_budget,lifetime_budget';
-    const results = await Promise.all(slices.map(async (slice) => {
+    // NB: the outer binding here was previously named `results` and the inner
+    // for-of destructured `{ slice, results }` from it — which triggered a
+    // "cannot access 'results' before initialization" TDZ error in newer V8.
+    // Renamed the outer to `batchResults` to remove the shadow.
+    const batchResults = await Promise.all(slices.map(async (slice) => {
       const batch = slice.map(id => ({
         method: 'GET', relative_url: `${id}?fields=${ADSET_FIELDS}`,
       }));
@@ -2516,7 +2530,7 @@ app.get('/api/ad-set-fatigue-data', requireAuth, async (req, res) => {
       }
     }));
     let ok = 0, fail = 0;
-    for (const { slice, results } of results) {
+    for (const { slice, results } of batchResults) {
       if (!Array.isArray(results)) { fail += slice.length; continue; }
       for (let j = 0; j < slice.length; j++) {
         const r = results[j];
@@ -2820,7 +2834,7 @@ app.get('/api/ad-set-fatigue-data', requireAuth, async (req, res) => {
 
     res.json({
       account_id, since, until,
-      compare: { since: auto.since, until: auto.until, days: auto.days },
+      compare: { since: auto.since, until: auto.until, days: auto.days, mode: auto.mode },
       filter: { source, medium },
       meta_counts: {
         meta_daily_rows: metaDaily.length,

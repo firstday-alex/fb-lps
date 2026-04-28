@@ -113,6 +113,46 @@
     }
     .btn-primary:hover { background: #7ea93e; }
     .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+
+    .period-block {
+      grid-column: 1 / -1;
+      padding: 12px 14px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: #f9fafc;
+    }
+    .period-block h3 {
+      font-size: 0.74rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--text-secondary);
+      margin-bottom: 8px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .period-block h3 .auto-tag {
+      font-size: 0.66rem; font-weight: 600;
+      padding: 1px 6px;
+      background: var(--neutral-bg);
+      color: var(--text-secondary);
+      border-radius: 3px;
+      text-transform: none; letter-spacing: 0;
+    }
+    .period-block h3 .auto-tag.custom { background: #fef3c7; color: #92400e; }
+    .period-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr auto;
+      gap: 10px;
+      align-items: end;
+    }
+    .btn-tiny {
+      font-size: 0.74rem;
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--surface);
+      cursor: pointer;
+      color: var(--text-secondary);
+      white-space: nowrap;
+    }
+    .btn-tiny:hover { background: var(--bg); color: var(--text-primary); }
     .picker-status {
       margin-top: 12px; font-size: 0.84rem; color: var(--text-secondary); min-height: 1.4em;
     }
@@ -415,14 +455,28 @@
           <option value="">— loading accounts —</option>
         </select>
       </div>
-      <div class="field">
-        <label>Since</label>
-        <input type="date" id="f-since">
+
+      <div class="period-block">
+        <h3>Current period <span class="auto-tag">14d daily insights pulled from Meta</span></h3>
+        <div class="period-row">
+          <div class="field"><label>since</label><input type="date" id="f-since"></div>
+          <div class="field"><label>until</label><input type="date" id="f-until"></div>
+          <span></span>
+        </div>
       </div>
-      <div class="field">
-        <label>Until</label>
-        <input type="date" id="f-until">
+
+      <div class="period-block">
+        <h3>
+          Compare period
+          <span class="auto-tag" id="compare-mode-tag">auto · prev period</span>
+        </h3>
+        <div class="period-row">
+          <div class="field"><label>since</label><input type="date" id="f-compare-since"></div>
+          <div class="field"><label>until</label><input type="date" id="f-compare-until"></div>
+          <button type="button" class="btn-tiny" id="btn-compare-reset" title="Snap compare window to the period immediately preceding the current window">↻ Auto</button>
+        </div>
       </div>
+
       <div class="field">
         <label>utm_source</label>
         <input type="text" id="f-source" value="facebook">
@@ -548,6 +602,46 @@ function todayMinusDays(d) {
 let _rows = [];                  // raw rows from API
 let _meta = null;                // last response metadata
 let _previewCache = new Map();   // ad_id → preview_shareable_link
+let _compareManualOverride = false;  // true once user edits compare-* inputs
+
+// ─────────────────────────────────────────────────────────────────────
+// COMPARE-WINDOW SYNC
+// ─────────────────────────────────────────────────────────────────────
+// While `_compareManualOverride` is false, the compare window auto-snaps
+// to the same-length period immediately preceding [since, until] each time
+// since/until changes. The moment the user edits compare-* inputs, we stop
+// auto-snapping and tag the UI as "custom". The ↻ Auto button resets.
+function autoComputeCompareRange() {
+  const startStr = document.getElementById('f-since').value;
+  const endStr   = document.getElementById('f-until').value;
+  if (!startStr || !endStr) return null;
+  const sd = new Date(startStr + 'T00:00:00Z');
+  const ed = new Date(endStr   + 'T00:00:00Z');
+  if (isNaN(sd.getTime()) || isNaN(ed.getTime()) || ed < sd) return null;
+  const days = Math.round((ed - sd) / 86400000) + 1;
+  const cEnd = new Date(sd); cEnd.setUTCDate(cEnd.getUTCDate() - 1);
+  const cStart = new Date(cEnd); cStart.setUTCDate(cStart.getUTCDate() - (days - 1));
+  return { since: cStart.toISOString().slice(0, 10), until: cEnd.toISOString().slice(0, 10) };
+}
+function syncCompareInputs() {
+  if (_compareManualOverride) return;
+  const r = autoComputeCompareRange();
+  if (!r) return;
+  document.getElementById('f-compare-since').value = r.since;
+  document.getElementById('f-compare-until').value = r.until;
+  updateCompareModeTag();
+}
+function updateCompareModeTag() {
+  const tag = document.getElementById('compare-mode-tag');
+  if (!tag) return;
+  if (_compareManualOverride) {
+    tag.textContent = 'custom';
+    tag.classList.add('custom');
+  } else {
+    tag.textContent = 'auto · prev period';
+    tag.classList.remove('custom');
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────
 // PIPELINE
@@ -580,17 +674,32 @@ async function runScan() {
   const account_id = document.getElementById('f-account').value;
   const since  = document.getElementById('f-since').value;
   const until  = document.getElementById('f-until').value;
+  const compareSince = document.getElementById('f-compare-since').value;
+  const compareUntil = document.getElementById('f-compare-until').value;
   const source = document.getElementById('f-source').value.trim() || 'facebook';
   const medium = document.getElementById('f-medium').value.trim() || 'paid_social';
   if (!account_id) { status.className = 'picker-status error'; status.textContent = 'Pick an ad account.'; return; }
   if (!since || !until) { status.className = 'picker-status error'; status.textContent = 'Pick a date range.'; return; }
+
+  // Send compare_* only when the user has overridden the auto window OR when
+  // the values differ from the auto-computed ones. Letting the server fall
+  // back to auto-mode keeps the request simpler in the common case.
+  const auto = autoComputeCompareRange();
+  const sendCustomCompare = _compareManualOverride
+    && compareSince && compareUntil
+    && (!auto || compareSince !== auto.since || compareUntil !== auto.until);
+
   btn.disabled = true;
   status.className = 'picker-status';
   status.innerHTML = '<span class="spinner"></span>Pulling Meta + Shopify… (can take 10-30s for the first run)';
-  dbg('runScan start', { account_id, since, until, source, medium });
+  dbg('runScan start', { account_id, since, until, compareSince, compareUntil, sendCustomCompare, source, medium });
 
   try {
     const params = new URLSearchParams({ account_id, since, until, source, medium });
+    if (sendCustomCompare) {
+      params.set('compare_since', compareSince);
+      params.set('compare_until', compareUntil);
+    }
     const t0 = performance.now();
     const r = await fetch(`/api/ad-set-fatigue-data?${params.toString()}`);
     if (!r.ok) {
@@ -632,10 +741,13 @@ async function runScan() {
 // ─────────────────────────────────────────────────────────────────────
 function renderTopBar(data) {
   const el = document.getElementById('top-bar-info');
+  const modeLabel = data.compare?.mode === 'custom'
+    ? '<span style="font-size:0.7rem;background:#fef3c7;color:#92400e;padding:1px 5px;border-radius:3px;margin-left:4px">custom</span>'
+    : '<span style="font-size:0.7rem;background:var(--neutral-bg);color:var(--text-secondary);padding:1px 5px;border-radius:3px;margin-left:4px">auto</span>';
   el.innerHTML =
     `<strong>${data.account_id}</strong> · ` +
     `current <strong>${data.since}→${data.until}</strong> ` +
-    `vs prior <strong>${data.compare.since}→${data.compare.until}</strong> · ` +
+    `vs compare <strong>${data.compare.since}→${data.compare.until}</strong>${modeLabel} · ` +
     `<strong>${data.filter.source}/${data.filter.medium}</strong> · ` +
     `<span style="color:var(--text-secondary)">` +
     `${data.meta_counts.adsets_current} ad sets, ${data.meta_counts.meta_daily_rows} daily rows · ` +
@@ -906,6 +1018,29 @@ document.addEventListener('DOMContentLoaded', () => {
   // Default to last 14 days.
   document.getElementById('f-since').value = todayMinusDays(14);
   document.getElementById('f-until').value = todayMinusDays(1);
+  syncCompareInputs();
+
+  // When since/until change, snap compare window unless user has overridden.
+  document.getElementById('f-since').addEventListener('change', syncCompareInputs);
+  document.getElementById('f-until').addEventListener('change', syncCompareInputs);
+
+  // The moment the user touches a compare input, mark as override.
+  ['f-compare-since', 'f-compare-until'].forEach(id => {
+    document.getElementById(id).addEventListener('change', () => {
+      _compareManualOverride = true;
+      updateCompareModeTag();
+      dbg('compare override engaged', {
+        since: document.getElementById('f-compare-since').value,
+        until: document.getElementById('f-compare-until').value,
+      });
+    });
+  });
+
+  document.getElementById('btn-compare-reset').addEventListener('click', () => {
+    _compareManualOverride = false;
+    syncCompareInputs();
+    dbg('compare reset to auto');
+  });
 
   document.getElementById('btn-run').addEventListener('click', runScan);
   document.getElementById('btn-back').addEventListener('click', () => {
