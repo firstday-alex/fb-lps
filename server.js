@@ -1197,16 +1197,19 @@ VISUALIZE conversion_rate TYPE table`;
     // Merge the comparison query into the main response. We synthesize the
     // same column names ShopifyQL emits for COMPARE TO previous_period, so
     // the existing frontend parser picks them up without changes.
-    const cols = main.columns.map(c => (c.name || '').toLowerCase());
-    const cmpCols = compare.columns.map(c => (c.name || '').toLowerCase());
+    //
+    // ShopifyQL can return rows as either arrays OR objects keyed by column
+    // name. Normalize to arrays before merging so we can spread + append.
+    const mainColNames = main.columns.map(c => c.name);
+    const cmpColNames  = compare.columns.map(c => c.name);
+    const toArray = (row, names) => Array.isArray(row) ? row : names.map(n => row?.[n]);
+
+    const cols = mainColNames.map(n => (n || '').toLowerCase());
+    const cmpCols = cmpColNames.map(n => (n || '').toLowerCase());
 
     const idx = (arr, n) => arr.findIndex(s => s === n);
     const iCampaign = idx(cols, 'utm_campaign');
     const iLp       = idx(cols, 'landing_page_path');
-    const iSess     = idx(cols, 'sessions');
-    const iCvr      = idx(cols, 'conversion_rate');
-    const iSessTot  = idx(cols, 'sessions__totals');
-    const iCvrTot   = idx(cols, 'conversion_rate__totals');
 
     const cmpICampaign = idx(cmpCols, 'utm_campaign');
     const cmpILp       = idx(cmpCols, 'landing_page_path');
@@ -1219,13 +1222,14 @@ VISUALIZE conversion_rate TYPE table`;
     const cmpMap = new Map();
     let cmpTotals = null;
     for (const row of compare.rows) {
-      const c = String(row[cmpICampaign] ?? '').trim();
-      const l = String(row[cmpILp]       ?? '').trim();
-      if (!c && !l) { cmpTotals = row; continue; }     // totals row
-      cmpMap.set(c + '||' + l, row);
+      const arr = toArray(row, cmpColNames);
+      const c = String(arr[cmpICampaign] ?? '').trim();
+      const l = String(arr[cmpILp]       ?? '').trim();
+      if (!c && !l) { cmpTotals = arr; continue; }     // totals row
+      cmpMap.set(c + '||' + l, arr);
     }
 
-    // Append two synthetic columns per metric we surface.
+    // Append synthetic columns matching ShopifyQL's `previous_period` shape.
     const newColumns = [
       ...main.columns,
       { name: 'comparison_sessions__previous_period',        dataType: 'integer' },
@@ -1235,15 +1239,16 @@ VISUALIZE conversion_rate TYPE table`;
     ];
 
     const newRows = main.rows.map(row => {
-      const c = String(row[iCampaign] ?? '').trim();
-      const l = String(row[iLp]       ?? '').trim();
+      const arr = toArray(row, mainColNames);
+      const c = String(arr[iCampaign] ?? '').trim();
+      const l = String(arr[iLp]       ?? '').trim();
       const isTotalsRow = !c && !l;
       const cmpRow = isTotalsRow ? cmpTotals : cmpMap.get(c + '||' + l);
-      const cmpSess = cmpRow != null ? cmpRow[cmpISess] : null;
-      const cmpCvr  = cmpRow != null ? cmpRow[cmpICvr]  : null;
-      const cmpSessTot = cmpTotals != null && cmpISessTot >= 0 ? cmpTotals[cmpISessTot] : (cmpRow != null && isTotalsRow ? cmpSess : null);
-      const cmpCvrTot  = cmpTotals != null && cmpICvrTot  >= 0 ? cmpTotals[cmpICvrTot]  : (cmpRow != null && isTotalsRow ? cmpCvr  : null);
-      return [...row, cmpSess, cmpCvr, cmpSessTot, cmpCvrTot];
+      const cmpSess = cmpRow != null && cmpISess >= 0 ? cmpRow[cmpISess] : null;
+      const cmpCvr  = cmpRow != null && cmpICvr  >= 0 ? cmpRow[cmpICvr]  : null;
+      const cmpSessTot = cmpTotals != null && cmpISessTot >= 0 ? cmpTotals[cmpISessTot] : null;
+      const cmpCvrTot  = cmpTotals != null && cmpICvrTot  >= 0 ? cmpTotals[cmpICvrTot]  : null;
+      return [...arr, cmpSess, cmpCvr, cmpSessTot, cmpCvrTot];
     });
 
     res.json({
