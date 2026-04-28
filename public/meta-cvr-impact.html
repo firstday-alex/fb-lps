@@ -3256,6 +3256,16 @@ async function loadFromShopify() {
 
     const info = document.getElementById('top-bar-info');
     if (info) {
+      // Surface merge stats inline so the user can see whether the custom
+      // comparison actually joined to anything, without inspecting the
+      // network tab or server logs.
+      if (data.merge_stats) {
+        const m = data.merge_stats;
+        const tag = m.matched_keys === 0
+          ? `<span style="color:var(--negative)">⚠ 0 of ${m.main_rows} rows matched the comparison window</span>`
+          : `${m.matched_keys}/${m.main_rows} rows matched compare window`;
+        info.innerHTML += ` &nbsp;·&nbsp; ${tag}`;
+      }
       info.innerHTML += ` &nbsp;·&nbsp; <a href="#" id="show-query-link" style="color:var(--fb-blue)">Show ShopifyQL</a>`;
       document.getElementById('show-query-link').addEventListener('click', (e) => {
         e.preventDefault();

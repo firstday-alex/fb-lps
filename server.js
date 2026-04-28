@@ -1130,18 +1130,11 @@ app.get('/api/meta-cvr-impact-data', async (req, res) => {
     }
   }`;
 
-  // When a custom compare window is supplied, drop COMPARE TO from the main
-  // query (we'll merge the comparison data in code below). We keep WITH TOTALS
-  // so the totals row still appears.
-  const mainQuery = useCustomCompare
-    ? `FROM sessions
-  SHOW sessions, conversion_rate, average_session_duration, sessions_with_cart_additions, sessions_that_reached_checkout, sessions_that_reached_and_completed_checkout
-  WHERE utm_source = '${source}' AND utm_medium = '${medium}'
-  GROUP BY utm_campaign, landing_page_path WITH TOTALS
-  SINCE ${start} UNTIL ${end}
-  ORDER BY sessions DESC
-VISUALIZE conversion_rate TYPE table`
-    : `FROM sessions
+  // ALWAYS run the main query with COMPARE TO previous_period — proven to
+  // work, returns the full column shape the frontend parser expects. When a
+  // custom compare window is supplied, we run a second query for that range
+  // and OVERWRITE the previous_period values in each main row.
+  const mainQuery = `FROM sessions
   SHOW sessions, conversion_rate, average_session_duration, sessions_with_cart_additions, sessions_that_reached_checkout, sessions_that_reached_and_completed_checkout
   WHERE utm_source = '${source}' AND utm_medium = '${medium}'
   GROUP BY utm_campaign, landing_page_path WITH TOTALS, PERCENT_CHANGE
@@ -1151,7 +1144,7 @@ VISUALIZE conversion_rate TYPE table`
 VISUALIZE conversion_rate TYPE table`;
 
   const compareQuery = useCustomCompare ? `FROM sessions
-  SHOW sessions, conversion_rate, average_session_duration, sessions_with_cart_additions, sessions_that_reached_checkout, sessions_that_reached_and_completed_checkout
+  SHOW sessions, conversion_rate
   WHERE utm_source = '${source}' AND utm_medium = '${medium}'
   GROUP BY utm_campaign, landing_page_path WITH TOTALS
   SINCE ${cs} UNTIL ${ce}
@@ -1194,79 +1187,95 @@ VISUALIZE conversion_rate TYPE table`;
       });
     }
 
-    // Merge the comparison query into the main response. We synthesize the
-    // same column names ShopifyQL emits for COMPARE TO previous_period, so
-    // the existing frontend parser picks them up without changes.
-    //
-    // ShopifyQL can return rows as either arrays OR objects keyed by column
-    // name. Normalize to arrays before merging so we can spread + append.
+    // Overwrite the previous_period values in the main response with values
+    // from the custom compare window. The main query's column shape stays
+    // identical (same columns, same row order), we just swap the numbers in
+    // the existing `comparison_*__previous_period` cells.
     if (!main || !Array.isArray(main.rows) || !Array.isArray(main.columns)) {
       throw new Error('Main Shopify response missing rows/columns array (got ' + typeof main + ')');
     }
     if (!compare || !Array.isArray(compare.rows) || !Array.isArray(compare.columns)) {
       throw new Error('Compare Shopify response missing rows/columns array (got ' + typeof compare + ')');
     }
+
     const mainColNames = main.columns.map(c => c.name);
     const cmpColNames  = compare.columns.map(c => c.name);
     const toArray = (row, names) => {
       if (Array.isArray(row)) return row;
       if (row && typeof row === 'object') return names.map(n => row[n]);
-      return [];                                // unknown shape — degrade gracefully
+      return [];
     };
 
     const cols = mainColNames.map(n => (n || '').toLowerCase());
     const cmpCols = cmpColNames.map(n => (n || '').toLowerCase());
-
     const idx = (arr, n) => arr.findIndex(s => s === n);
-    const iCampaign = idx(cols, 'utm_campaign');
-    const iLp       = idx(cols, 'landing_page_path');
 
-    const cmpICampaign = idx(cmpCols, 'utm_campaign');
-    const cmpILp       = idx(cmpCols, 'landing_page_path');
-    const cmpISess     = idx(cmpCols, 'sessions');
-    const cmpICvr      = idx(cmpCols, 'conversion_rate');
-    const cmpISessTot  = idx(cmpCols, 'sessions__totals');
-    const cmpICvrTot   = idx(cmpCols, 'conversion_rate__totals');
+    // Where to write in the main row
+    const iCampaign      = idx(cols, 'utm_campaign');
+    const iLp            = idx(cols, 'landing_page_path');
+    const iMainPrevS     = idx(cols, 'comparison_sessions__previous_period');
+    const iMainPrevCvr   = idx(cols, 'comparison_conversion_rate__previous_period');
+    const iMainPrevSTot  = idx(cols, 'comparison_sessions__previous_period__totals');
+    const iMainPrevCvrTot= idx(cols, 'comparison_conversion_rate__previous_period__totals');
 
-    // Index comparison rows by (utm_campaign, landing_page_path)
+    // Where to read from the compare row
+    const cmpICampaign   = idx(cmpCols, 'utm_campaign');
+    const cmpILp         = idx(cmpCols, 'landing_page_path');
+    const cmpISess       = idx(cmpCols, 'sessions');
+    const cmpICvr        = idx(cmpCols, 'conversion_rate');
+    const cmpISessTot    = idx(cmpCols, 'sessions__totals');
+    const cmpICvrTot     = idx(cmpCols, 'conversion_rate__totals');
+
+    // Index compare rows
     const cmpMap = new Map();
     let cmpTotals = null;
     for (const row of compare.rows) {
       const arr = toArray(row, cmpColNames);
       const c = String(arr[cmpICampaign] ?? '').trim();
       const l = String(arr[cmpILp]       ?? '').trim();
-      if (!c && !l) { cmpTotals = arr; continue; }     // totals row
+      if (!c && !l) { cmpTotals = arr; continue; }
       cmpMap.set(c + '||' + l, arr);
     }
 
-    // Append synthetic columns matching ShopifyQL's `previous_period` shape.
-    const newColumns = [
-      ...main.columns,
-      { name: 'comparison_sessions__previous_period',        dataType: 'integer' },
-      { name: 'comparison_conversion_rate__previous_period', dataType: 'percent' },
-      { name: 'comparison_sessions__previous_period__totals',        dataType: 'integer' },
-      { name: 'comparison_conversion_rate__previous_period__totals', dataType: 'percent' },
-    ];
-
+    let matched = 0;
+    let unmatched = 0;
     const newRows = main.rows.map(row => {
-      const arr = toArray(row, mainColNames);
+      const arr = toArray(row, mainColNames).slice();         // shallow copy (mutate locally)
       const c = String(arr[iCampaign] ?? '').trim();
       const l = String(arr[iLp]       ?? '').trim();
       const isTotalsRow = !c && !l;
       const cmpRow = isTotalsRow ? cmpTotals : cmpMap.get(c + '||' + l);
-      const cmpSess = cmpRow != null && cmpISess >= 0 ? cmpRow[cmpISess] : null;
-      const cmpCvr  = cmpRow != null && cmpICvr  >= 0 ? cmpRow[cmpICvr]  : null;
-      const cmpSessTot = cmpTotals != null && cmpISessTot >= 0 ? cmpTotals[cmpISessTot] : null;
-      const cmpCvrTot  = cmpTotals != null && cmpICvrTot  >= 0 ? cmpTotals[cmpICvrTot]  : null;
-      return [...arr, cmpSess, cmpCvr, cmpSessTot, cmpCvrTot];
+      if (cmpRow) matched++; else if (!isTotalsRow) unmatched++;
+
+      // Per-row previous_period values
+      if (iMainPrevS >= 0)   arr[iMainPrevS]   = cmpRow != null && cmpISess >= 0 ? cmpRow[cmpISess] : null;
+      if (iMainPrevCvr >= 0) arr[iMainPrevCvr] = cmpRow != null && cmpICvr  >= 0 ? cmpRow[cmpICvr]  : null;
+
+      // Totals (same value on every row — the parser only reads from rows[0])
+      if (iMainPrevSTot >= 0)   arr[iMainPrevSTot]   = cmpTotals != null && cmpISessTot >= 0 ? cmpTotals[cmpISessTot] : null;
+      if (iMainPrevCvrTot >= 0) arr[iMainPrevCvrTot] = cmpTotals != null && cmpICvrTot  >= 0 ? cmpTotals[cmpICvrTot]  : null;
+
+      return arr;
     });
+
+    const mergeStats = {
+      main_rows: main.rows.length,
+      compare_rows: compare.rows.length,
+      compare_keys_indexed: cmpMap.size,
+      had_compare_totals: !!cmpTotals,
+      matched_keys: matched,
+      unmatched_keys: unmatched,
+      main_has_prev_columns: { iMainPrevS, iMainPrevCvr, iMainPrevSTot, iMainPrevCvrTot },
+    };
+    console.log('[meta-cvr-impact-data] custom-compare merge:', mergeStats);
 
     res.json({
       query: mainQuery,
       compare_query: compareQuery,
       filter: { source, medium },
       compare_window: { start: cs, end: ce },
-      columns: newColumns,
+      merge_stats: mergeStats,
+      columns: main.columns,                                  // unchanged shape
       rows: newRows,
     });
   } catch (err) {
