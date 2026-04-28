@@ -1150,10 +1150,15 @@
 <div id="upload-screen">
   <div class="upload-card">
     <h2>Meta Paid Social Impact</h2>
-    <p>Load Shopify sessions filtered by <code>utm_source</code> &amp; <code>utm_medium</code>, grouped by campaign and landing page, compared to the prior period.</p>
+    <p>Load Shopify sessions filtered by <code>utm_source</code> &amp; <code>utm_medium</code>, grouped by campaign and landing page, compared to a configurable prior period.</p>
     <div class="date-row">
       <label>Start <input type="date" id="date-start"></label>
       <label>End <input type="date" id="date-end"></label>
+    </div>
+    <div class="date-row" style="margin-top:4px">
+      <label>Compare Start <input type="date" id="compare-start"></label>
+      <label>Compare End <input type="date" id="compare-end"></label>
+      <button type="button" id="compare-reset" class="btn-reset" style="font-size:0.75rem;padding:4px 10px" title="Reset comparison to the period immediately preceding Start–End">↻ Auto</button>
     </div>
     <div class="filter-row">
       <label>utm_source <input type="text" id="filter-source" value="facebook"></label>
@@ -3169,12 +3174,43 @@ function setupAdLpHandlers() {
   });
 }
 
+// ─────────────────────────────────────────────
+// COMPARISON-WINDOW HELPERS
+// ─────────────────────────────────────────────
+// Tracks whether the user has manually edited the compare-* inputs. While
+// false, the comparison window auto-snaps to the period immediately preceding
+// the main range each time start/end change.
+let _compareManualOverride = false;
+
+function autoComputeCompareRange() {
+  const startStr = document.getElementById('date-start').value;
+  const endStr   = document.getElementById('date-end').value;
+  if (!startStr || !endStr) return null;
+  const sd = new Date(startStr + 'T00:00:00Z');
+  const ed = new Date(endStr   + 'T00:00:00Z');
+  if (isNaN(sd.getTime()) || isNaN(ed.getTime()) || ed < sd) return null;
+  const days = Math.round((ed - sd) / 86400000) + 1;       // inclusive day count
+  const cEnd = new Date(sd);   cEnd.setUTCDate(cEnd.getUTCDate() - 1);
+  const cStart = new Date(cEnd); cStart.setUTCDate(cStart.getUTCDate() - (days - 1));
+  return { start: cStart.toISOString().slice(0, 10), end: cEnd.toISOString().slice(0, 10) };
+}
+
+function syncCompareInputs() {
+  if (_compareManualOverride) return;
+  const r = autoComputeCompareRange();
+  if (!r) return;
+  document.getElementById('compare-start').value = r.start;
+  document.getElementById('compare-end').value   = r.end;
+}
+
 async function loadFromShopify() {
   const btn    = document.getElementById('btn-shopify-load');
   const status = document.getElementById('shopify-status');
   const errEl  = document.getElementById('upload-error');
   const startDate = document.getElementById('date-start').value;
   const endDate   = document.getElementById('date-end').value;
+  const compareStart = document.getElementById('compare-start').value;
+  const compareEnd   = document.getElementById('compare-end').value;
   const source    = document.getElementById('filter-source').value.trim() || 'facebook';
   const medium    = document.getElementById('filter-medium').value.trim() || 'paid_social';
 
@@ -3184,6 +3220,14 @@ async function loadFromShopify() {
     return;
   }
 
+  // Determine whether the comparison window matches the auto-computed
+  // "previous period". If yes, omit it from the request and let the backend
+  // use ShopifyQL's built-in COMPARE TO previous_period.
+  const auto = autoComputeCompareRange();
+  const isAuto = !_compareManualOverride
+    || (auto && compareStart === auto.start && compareEnd === auto.end);
+  const useCustomCompare = !isAuto && compareStart && compareEnd;
+
   btn.disabled = true;
   status.className = 'shopify-status';
   status.textContent = 'Querying Shopify…';
@@ -3191,6 +3235,10 @@ async function loadFromShopify() {
 
   try {
     const params = new URLSearchParams({ start: startDate, end: endDate, source, medium });
+    if (useCustomCompare) {
+      params.set('compare_start', compareStart);
+      params.set('compare_end',   compareEnd);
+    }
     const resp = await fetch(`/api/meta-cvr-impact-data?${params.toString()}`);
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
@@ -3198,16 +3246,20 @@ async function loadFromShopify() {
     }
     const data = await resp.json();
     if (data.query) console.log('[ShopifyQL]\n' + data.query);
+    if (data.compare_query) console.log('[ShopifyQL · compare]\n' + data.compare_query);
     status.textContent = 'Parsing response…';
     const rows = parseShopifyQL(data);
-    render(rows, `Shopify · ${source}/${medium} · ${startDate} → ${endDate} vs previous period`);
+    const compareLabel = useCustomCompare
+      ? `${compareStart} → ${compareEnd}`
+      : (auto ? `${auto.start} → ${auto.end} (auto · prev period)` : 'previous period');
+    render(rows, `Shopify · ${source}/${medium} · ${startDate} → ${endDate} vs ${compareLabel}`);
 
     const info = document.getElementById('top-bar-info');
     if (info) {
       info.innerHTML += ` &nbsp;·&nbsp; <a href="#" id="show-query-link" style="color:var(--fb-blue)">Show ShopifyQL</a>`;
       document.getElementById('show-query-link').addEventListener('click', (e) => {
         e.preventDefault();
-        alert(data.query);
+        alert(data.query + (data.compare_query ? '\n\n--- Compare query ---\n' + data.compare_query : ''));
       });
     }
 
@@ -3256,6 +3308,25 @@ document.addEventListener('DOMContentLoaded', () => {
   const fmt = d => d.toISOString().slice(0, 10);
   document.getElementById('date-start').value = fmt(yesterday);
   document.getElementById('date-end').value = fmt(yesterday);
+  syncCompareInputs();
+
+  // When the user changes Start/End: snap the comparison window to the
+  // immediately-preceding window UNLESS they've manually edited it.
+  document.getElementById('date-start').addEventListener('change', syncCompareInputs);
+  document.getElementById('date-end').addEventListener('change', syncCompareInputs);
+
+  // Mark compare inputs as manually overridden the moment the user edits them.
+  ['compare-start', 'compare-end'].forEach(id => {
+    document.getElementById(id).addEventListener('change', () => {
+      _compareManualOverride = true;
+    });
+  });
+
+  // ↻ Auto button — reset comparison to the auto-computed previous period.
+  document.getElementById('compare-reset').addEventListener('click', () => {
+    _compareManualOverride = false;
+    syncCompareInputs();
+  });
 
   document.getElementById('btn-shopify-load').addEventListener('click', loadFromShopify);
   setupAdLpHandlers();

@@ -1111,6 +1111,17 @@ app.get('/api/meta-cvr-impact-data', async (req, res) => {
   const source = escapeQL(req.query.source || 'facebook');
   const medium = escapeQL(req.query.medium || 'paid_social');
 
+  // Optional custom comparison range. When both compare_start + compare_end
+  // are valid YYYY-MM-DD, we run a second ShopifyQL query for that window
+  // and merge it into the main response under synthetic
+  // `comparison_<metric>__previous_period[_totals]` columns — same shape the
+  // built-in `COMPARE TO previous_period` produces, so the frontend parser
+  // works unchanged.
+  const cs = req.query.compare_start;
+  const ce = req.query.compare_end;
+  const useCustomCompare = cs && ce
+    && /^\d{4}-\d{2}-\d{2}$/.test(cs) && /^\d{4}-\d{2}-\d{2}$/.test(ce);
+
   const endpoint = `https://${SHOPIFY_URL}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
   const gqlQuery = `query RunShopifyQL($q: String!) {
     shopifyqlQuery(query: $q) {
@@ -1119,7 +1130,18 @@ app.get('/api/meta-cvr-impact-data', async (req, res) => {
     }
   }`;
 
-  const mainQuery = `FROM sessions
+  // When a custom compare window is supplied, drop COMPARE TO from the main
+  // query (we'll merge the comparison data in code below). We keep WITH TOTALS
+  // so the totals row still appears.
+  const mainQuery = useCustomCompare
+    ? `FROM sessions
+  SHOW sessions, conversion_rate, average_session_duration, sessions_with_cart_additions, sessions_that_reached_checkout, sessions_that_reached_and_completed_checkout
+  WHERE utm_source = '${source}' AND utm_medium = '${medium}'
+  GROUP BY utm_campaign, landing_page_path WITH TOTALS
+  SINCE ${start} UNTIL ${end}
+  ORDER BY sessions DESC
+VISUALIZE conversion_rate TYPE table`
+    : `FROM sessions
   SHOW sessions, conversion_rate, average_session_duration, sessions_with_cart_additions, sessions_that_reached_checkout, sessions_that_reached_and_completed_checkout
   WHERE utm_source = '${source}' AND utm_medium = '${medium}'
   GROUP BY utm_campaign, landing_page_path WITH TOTALS, PERCENT_CHANGE
@@ -1128,26 +1150,109 @@ app.get('/api/meta-cvr-impact-data', async (req, res) => {
   ORDER BY sessions DESC
 VISUALIZE conversion_rate TYPE table`;
 
-  console.log('\n[meta-cvr-impact-data] Main query:\n' + mainQuery);
+  const compareQuery = useCustomCompare ? `FROM sessions
+  SHOW sessions, conversion_rate, average_session_duration, sessions_with_cart_additions, sessions_that_reached_checkout, sessions_that_reached_and_completed_checkout
+  WHERE utm_source = '${source}' AND utm_medium = '${medium}'
+  GROUP BY utm_campaign, landing_page_path WITH TOTALS
+  SINCE ${cs} UNTIL ${ce}
+  ORDER BY sessions DESC` : null;
 
-  try {
+  console.log('\n[meta-cvr-impact-data] Main query:\n' + mainQuery);
+  if (compareQuery) console.log('\n[meta-cvr-impact-data] Compare query:\n' + compareQuery);
+
+  const runShopifyQL = async (q) => {
     const resp = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
-      body: JSON.stringify({ query: gqlQuery, variables: { q: mainQuery } }),
+      body: JSON.stringify({ query: gqlQuery, variables: { q } }),
     });
     const json = await resp.json();
     const payload = json.data?.shopifyqlQuery;
     if (payload?.parseErrors?.length) {
-      return res.status(500).json({ error: 'ShopifyQL parse error', details: payload.parseErrors });
+      const err = new Error('ShopifyQL parse error: ' + JSON.stringify(payload.parseErrors));
+      err.parseErrors = payload.parseErrors;
+      throw err;
     }
     if (!payload?.tableData) throw new Error('No data returned from Shopify');
+    return payload.tableData;
+  };
+
+  try {
+    const [main, compare] = await Promise.all([
+      runShopifyQL(mainQuery),
+      compareQuery ? runShopifyQL(compareQuery) : Promise.resolve(null),
+    ]);
+
+    // No custom compare → return main as-is (frontend already handles COMPARE
+    // TO previous_period output).
+    if (!compare) {
+      return res.json({
+        query: mainQuery,
+        filter: { source, medium },
+        columns: main.columns,
+        rows: main.rows,
+      });
+    }
+
+    // Merge the comparison query into the main response. We synthesize the
+    // same column names ShopifyQL emits for COMPARE TO previous_period, so
+    // the existing frontend parser picks them up without changes.
+    const cols = main.columns.map(c => (c.name || '').toLowerCase());
+    const cmpCols = compare.columns.map(c => (c.name || '').toLowerCase());
+
+    const idx = (arr, n) => arr.findIndex(s => s === n);
+    const iCampaign = idx(cols, 'utm_campaign');
+    const iLp       = idx(cols, 'landing_page_path');
+    const iSess     = idx(cols, 'sessions');
+    const iCvr      = idx(cols, 'conversion_rate');
+    const iSessTot  = idx(cols, 'sessions__totals');
+    const iCvrTot   = idx(cols, 'conversion_rate__totals');
+
+    const cmpICampaign = idx(cmpCols, 'utm_campaign');
+    const cmpILp       = idx(cmpCols, 'landing_page_path');
+    const cmpISess     = idx(cmpCols, 'sessions');
+    const cmpICvr      = idx(cmpCols, 'conversion_rate');
+    const cmpISessTot  = idx(cmpCols, 'sessions__totals');
+    const cmpICvrTot   = idx(cmpCols, 'conversion_rate__totals');
+
+    // Index comparison rows by (utm_campaign, landing_page_path)
+    const cmpMap = new Map();
+    let cmpTotals = null;
+    for (const row of compare.rows) {
+      const c = String(row[cmpICampaign] ?? '').trim();
+      const l = String(row[cmpILp]       ?? '').trim();
+      if (!c && !l) { cmpTotals = row; continue; }     // totals row
+      cmpMap.set(c + '||' + l, row);
+    }
+
+    // Append two synthetic columns per metric we surface.
+    const newColumns = [
+      ...main.columns,
+      { name: 'comparison_sessions__previous_period',        dataType: 'integer' },
+      { name: 'comparison_conversion_rate__previous_period', dataType: 'percent' },
+      { name: 'comparison_sessions__previous_period__totals',        dataType: 'integer' },
+      { name: 'comparison_conversion_rate__previous_period__totals', dataType: 'percent' },
+    ];
+
+    const newRows = main.rows.map(row => {
+      const c = String(row[iCampaign] ?? '').trim();
+      const l = String(row[iLp]       ?? '').trim();
+      const isTotalsRow = !c && !l;
+      const cmpRow = isTotalsRow ? cmpTotals : cmpMap.get(c + '||' + l);
+      const cmpSess = cmpRow != null ? cmpRow[cmpISess] : null;
+      const cmpCvr  = cmpRow != null ? cmpRow[cmpICvr]  : null;
+      const cmpSessTot = cmpTotals != null && cmpISessTot >= 0 ? cmpTotals[cmpISessTot] : (cmpRow != null && isTotalsRow ? cmpSess : null);
+      const cmpCvrTot  = cmpTotals != null && cmpICvrTot  >= 0 ? cmpTotals[cmpICvrTot]  : (cmpRow != null && isTotalsRow ? cmpCvr  : null);
+      return [...row, cmpSess, cmpCvr, cmpSessTot, cmpCvrTot];
+    });
 
     res.json({
       query: mainQuery,
+      compare_query: compareQuery,
       filter: { source, medium },
-      columns: payload.tableData.columns,
-      rows: payload.tableData.rows,
+      compare_window: { start: cs, end: ce },
+      columns: newColumns,
+      rows: newRows,
     });
   } catch (err) {
     console.error('Meta CVR impact data error:', err);
