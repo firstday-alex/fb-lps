@@ -1,0 +1,1248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Creative Fatigue · Per-Ad Lifecycle</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --fb-blue: #1877f2;
+      --fb-blue-dark: #166fe5;
+      --bg: #f0f2f5;
+      --surface: #fff;
+      --text-primary: #1c1e21;
+      --text-secondary: #65676b;
+      --border: #dddfe2;
+      --positive: #1a7f37;
+      --positive-bg: #dcfce7;
+      --negative: #c0392b;
+      --negative-bg: #fee2e2;
+      --neutral-bg: #e4e6eb;
+      --shadow: 0 1px 3px rgba(0,0,0,0.12);
+      --radius: 8px;
+      --amber: #d97706;
+      --amber-bg: #fef3c7;
+
+      --st-healthy:    #1a7f37; --st-healthy-bg: #dcfce7;
+      --st-watching:   #2563eb; --st-watching-bg:#dbeafe;
+      --st-fatiguing:  #ca8a04; --st-fatiguing-bg:#fef9c3;
+      --st-fatigued:   #ea580c; --st-fatigued-bg:#ffedd5;
+      --st-replace:    #dc2626; --st-replace-bg: #fee2e2;
+      --st-unknown:    #64748b; --st-unknown-bg: #e2e8f0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text-primary);
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+    header {
+      background: var(--fb-blue); color: white;
+      padding: 16px 24px;
+      display: flex; align-items: center; gap: 16px;
+    }
+    .header__back {
+      color: rgba(255,255,255,0.85);
+      text-decoration: none;
+      font-size: 0.875rem;
+      border: 1px solid rgba(255,255,255,0.3);
+      padding: 4px 10px;
+      border-radius: 6px;
+    }
+    .header__back:hover { background: rgba(255,255,255,0.15); }
+    header h1 { font-size: 1.2rem; font-weight: 700; }
+    header p  { font-size: 0.8rem; opacity: 0.75; }
+
+    /* Picker */
+    #picker-screen { max-width: 640px; margin: 60px auto; padding: 0 24px; }
+    .picker-card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 28px 32px;
+    }
+    .picker-card h2 { font-size: 1.1rem; margin-bottom: 6px; }
+    .picker-card .lede { font-size: 0.86rem; color: var(--text-secondary); margin-bottom: 18px; }
+    .field-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px 16px;
+      margin-bottom: 16px;
+    }
+    .field-grid .full { grid-column: 1 / -1; }
+    .field { display: flex; flex-direction: column; gap: 4px; }
+    .field label {
+      font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--text-secondary);
+    }
+    .field input, .field select {
+      padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px;
+      font-size: 0.88rem; font-family: inherit;
+    }
+    .field input:focus, .field select:focus {
+      outline: none; border-color: var(--fb-blue);
+      box-shadow: 0 0 0 2px rgba(24,119,242,0.15);
+    }
+    .period-block {
+      grid-column: 1 / -1;
+      padding: 12px 14px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: #f9fafc;
+    }
+    .period-block h3 {
+      font-size: 0.74rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--text-secondary);
+      margin-bottom: 8px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .auto-tag {
+      font-size: 0.66rem; font-weight: 600;
+      padding: 1px 6px;
+      background: var(--neutral-bg);
+      color: var(--text-secondary);
+      border-radius: 3px;
+      text-transform: none; letter-spacing: 0;
+    }
+    .auto-tag.custom { background: #fef3c7; color: #92400e; }
+    .period-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr auto;
+      gap: 10px;
+      align-items: end;
+    }
+    .btn-tiny {
+      font-size: 0.74rem; padding: 6px 10px;
+      border: 1px solid var(--border); border-radius: 6px;
+      background: var(--surface); cursor: pointer;
+      color: var(--text-secondary);
+    }
+    .btn-tiny:hover { background: var(--bg); color: var(--text-primary); }
+    .btn-primary {
+      flex: 1; padding: 12px 18px; background: #96bf48; color: #fff;
+      border: none; border-radius: var(--radius);
+      font-size: 0.95rem; font-weight: 600; cursor: pointer;
+    }
+    .btn-primary:hover { background: #7ea93e; }
+    .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+    .picker-actions { display: flex; gap: 10px; margin-top: 6px; }
+    .picker-status {
+      margin-top: 12px; font-size: 0.84rem; color: var(--text-secondary); min-height: 1.4em;
+    }
+    .picker-status.error { color: var(--negative); }
+    .picker-status.warn  { color: var(--amber); }
+
+    /* Toggle */
+    .toggle-row {
+      display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+      grid-column: 1 / -1;
+    }
+    .toggle-row label {
+      font-size: 0.78rem; color: var(--text-secondary);
+      display: inline-flex; gap: 6px; align-items: center;
+    }
+
+    /* Results */
+    #results-screen { display: none; }
+    .results-wrap {
+      max-width: 1320px;
+      margin: 0 auto;
+      padding: 20px 24px;
+      display: flex; flex-direction: column; gap: 16px;
+    }
+    .top-bar {
+      display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 10px;
+    }
+    .top-bar__info { font-size: 0.82rem; color: var(--text-secondary); }
+    .top-bar__info strong { color: var(--text-primary); }
+    .btn-reset {
+      font-size: 0.82rem; padding: 6px 14px;
+      border: 1px solid var(--border); border-radius: 6px;
+      background: var(--surface); cursor: pointer; color: var(--text-secondary);
+    }
+    .btn-reset:hover { background: var(--bg); }
+
+    /* State summary KPIs */
+    .state-row {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 10px;
+    }
+    @media (max-width: 1000px) { .state-row { grid-template-columns: repeat(3, 1fr); } }
+    @media (max-width: 600px)  { .state-row { grid-template-columns: repeat(2, 1fr); } }
+    .state-card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 12px 14px;
+      border-top: 3px solid var(--st-unknown);
+    }
+    .state-card.healthy    { border-top-color: var(--st-healthy); }
+    .state-card.watching   { border-top-color: var(--st-watching); }
+    .state-card.fatiguing  { border-top-color: var(--st-fatiguing); }
+    .state-card.fatigued   { border-top-color: var(--st-fatigued); }
+    .state-card.replace_now{ border-top-color: var(--st-replace); }
+    .state-card.unknown    { border-top-color: var(--st-unknown); }
+    .state-card__head {
+      font-size: 0.7rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.05em;
+      color: var(--text-secondary); margin-bottom: 4px;
+    }
+    .state-card__count {
+      font-size: 1.4rem; font-weight: 700; line-height: 1.1;
+      font-variant-numeric: tabular-nums;
+    }
+    .state-card__sub {
+      font-size: 0.72rem; color: var(--text-secondary); margin-top: 2px;
+    }
+
+    /* Runway calculator */
+    .runway-card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 18px 20px;
+    }
+    .runway-card h3 {
+      font-size: 1rem; font-weight: 700; margin-bottom: 4px;
+    }
+    .runway-card .runway-sub { font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 14px; }
+    .runway-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+    }
+    .runway-cell {
+      padding: 10px 12px;
+      background: #f9fafc;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+    .runway-cell__label {
+      font-size: 0.66rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--text-secondary);
+    }
+    .runway-cell__val {
+      font-size: 1.3rem; font-weight: 700; line-height: 1.1;
+      font-variant-numeric: tabular-nums;
+      margin-top: 3px;
+    }
+    .runway-cell__sub {
+      font-size: 0.72rem; color: var(--text-secondary); margin-top: 2px;
+    }
+    .runway-cell.warn { background: var(--amber-bg); border-color: var(--amber); }
+    .runway-cell.warn .runway-cell__val { color: var(--amber); }
+    .runway-cell.bad  { background: var(--negative-bg); border-color: var(--negative); }
+    .runway-cell.bad  .runway-cell__val { color: var(--negative); }
+    .runway-cell.good { background: var(--positive-bg); border-color: var(--positive); }
+    .runway-cell.good .runway-cell__val { color: var(--positive); }
+
+    .runway-input-row {
+      display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+      margin-bottom: 14px; padding-bottom: 12px;
+      border-bottom: 1px dashed var(--border);
+    }
+    .runway-input-row label {
+      font-size: 0.78rem; font-weight: 600; color: var(--text-secondary);
+    }
+    .runway-input-row input {
+      width: 140px; padding: 7px 10px;
+      border: 1px solid var(--border); border-radius: 6px;
+      font-size: 0.95rem; font-family: inherit;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* Pillsbar */
+    .filter-row {
+      display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    }
+    .filter-pill {
+      padding: 5px 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      font-size: 0.78rem; font-weight: 600;
+      color: var(--text-secondary);
+      cursor: pointer;
+    }
+    .filter-pill.active {
+      background: var(--fb-blue); color: white; border-color: var(--fb-blue);
+    }
+    .filter-pill:hover:not(.active) { background: var(--bg); }
+
+    /* Group cards (per ad set) */
+    .group-card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .group-card__head {
+      padding: 14px 18px;
+      background: #f7f9fc;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      display: flex; align-items: center; gap: 14px;
+      flex-wrap: wrap;
+    }
+    .group-card__head:hover { background: #eef3ff; }
+    .group-card__title {
+      font-size: 0.94rem; font-weight: 700;
+    }
+    .group-card__campaign {
+      font-size: 0.72rem; color: var(--text-secondary);
+      margin-top: 2px;
+    }
+    .group-card__states {
+      display: flex; gap: 6px; flex-wrap: wrap;
+      margin-left: auto;
+    }
+    .ministate {
+      font-size: 0.7rem; font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 999px;
+      display: inline-flex; align-items: center; gap: 4px;
+    }
+    .ministate.healthy    { background: var(--st-healthy-bg);   color: var(--st-healthy); }
+    .ministate.watching   { background: var(--st-watching-bg);  color: var(--st-watching); }
+    .ministate.fatiguing  { background: var(--st-fatiguing-bg); color: var(--st-fatiguing); }
+    .ministate.fatigued   { background: var(--st-fatigued-bg);  color: var(--st-fatigued); }
+    .ministate.replace_now{ background: var(--st-replace-bg);   color: var(--st-replace); }
+    .ministate.unknown    { background: var(--st-unknown-bg);   color: var(--st-unknown); }
+    .group-toggle {
+      font-size: 0.74rem; color: var(--text-secondary);
+      width: 16px; text-align: center;
+    }
+    .group-card__body { display: none; }
+    .group-card.open .group-card__body { display: block; }
+    .group-card.open .group-toggle { transform: rotate(90deg); }
+
+    /* Ad table */
+    table.ads-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+    }
+    table.ads-table th {
+      text-align: left;
+      padding: 9px 10px;
+      font-size: 0.66rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--text-secondary);
+      border-bottom: 1px solid var(--border);
+      background: var(--surface); white-space: nowrap;
+    }
+    table.ads-table th.r { text-align: right; }
+    table.ads-table th.sort { cursor: pointer; user-select: none; }
+    table.ads-table th.sort:hover { color: var(--fb-blue); }
+    table.ads-table th.sort.active { color: var(--fb-blue); }
+    table.ads-table td {
+      padding: 9px 10px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+    table.ads-table td.r { text-align: right; font-variant-numeric: tabular-nums; }
+    table.ads-table tr.row-main { cursor: pointer; }
+    table.ads-table tr.row-main:hover { background: #f7f9ff; }
+    table.ads-table tr.row-main.open { background: #eef3ff; }
+    table.ads-table tr.row-detail td { background: #fafbff; padding: 0; }
+    .ad-name {
+      font-family: ui-monospace, SF Mono, Menlo, monospace;
+      font-size: 0.74rem;
+      max-width: 480px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .ad-meta {
+      font-size: 0.7rem; color: var(--text-secondary); margin-top: 1px;
+    }
+    .delta { font-size: 0.7rem; color: var(--text-secondary); margin-top: 1px; }
+    .delta.pos { color: var(--positive); }
+    .delta.neg { color: var(--negative); }
+
+    /* Fatigue pill */
+    .fatigue-pill {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 9px;
+      border-radius: 999px;
+      font-size: 0.72rem; font-weight: 700;
+      white-space: nowrap;
+    }
+    .fatigue-pill.healthy    { background: var(--st-healthy-bg);   color: var(--st-healthy); }
+    .fatigue-pill.watching   { background: var(--st-watching-bg);  color: var(--st-watching); }
+    .fatigue-pill.fatiguing  { background: var(--st-fatiguing-bg); color: var(--st-fatiguing); }
+    .fatigue-pill.fatigued   { background: var(--st-fatigued-bg);  color: var(--st-fatigued); }
+    .fatigue-pill.replace_now{ background: var(--st-replace-bg);   color: var(--st-replace); }
+    .fatigue-pill.unknown    { background: var(--st-unknown-bg);   color: var(--st-unknown); }
+
+    /* Detail */
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 10px;
+      padding: 14px 18px 6px;
+    }
+    .detail-cell {
+      padding: 8px 10px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+    .detail-cell__label {
+      font-size: 0.64rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.05em;
+      color: var(--text-secondary);
+    }
+    .detail-cell__val {
+      font-size: 0.92rem; font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+    .detail-cell__sub { font-size: 0.7rem; color: var(--text-secondary); }
+    .signals-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 8px;
+      padding: 0 18px 14px;
+    }
+    .signal {
+      display: flex; flex-direction: column; gap: 3px;
+      padding: 6px 10px;
+      background: var(--surface);
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      font-size: 0.74rem;
+    }
+    .signal__label {
+      font-size: 0.64rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--text-secondary);
+    }
+    .signal__bar {
+      height: 6px; background: var(--neutral-bg); border-radius: 3px;
+      overflow: hidden; margin-top: 2px;
+    }
+    .signal__fill { height: 100%; border-radius: 3px; }
+    .signal__num { font-variant-numeric: tabular-nums; font-weight: 600; }
+
+    .preview-box {
+      grid-column: 1 / -1;
+      padding: 10px 14px;
+      background: var(--surface);
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      font-size: 0.78rem;
+    }
+    .preview-box__label {
+      font-size: 0.66rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--text-secondary);
+      margin-bottom: 4px;
+    }
+    .detail-link {
+      font-size: 0.78rem;
+      color: var(--fb-blue);
+      text-decoration: underline;
+      word-break: break-all;
+    }
+    .detail-link:hover { color: var(--fb-blue-dark); }
+    .sop-line {
+      grid-column: 1 / -1;
+      padding: 8px 14px;
+      background: #f0f7ff;
+      border-radius: 6px;
+      font-size: 0.84rem;
+      color: var(--fb-blue-dark);
+      border: 1px solid #c5d4f5;
+    }
+    .sop-line strong { font-weight: 700; }
+
+    .empty-state {
+      padding: 32px;
+      text-align: center;
+      color: var(--text-secondary);
+      font-size: 0.86rem;
+    }
+
+    .debug-link { font-size: 0.78rem; color: var(--fb-blue); cursor: pointer; text-decoration: underline; }
+    .debug-panel {
+      display: none;
+      margin-top: 10px;
+      padding: 12px;
+      background: #1c1e21;
+      color: #c8d3e1;
+      border-radius: var(--radius);
+      font-family: ui-monospace, SF Mono, Menlo, monospace;
+      font-size: 0.74rem;
+      max-height: 360px;
+      overflow: auto;
+      white-space: pre;
+    }
+    .debug-panel.open { display: block; }
+    .hidden { display: none !important; }
+    .spinner {
+      display: inline-block;
+      width: 14px; height: 14px;
+      border: 2px solid rgba(0,0,0,0.1);
+      border-top-color: var(--fb-blue);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+<header>
+  <a class="header__back" href="/">&#8592; Ads Viewer</a>
+  <div>
+    <h1>Creative Fatigue</h1>
+    <p>Per-ad lifecycle scoring (Healthy → Watching → Fatiguing → Fatigued → Replace Now) with runway projection</p>
+  </div>
+</header>
+
+<!-- ───────────────────────────── PICKER ───────────────────────────── -->
+<div id="picker-screen">
+  <div class="picker-card">
+    <h2>Configure</h2>
+    <p class="lede">
+      Fatigue is a creative-level phenomenon — each ad ages independently.
+      This view scores every ad and rolls up by ad set so you can see
+      <em>X creatives — Y healthy, Z fatigued</em> and forecast capacity.
+    </p>
+
+    <div class="field-grid">
+      <div class="field full">
+        <label>Meta ad account</label>
+        <select id="f-account">
+          <option value="">— loading accounts —</option>
+        </select>
+      </div>
+
+      <div class="period-block">
+        <h3>Current period <span class="auto-tag">14d daily insights from Meta</span></h3>
+        <div class="period-row">
+          <div class="field"><label>since</label><input type="date" id="f-since"></div>
+          <div class="field"><label>until</label><input type="date" id="f-until"></div>
+          <span></span>
+        </div>
+      </div>
+
+      <div class="period-block">
+        <h3>Compare period <span class="auto-tag" id="compare-mode-tag">auto · prev period</span></h3>
+        <div class="period-row">
+          <div class="field"><label>since</label><input type="date" id="f-compare-since"></div>
+          <div class="field"><label>until</label><input type="date" id="f-compare-until"></div>
+          <button type="button" class="btn-tiny" id="btn-compare-reset" title="Snap compare window to the period immediately preceding the current window">↻ Auto</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Min daily spend (last 7d)</label>
+        <input type="number" id="f-min-spend" value="5" min="0" step="1">
+      </div>
+      <div class="field">
+        <label>Include Shopify CVR join</label>
+        <select id="f-include-shopify">
+          <option value="0" selected>No (Meta only — faster)</option>
+          <option value="1">Yes (utm_content match)</option>
+        </select>
+      </div>
+
+      <div class="full" id="shopify-utm-row" style="display:none">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="field">
+            <label>utm_source</label>
+            <input type="text" id="f-source" value="facebook">
+          </div>
+          <div class="field">
+            <label>utm_medium</label>
+            <input type="text" id="f-medium" value="paid_social">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="picker-actions">
+      <button class="btn-primary" id="btn-run">Run fatigue scan</button>
+    </div>
+    <div class="picker-status" id="picker-status"></div>
+  </div>
+</div>
+
+<!-- ───────────────────────────── RESULTS ──────────────────────────── -->
+<div id="results-screen">
+  <div class="results-wrap">
+
+    <div class="top-bar">
+      <div class="top-bar__info" id="top-bar-info"></div>
+      <div>
+        <span class="debug-link" id="debug-toggle">show debug</span>
+        &nbsp;·&nbsp;
+        <button class="btn-reset" id="btn-back">&#8592; New scan</button>
+      </div>
+    </div>
+    <pre class="debug-panel" id="debug-panel"></pre>
+
+    <!-- State summary cards -->
+    <div class="state-row" id="state-row"></div>
+
+    <!-- Runway calculator -->
+    <div class="runway-card" id="runway-card"></div>
+
+    <!-- Filter pills -->
+    <div class="filter-row" id="filter-row"></div>
+
+    <!-- Per-adset rollup -->
+    <div id="groups-container"></div>
+
+  </div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────────────────────────────
+// CONSTANTS
+// ─────────────────────────────────────────────────────────────────────
+const STATE_LABELS = {
+  healthy:     '🟢 Healthy',
+  watching:    '👀 Watching',
+  fatiguing:   '🟡 Fatiguing',
+  fatigued:    '🟠 Fatigued',
+  replace_now: '🔴 Replace Now',
+  unknown:     '— No data',
+};
+const STATE_ORDER = ['replace_now', 'fatigued', 'fatiguing', 'watching', 'healthy', 'unknown'];
+const STATE_SOP = {
+  healthy:     'Continue scaling. No action required.',
+  watching:    'Tag for monitoring — check daily for slope changes.',
+  fatiguing:   'Stop scaling. Plan a refresh in this concept family.',
+  fatigued:    'Pause scaling, hold spend flat. Trigger creative brief.',
+  replace_now: 'Pause and replace immediately. Brief for net-new variant.',
+  unknown:     'Insufficient data — too few days or too low spend to score.',
+};
+const SIGNAL_LABELS = {
+  freq_velocity:       'Freq velocity (25%)',
+  ctr_decay:           'CTR decay (20%)',
+  roas_slope:          'ROAS slope (20%)',
+  cpc_inflation:       'CPC inflation (15%)',
+  audience_saturation: 'Saturation proxy (10%)',
+  cpp_slope:           'CPP slope (10%)',
+};
+
+// ─────────────────────────────────────────────────────────────────────
+// DEBUG
+// ─────────────────────────────────────────────────────────────────────
+const _debugLog = [];
+function dbg(label, ...args) {
+  const ts = new Date().toISOString().slice(11, 23);
+  console.log(`[creative-fatigue ${ts}]`, label, ...args);
+  try {
+    _debugLog.push(`[${ts}] ${label} ${args.map(a => {
+      if (a == null) return String(a);
+      if (typeof a === 'string') return a;
+      try { return JSON.stringify(a); } catch { return String(a); }
+    }).join(' ')}`);
+    const panel = document.getElementById('debug-panel');
+    if (panel) panel.textContent = _debugLog.slice(-200).join('\n');
+  } catch (e) {}
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────────────────────────────
+function fmtInt(n) {
+  if (n == null || isNaN(n)) return '—';
+  return Math.round(n).toLocaleString();
+}
+function fmtPct(fraction, places = 2) {
+  if (fraction == null || isNaN(fraction)) return '—';
+  return (fraction * 100).toFixed(places) + '%';
+}
+function fmtMoney(n, places = 0) {
+  if (n == null || isNaN(n)) return '—';
+  if (places === 0) return '$' + Math.round(n).toLocaleString();
+  return '$' + n.toFixed(places);
+}
+function deltaPctEl(curr, prev) {
+  if (prev == null || prev === 0) return '<span class="delta">—</span>';
+  const pct = (curr - prev) / prev;
+  const cls = pct > 0.001 ? 'pos' : pct < -0.001 ? 'neg' : '';
+  return `<span class="delta ${cls}">${pct > 0 ? '+' : ''}${(pct * 100).toFixed(1)}% vs ${fmtMoney(prev)}</span>`;
+}
+function todayMinusDays(d) {
+  const dt = new Date();
+  dt.setUTCDate(dt.getUTCDate() - d);
+  return dt.toISOString().slice(0, 10);
+}
+function autoComputeCompareRange() {
+  const startStr = document.getElementById('f-since').value;
+  const endStr   = document.getElementById('f-until').value;
+  if (!startStr || !endStr) return null;
+  const sd = new Date(startStr + 'T00:00:00Z');
+  const ed = new Date(endStr   + 'T00:00:00Z');
+  if (isNaN(sd.getTime()) || isNaN(ed.getTime()) || ed < sd) return null;
+  const days = Math.round((ed - sd) / 86400000) + 1;
+  const cEnd = new Date(sd); cEnd.setUTCDate(cEnd.getUTCDate() - 1);
+  const cStart = new Date(cEnd); cStart.setUTCDate(cStart.getUTCDate() - (days - 1));
+  return { since: cStart.toISOString().slice(0, 10), until: cEnd.toISOString().slice(0, 10) };
+}
+function syncCompareInputs() {
+  if (_compareManualOverride) return;
+  const r = autoComputeCompareRange();
+  if (!r) return;
+  document.getElementById('f-compare-since').value = r.since;
+  document.getElementById('f-compare-until').value = r.until;
+  updateCompareModeTag();
+}
+function updateCompareModeTag() {
+  const tag = document.getElementById('compare-mode-tag');
+  if (!tag) return;
+  if (_compareManualOverride) {
+    tag.textContent = 'custom';
+    tag.classList.add('custom');
+  } else {
+    tag.textContent = 'auto · prev period';
+    tag.classList.remove('custom');
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// STATE
+// ─────────────────────────────────────────────────────────────────────
+let _rows = [];
+let _meta = null;
+let _previewCache = new Map();
+let _compareManualOverride = false;
+let _testingFilter = 'scaling';     // 'scaling' | 'testing' | 'all'
+let _stateFilter = null;            // null = all, otherwise one of the state keys
+let _adSort = { key: 'fatigue', dir: 'desc' };  // ad-row sort within group
+
+// ─────────────────────────────────────────────────────────────────────
+// PIPELINE
+// ─────────────────────────────────────────────────────────────────────
+async function loadAccounts() {
+  try {
+    const r = await fetch('/api/ad-accounts');
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${r.status}`);
+    }
+    const data = await r.json();
+    const sel = document.getElementById('f-account');
+    sel.innerHTML = '<option value="">— choose an ad account —</option>'
+      + (data.accounts || []).map(a =>
+          `<option value="${a.id}">${a.name} (${a.id})</option>`
+        ).join('');
+    dbg('accounts loaded', { n: (data.accounts || []).length });
+  } catch (err) {
+    dbg('account load failed', err.message);
+    const status = document.getElementById('picker-status');
+    status.className = 'picker-status error';
+    status.innerHTML = `Couldn't load ad accounts (${err.message}). <a href="/auth/facebook">Log in with Meta</a> first.`;
+  }
+}
+
+async function runScan() {
+  const btn    = document.getElementById('btn-run');
+  const status = document.getElementById('picker-status');
+  const account_id = document.getElementById('f-account').value;
+  const since  = document.getElementById('f-since').value;
+  const until  = document.getElementById('f-until').value;
+  const compareSince = document.getElementById('f-compare-since').value;
+  const compareUntil = document.getElementById('f-compare-until').value;
+  const minSpend = document.getElementById('f-min-spend').value;
+  const includeShopify = document.getElementById('f-include-shopify').value === '1';
+  const source = document.getElementById('f-source').value.trim() || 'facebook';
+  const medium = document.getElementById('f-medium').value.trim() || 'paid_social';
+
+  if (!account_id) { status.className = 'picker-status error'; status.textContent = 'Pick an ad account.'; return; }
+  if (!since || !until) { status.className = 'picker-status error'; status.textContent = 'Pick a date range.'; return; }
+
+  const auto = autoComputeCompareRange();
+  const sendCustomCompare = _compareManualOverride
+    && compareSince && compareUntil
+    && (!auto || compareSince !== auto.since || compareUntil !== auto.until);
+
+  btn.disabled = true;
+  status.className = 'picker-status';
+  status.innerHTML = '<span class="spinner"></span>Pulling Meta daily insights… (this can take 15-30s on large accounts)';
+  dbg('runScan start', { account_id, since, until, minSpend, includeShopify, sendCustomCompare });
+
+  try {
+    const params = new URLSearchParams({ account_id, since, until, min_daily_spend: minSpend });
+    if (sendCustomCompare) {
+      params.set('compare_since', compareSince);
+      params.set('compare_until', compareUntil);
+    }
+    if (includeShopify) {
+      params.set('include_shopify', '1');
+      params.set('source', source);
+      params.set('medium', medium);
+    }
+    const t0 = performance.now();
+    const r = await fetch(`/api/creative-fatigue-data?${params.toString()}`);
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${r.status}`);
+    }
+    const data = await r.json();
+    dbg(`response in ${(performance.now() - t0).toFixed(0)}ms`, data.summary, data.meta_counts);
+    _rows = data.rows || [];
+    _meta = data;
+
+    if (!_rows.length) {
+      status.className = 'picker-status warn';
+      status.textContent = `No ads passed the min-spend filter ($${minSpend}/day). Lower the threshold or widen the date range.`;
+      btn.disabled = false;
+      return;
+    }
+
+    renderAll();
+
+    document.getElementById('picker-screen').style.display = 'none';
+    document.getElementById('results-screen').style.display = 'block';
+    btn.disabled = false;
+    status.className = 'picker-status';
+    status.textContent = '';
+  } catch (err) {
+    dbg('runScan error', err.message);
+    status.className = 'picker-status error';
+    status.textContent = err.message;
+    btn.disabled = false;
+  }
+}
+
+function renderAll() {
+  renderTopBar(_meta);
+  renderStateRow(_meta);
+  renderRunway();
+  renderFilters();
+  renderGroups();
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// RENDER
+// ─────────────────────────────────────────────────────────────────────
+function renderTopBar(data) {
+  const modeLabel = data.compare?.mode === 'custom'
+    ? '<span style="font-size:0.7rem;background:#fef3c7;color:#92400e;padding:1px 5px;border-radius:3px;margin-left:4px">custom</span>'
+    : '<span style="font-size:0.7rem;background:var(--neutral-bg);color:var(--text-secondary);padding:1px 5px;border-radius:3px;margin-left:4px">auto</span>';
+  const dropTag = (data.summary.dropped_low_spend || 0) > 0
+    ? ` · <span title="Ads dropped because their last-7d daily-avg spend was below the threshold.">filtered ${data.summary.dropped_low_spend} low-spend ads (&lt; $${data.summary.min_daily_spend}/day)</span>`
+    : '';
+  document.getElementById('top-bar-info').innerHTML =
+    `<strong>${data.account_id}</strong> · ` +
+    `current <strong>${data.since}→${data.until}</strong> ` +
+    `vs compare <strong>${data.compare.since}→${data.compare.until}</strong>${modeLabel} · ` +
+    `<span style="color:var(--text-secondary)">` +
+    `${data.summary.total_ads} ads scored${data.filter.include_shopify ? ` · joined ${data.filter.source}/${data.filter.medium}` : ''}` +
+    `${dropTag}</span>`;
+}
+
+function renderStateRow(data) {
+  const counts = data.summary.counts;
+  const spendByState = data.summary.daily_spend_by_state;
+  const total = data.summary.total_daily_spend;
+  const items = [
+    ['healthy',     counts.healthy,     spendByState.healthy],
+    ['watching',    counts.watching,    spendByState.watching],
+    ['fatiguing',   counts.fatiguing,   spendByState.fatiguing],
+    ['fatigued',    counts.fatigued,    spendByState.fatigued],
+    ['replace_now', counts.replace_now, spendByState.replace_now],
+    ['unknown',     counts.unknown,     spendByState.unknown],
+  ];
+  document.getElementById('state-row').innerHTML = items.map(([k, n, s]) => `
+    <div class="state-card ${k}">
+      <div class="state-card__head">${STATE_LABELS[k]}</div>
+      <div class="state-card__count">${n || 0}</div>
+      <div class="state-card__sub">${fmtMoney(s)}/day · ${total > 0 ? Math.round(((s || 0) / total) * 100) : 0}%</div>
+    </div>
+  `).join('');
+}
+
+function renderRunway() {
+  const counts = _meta.summary.counts;
+  const spend = _meta.summary.daily_spend_by_state;
+  const healthyCap = spend.healthy + spend.watching;     // healthy + watching = "still scaling-safe"
+  const atRiskCap  = spend.fatiguing + spend.fatigued + spend.replace_now;
+  const totalCap   = _meta.summary.total_daily_spend;
+  const healthyAds = (counts.healthy || 0) + (counts.watching || 0);
+  const avgSpendPerHealthy = healthyAds > 0 ? healthyCap / healthyAds : 0;
+
+  // Read target from persisted input (or reasonable default = 1.5x current)
+  const targetEl = document.getElementById('f-target-spend');
+  const target = targetEl ? parseFloat(targetEl.value) : Math.round(totalCap * 1.5);
+  const t = isFinite(target) && target > 0 ? target : Math.round(totalCap * 1.5);
+
+  const gap = t - healthyCap;
+  const needed = avgSpendPerHealthy > 0 ? Math.ceil(gap / avgSpendPerHealthy) : null;
+  const coverageRatio = t > 0 ? healthyCap / t : null;
+  const coverageCls = coverageRatio == null ? '' :
+                      coverageRatio >= 1   ? 'good' :
+                      coverageRatio >= 0.7 ? 'warn' : 'bad';
+  const briefCls = needed == null ? '' :
+                   needed <= 0    ? 'good' :
+                   needed <= 3    ? 'warn' :
+                                    'bad';
+
+  document.getElementById('runway-card').innerHTML = `
+    <h3>Runway projection</h3>
+    <div class="runway-sub">
+      "Healthy capacity" = sum of last-7d daily-avg spend across 🟢 Healthy + 👀 Watching ads (the creatives safe to scale).
+      Enter a target daily spend below to see whether the current healthy roster can absorb it.
+    </div>
+    <div class="runway-input-row">
+      <label for="f-target-spend">Target daily spend $</label>
+      <input type="number" id="f-target-spend" value="${t}" min="0" step="100" oninput="renderRunway()">
+      <span style="font-size:0.74rem;color:var(--text-secondary)">
+        (current total daily spend across all states: <strong>${fmtMoney(totalCap)}</strong>)
+      </span>
+    </div>
+    <div class="runway-grid">
+      <div class="runway-cell ${coverageCls}">
+        <div class="runway-cell__label">Healthy capacity</div>
+        <div class="runway-cell__val">${fmtMoney(healthyCap)}/day</div>
+        <div class="runway-cell__sub">${healthyAds} ads · avg ${fmtMoney(avgSpendPerHealthy)}/each</div>
+      </div>
+      <div class="runway-cell ${atRiskCap > 0 ? 'warn' : ''}">
+        <div class="runway-cell__label">At-risk capacity</div>
+        <div class="runway-cell__val">${fmtMoney(atRiskCap)}/day</div>
+        <div class="runway-cell__sub">spend in 🟡/🟠/🔴 — needs replacement soon</div>
+      </div>
+      <div class="runway-cell ${coverageCls}">
+        <div class="runway-cell__label">Coverage of target</div>
+        <div class="runway-cell__val">${coverageRatio == null ? '—' : (coverageRatio * 100).toFixed(0) + '%'}</div>
+        <div class="runway-cell__sub">healthy / target ratio</div>
+      </div>
+      <div class="runway-cell ${briefCls}">
+        <div class="runway-cell__label">Net-new creatives needed</div>
+        <div class="runway-cell__val">${needed == null ? '—' : (needed <= 0 ? '0' : needed)}</div>
+        <div class="runway-cell__sub">to close the gap at avg healthy spend rate</div>
+      </div>
+    </div>
+  `;
+}
+
+function renderFilters() {
+  const counts = _meta.summary.counts;
+  const total = _meta.summary.total_ads;
+  const testingCount = _rows.filter(r => r.is_testing).length;
+  const scalingCount = total - testingCount;
+  const html = `
+    <div class="filter-pill ${_testingFilter === 'scaling' ? 'active' : ''}" data-filter="testing:scaling">Scaling (${scalingCount})</div>
+    <div class="filter-pill ${_testingFilter === 'testing' ? 'active' : ''}" data-filter="testing:testing">Testing (${testingCount})</div>
+    <div class="filter-pill ${_testingFilter === 'all'     ? 'active' : ''}" data-filter="testing:all">All (${total})</div>
+    <span style="border-left:1px solid var(--border);height:18px;margin:0 4px"></span>
+    <div class="filter-pill ${_stateFilter === null ? 'active' : ''}" data-filter="state:null">All states</div>
+    ${STATE_ORDER.map(k => `
+      <div class="filter-pill ${_stateFilter === k ? 'active' : ''}" data-filter="state:${k}">
+        ${STATE_LABELS[k]} (${counts[k] || 0})
+      </div>
+    `).join('')}
+  `;
+  document.getElementById('filter-row').innerHTML = html;
+  document.querySelectorAll('#filter-row .filter-pill').forEach(el => {
+    el.addEventListener('click', () => {
+      const [type, val] = el.dataset.filter.split(':');
+      if (type === 'testing') _testingFilter = val;
+      if (type === 'state')   _stateFilter = (val === 'null' ? null : val);
+      dbg('filter changed', { testing: _testingFilter, state: _stateFilter });
+      renderFilters();
+      renderGroups();
+    });
+  });
+}
+
+function applyFilters(rows) {
+  return rows.filter(r => {
+    if (_testingFilter === 'scaling' && r.is_testing) return false;
+    if (_testingFilter === 'testing' && !r.is_testing) return false;
+    if (_stateFilter && (r.fatigue?.state || 'unknown') !== _stateFilter) return false;
+    return true;
+  });
+}
+
+function groupByAdset(rows) {
+  const map = new Map();
+  for (const r of rows) {
+    const k = (r.adset_id || '') + '||' + (r.adset_name || '(unknown)');
+    if (!map.has(k)) {
+      map.set(k, {
+        adset_id: r.adset_id, adset_name: r.adset_name,
+        campaign_id: r.campaign_id, campaign_name: r.campaign_name,
+        is_testing: r.is_testing,
+        ads: [],
+      });
+    }
+    map.get(k).ads.push(r);
+  }
+  // Sort each group's ads by fatigue score desc by default (most-fatigued first).
+  for (const g of map.values()) {
+    g.ads.sort((a, b) => (b.fatigue?.score || 0) - (a.fatigue?.score || 0));
+  }
+  // Order groups by total daily spend desc (the most consequential ad sets first).
+  return [...map.values()].sort((a, b) => {
+    const aS = a.ads.reduce((s, x) => s + (x.daily_avg_spend_last7 || 0), 0);
+    const bS = b.ads.reduce((s, x) => s + (x.daily_avg_spend_last7 || 0), 0);
+    return bS - aS;
+  });
+}
+
+function renderGroups() {
+  const filtered = applyFilters(_rows);
+  const groups = groupByAdset(filtered);
+  const container = document.getElementById('groups-container');
+  if (!filtered.length) {
+    container.innerHTML = `<div class="empty-state">No ads match the current filters.</div>`;
+    return;
+  }
+  container.innerHTML = groups.map((g, gi) => renderGroupCard(g, gi)).join('');
+  container.querySelectorAll('.group-card__head').forEach(el => {
+    el.addEventListener('click', () => {
+      el.parentElement.classList.toggle('open');
+    });
+  });
+  container.querySelectorAll('tr.row-main').forEach(tr => {
+    tr.addEventListener('click', (e) => {
+      // Don't toggle when clicking on links/buttons inside the row
+      if (e.target.closest('a, button, input')) return;
+      toggleAdDetail(tr);
+    });
+  });
+}
+
+function renderGroupCard(g, gi) {
+  const stateCounts = { healthy: 0, watching: 0, fatiguing: 0, fatigued: 0, replace_now: 0, unknown: 0 };
+  let totalSpend = 0, totalDailySpend = 0;
+  for (const r of g.ads) {
+    const st = r.fatigue?.state || 'unknown';
+    stateCounts[st] = (stateCounts[st] || 0) + 1;
+    totalSpend += r.spend || 0;
+    totalDailySpend += r.daily_avg_spend_last7 || 0;
+  }
+  const minis = STATE_ORDER
+    .filter(k => stateCounts[k])
+    .map(k => `<span class="ministate ${k}" title="${STATE_LABELS[k]}">${stateCounts[k]} ${k.replace('_', ' ')}</span>`)
+    .join('');
+  const adsHtml = g.ads.map((r, ri) => renderAdRow(r, `g${gi}-r${ri}`)).join('');
+  // Open the group by default if it has any 🟠/🔴 ads — that's where attention is needed.
+  const openByDefault = (stateCounts.fatigued || 0) + (stateCounts.replace_now || 0) > 0;
+  return `
+    <div class="group-card ${openByDefault ? 'open' : ''}" data-gi="${gi}">
+      <div class="group-card__head">
+        <div>
+          <div class="group-card__title">${g.adset_name}</div>
+          <div class="group-card__campaign">${g.campaign_name}${g.is_testing ? ' · <em>testing</em>' : ''}</div>
+        </div>
+        <div class="group-card__states">${minis}</div>
+        <span style="font-size:0.74rem;color:var(--text-secondary);min-width:100px;text-align:right">
+          ${g.ads.length} ads · ${fmtMoney(totalDailySpend)}/day
+        </span>
+        <span class="group-toggle">▶</span>
+      </div>
+      <div class="group-card__body">
+        <table class="ads-table">
+          <thead>
+            <tr>
+              <th>Ad name</th>
+              <th class="r">Days</th>
+              <th class="r">$/day (7d)</th>
+              <th class="r">ROAS 14d</th>
+              <th class="r">Fatigue</th>
+              <th>State</th>
+              <th>SOP</th>
+            </tr>
+          </thead>
+          <tbody>${adsHtml}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function renderAdRow(r, rowId) {
+  const f = r.fatigue || { score: null, state: 'unknown' };
+  const score = f.score == null ? '—' : Math.round(f.score);
+  const rowIndex = _rows.indexOf(r);
+  const adNameDisplay = r.ad_name || '<em>(unnamed)</em>';
+  return `
+    <tr class="row-main" data-rowid="${rowId}" data-rowindex="${rowIndex}" data-adid="${r.ad_id}">
+      <td class="ad-name" title="${(r.ad_name || '').replace(/"/g, '&quot;')}">
+        ${adNameDisplay}
+        <div class="ad-meta">${r.effective_status || ''}</div>
+      </td>
+      <td class="r">${r.days_running == null ? '—' : r.days_running + 'd'}</td>
+      <td class="r">
+        ${fmtMoney(r.daily_avg_spend_last7)}
+      </td>
+      <td class="r">${r.meta_roas == null ? '—' : (r.meta_roas).toFixed(2) + 'x'}</td>
+      <td class="r"><strong>${score}</strong></td>
+      <td><span class="fatigue-pill ${f.state || 'unknown'}">${STATE_LABELS[f.state || 'unknown']}</span></td>
+      <td style="font-size:0.74rem;color:var(--text-secondary);max-width:240px">${STATE_SOP[f.state || 'unknown']}</td>
+    </tr>
+    <tr class="row-detail" id="${rowId}-detail" style="display:none">
+      <td colspan="7"></td>
+    </tr>
+  `;
+}
+
+async function toggleAdDetail(tr) {
+  const rowId = tr.dataset.rowid;
+  const detailTr = document.getElementById(rowId + '-detail');
+  if (!detailTr) return;
+  const isOpen = tr.classList.contains('open');
+  if (isOpen) {
+    tr.classList.remove('open');
+    detailTr.style.display = 'none';
+    return;
+  }
+  tr.classList.add('open');
+  detailTr.style.display = '';
+  const td = detailTr.querySelector('td');
+  const rowIndex = parseInt(tr.dataset.rowindex, 10);
+  const adId = tr.dataset.adid;
+  const matched = (rowIndex >= 0 && rowIndex < _rows.length) ? _rows[rowIndex] : null;
+  td.innerHTML = renderAdDetail(matched);
+
+  // Lazy-load preview link
+  if (adId) {
+    const linkEl = td.querySelector('.preview-link-target');
+    if (linkEl) {
+      if (_previewCache.has(adId)) {
+        linkEl.innerHTML = formatPreviewLink(_previewCache.get(adId));
+      } else {
+        linkEl.innerHTML = '<span style="color:var(--text-secondary)"><span class="spinner"></span>fetching preview…</span>';
+        try {
+          const r = await fetch(`/api/diag-ad-preview?ad_id=${encodeURIComponent(adId)}`);
+          const d = await r.json();
+          _previewCache.set(adId, d);
+          linkEl.innerHTML = formatPreviewLink(d);
+        } catch (err) {
+          linkEl.innerHTML = `<span style="color:var(--negative)">preview fetch failed: ${err.message}</span>`;
+        }
+      }
+    }
+  }
+}
+
+function formatPreviewLink(d) {
+  if (!d) return '<span style="color:var(--text-secondary)">no data</span>';
+  if (d.error) return `<span style="color:var(--negative)">${d.error}</span>`;
+  const lines = [];
+  if (d.preview_shareable_link) {
+    lines.push(`<a class="detail-link" href="${d.preview_shareable_link}" target="_blank" rel="noopener">${d.preview_shareable_link}</a>`);
+  }
+  if (d.creative?.link_url) {
+    lines.push(`<div style="margin-top:4px"><span style="color:var(--text-secondary);font-size:0.72rem">Destination:</span> <a class="detail-link" href="${d.creative.link_url}" target="_blank" rel="noopener">${d.creative.link_url}</a></div>`);
+  }
+  return lines.join('') || '<span style="color:var(--text-secondary)">no preview link available</span>';
+}
+
+function renderAdDetail(r) {
+  if (!r) return `<div class="empty-state">Could not match row to data.</div>`;
+  const f = r.fatigue || { signals: {}, raw: {} };
+  const sigHtml = Object.keys(SIGNAL_LABELS).map(key => {
+    const v = f.signals?.[key];
+    const pct = v == null ? 0 : Math.min(100, Math.max(0, v));
+    const color = pct < 30 ? 'var(--st-healthy)' :
+                  pct < 50 ? 'var(--st-watching)' :
+                  pct < 70 ? 'var(--st-fatiguing)' :
+                  pct < 85 ? 'var(--st-fatigued)' :
+                             'var(--st-replace)';
+    return `
+      <div class="signal">
+        <div class="signal__label">${SIGNAL_LABELS[key]}</div>
+        <div class="signal__num">${v == null ? '—' : v.toFixed(0) + '/100'}</div>
+        <div class="signal__bar"><div class="signal__fill" style="width:${pct}%;background:${color}"></div></div>
+      </div>
+    `;
+  }).join('');
+  const cells = [
+    ['Spend (period)', fmtMoney(r.spend), `prev ${fmtMoney(r.prev_spend)}`, deltaPctEl(r.spend, r.prev_spend)],
+    ['$/day (last 7d)', fmtMoney(r.daily_avg_spend_last7, 2), '', ''],
+    ['Outbound clicks', fmtInt(r.outbound_clicks), `prev ${fmtInt(r.prev_outbound_clicks)}`, deltaPctEl(r.outbound_clicks, r.prev_outbound_clicks)],
+    ['Impressions', fmtInt(r.impressions), `${fmtInt(r.clicks)} clicks · ${fmtInt(r.link_clicks)} link`, ''],
+    ['Frequency 7d', f.raw?.last7Freq != null ? f.raw.last7Freq.toFixed(2) : '—', `prev 7d ${f.raw?.prev7Freq != null ? f.raw.prev7Freq.toFixed(2) : '—'}`, ''],
+    ['CTR 7d', fmtPct(f.raw?.last7Ctr, 2), `prev 7d ${fmtPct(f.raw?.prev7Ctr, 2)}`, ''],
+    ['CPC 7d', f.raw?.last7Cpc == null ? '—' : '$' + f.raw.last7Cpc.toFixed(2), `prev 7d ${f.raw?.prev7Cpc == null ? '—' : '$' + f.raw.prev7Cpc.toFixed(2)}`, ''],
+    ['Meta purchases', fmtInt(r.meta_purchases), `value ${fmtMoney(r.meta_purchase_value)}`, ''],
+    ['Meta ROAS', r.meta_roas == null ? '—' : r.meta_roas.toFixed(2) + 'x', '', ''],
+    ['Days running', r.days_running == null ? '—' : r.days_running + 'd', r.created_time ? `created ${r.created_time.slice(0,10)}` : '', ''],
+  ];
+  // Optional Shopify cells if data was joined
+  if (r.sessions != null || r.cvr != null) {
+    cells.push(['Shopify sessions', fmtInt(r.sessions), `prev ${fmtInt(r.prev_sessions)}`, deltaPctEl(r.sessions, r.prev_sessions)]);
+    cells.push(['Shopify CVR', fmtPct(r.cvr, 2), `prev ${fmtPct(r.prev_cvr, 2)}`, '']);
+    cells.push(['Shopify orders', fmtInt(r.orders), `prev ${fmtInt(r.prev_orders)}`, '']);
+  }
+  const cellsHtml = cells.map(([label, val, sub, delta]) => `
+    <div class="detail-cell">
+      <div class="detail-cell__label">${label}</div>
+      <div class="detail-cell__val">${val}</div>
+      ${sub ? `<div class="detail-cell__sub">${sub}</div>` : ''}
+      ${delta || ''}
+    </div>
+  `).join('');
+  return `
+    <div class="detail-grid">
+      <div class="sop-line">
+        <strong>Recommended action:</strong> ${STATE_SOP[f.state || 'unknown']}
+      </div>
+      ${cellsHtml}
+      <div class="preview-box">
+        <div class="preview-box__label">Ad preview & destination</div>
+        <div class="preview-link-target"><span style="color:var(--text-secondary)">click row to load…</span></div>
+      </div>
+    </div>
+    <div style="padding:0 18px 6px;font-size:0.74rem;color:var(--text-secondary);font-weight:700;text-transform:uppercase;letter-spacing:0.05em">
+      Fatigue signal breakdown
+    </div>
+    <div class="signals-grid">${sigHtml}</div>
+  `;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// WIRE UP
+// ─────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('f-since').value = todayMinusDays(14);
+  document.getElementById('f-until').value = todayMinusDays(1);
+  syncCompareInputs();
+
+  document.getElementById('f-since').addEventListener('change', syncCompareInputs);
+  document.getElementById('f-until').addEventListener('change', syncCompareInputs);
+  ['f-compare-since', 'f-compare-until'].forEach(id => {
+    document.getElementById(id).addEventListener('change', () => {
+      _compareManualOverride = true;
+      updateCompareModeTag();
+    });
+  });
+  document.getElementById('btn-compare-reset').addEventListener('click', () => {
+    _compareManualOverride = false;
+    syncCompareInputs();
+  });
+
+  document.getElementById('f-include-shopify').addEventListener('change', (e) => {
+    document.getElementById('shopify-utm-row').style.display = e.target.value === '1' ? '' : 'none';
+  });
+
+  document.getElementById('btn-run').addEventListener('click', runScan);
+  document.getElementById('btn-back').addEventListener('click', () => {
+    document.getElementById('results-screen').style.display = 'none';
+    document.getElementById('picker-screen').style.display  = 'block';
+  });
+  document.getElementById('debug-toggle').addEventListener('click', () => {
+    document.getElementById('debug-panel').classList.toggle('open');
+  });
+
+  loadAccounts();
+  dbg('init complete');
+});
+
+// Expose renderRunway to inline `oninput` on the target-spend input.
+window.renderRunway = renderRunway;
+</script>
+</body>
+</html>

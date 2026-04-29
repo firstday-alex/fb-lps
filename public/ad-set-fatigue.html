@@ -744,6 +744,9 @@ function renderTopBar(data) {
   const modeLabel = data.compare?.mode === 'custom'
     ? '<span style="font-size:0.7rem;background:#fef3c7;color:#92400e;padding:1px 5px;border-radius:3px;margin-left:4px">custom</span>'
     : '<span style="font-size:0.7rem;background:var(--neutral-bg);color:var(--text-secondary);padding:1px 5px;border-radius:3px;margin-left:4px">auto</span>';
+  const dropTag = (data.summary.dropped_low_sessions || 0) > 0
+    ? ` · <span title="Rows dropped because they had fewer than ${data.summary.min_sessions_threshold || 100} sessions in the current period.">filtered ${data.summary.dropped_low_sessions} low-sess rows (&lt; ${data.summary.min_sessions_threshold || 100})</span>`
+    : '';
   el.innerHTML =
     `<strong>${data.account_id}</strong> · ` +
     `current <strong>${data.since}→${data.until}</strong> ` +
@@ -751,7 +754,7 @@ function renderTopBar(data) {
     `<strong>${data.filter.source}/${data.filter.medium}</strong> · ` +
     `<span style="color:var(--text-secondary)">` +
     `${data.meta_counts.adsets_current} ad sets, ${data.meta_counts.meta_daily_rows} daily rows · ` +
-    `${data.summary.scored} scored / ${data.summary.unscored} unscored</span>`;
+    `${data.summary.scored} scored / ${data.summary.unscored} unscored${dropTag}</span>`;
 }
 
 function renderSummary(data) {

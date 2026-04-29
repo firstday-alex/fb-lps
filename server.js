@@ -2728,10 +2728,21 @@ app.get('/api/ad-set-fatigue-data', requireAuth, async (req, res) => {
 
     // Iterate Shopify-aggregated keys (every (adset, lp) with sessions in EITHER
     // period). This is the natural unit for the grouped-by-LP table.
+    //
+    // Drop long-tail rows: any (adset × LP) combo with fewer than
+    // MIN_SESSIONS sessions in the CURRENT period is ignored. Tiny session
+    // counts produce noisy CVR comparisons and clutter the LP-grouped tables;
+    // 100 is the same threshold used by the CVR Decomposition tool.
+    const MIN_SESSIONS = 100;
     const allKeys = new Set([...shopCurrAgg.keys(), ...shopPrevAgg.keys()]);
+    let droppedLowSess = 0;
     for (const key of allKeys) {
       const curr = shopCurrAgg.get(key) || { sessions: 0, orders: 0, cvr: 0 };
       const prev = shopPrevAgg.get(key) || { sessions: 0, orders: 0, cvr: 0 };
+      if ((curr.sessions || 0) < MIN_SESSIONS) {
+        droppedLowSess++;
+        continue;
+      }
       const adsetName = (curr.adset_name || prev.adset_name);
       const lp = (curr.lp || prev.lp);
 
@@ -2819,6 +2830,8 @@ app.get('/api/ad-set-fatigue-data', requireAuth, async (req, res) => {
 
     const summary = {
       rows: out.length,
+      dropped_low_sessions: droppedLowSess,
+      min_sessions_threshold: MIN_SESSIONS,
       scored: scoredCount,
       unscored: unscoredCount,
       states: {
@@ -2850,6 +2863,428 @@ app.get('/api/ad-set-fatigue-data', requireAuth, async (req, res) => {
     });
   } catch (err) {
     console.error('[ad-set-fatigue] ✗', err.message, err.stack ? '\n' + err.stack.split('\n').slice(0, 5).join('\n') : '');
+    if (err.status === 401) return res.status(401).json({ error: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────
+// CREATIVE FATIGUE — per-AD scoring
+// ─────────────────────────────────────────────
+// Same 6-signal fatigue formula as the ad-set tab, but applied at the ad
+// level. Why: fatigue is a creative phenomenon — a specific video/image
+// gets old, the audience has seen it too many times, the auction starts
+// punishing it. Ad sets don't fatigue; the creatives inside them do.
+//
+// Output is one row per ad, with adset/campaign context for grouping. The
+// frontend rolls up per ad set to show "X creatives — Y healthy, Z fatigued"
+// and computes a healthy-capacity / runway projection.
+
+app.get('/api/creative-fatigue-data', requireAuth, async (req, res) => {
+  const t0 = Date.now();
+  const { account_id, since, until } = req.query;
+  if (!account_id || !since || !until) {
+    return res.status(400).json({ error: 'account_id, since, until required (YYYY-MM-DD)' });
+  }
+  const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+  if (!dateRe.test(since) || !dateRe.test(until)) {
+    return res.status(400).json({ error: 'since/until must be YYYY-MM-DD' });
+  }
+
+  // Comparison window — same convention as the ad-set tab.
+  const autoCompare = (() => {
+    const sd = new Date(since + 'T00:00:00Z');
+    const ed = new Date(until + 'T00:00:00Z');
+    const days = Math.round((ed - sd) / 86400000) + 1;
+    const cEnd   = new Date(sd); cEnd.setUTCDate(cEnd.getUTCDate() - 1);
+    const cStart = new Date(cEnd); cStart.setUTCDate(cStart.getUTCDate() - (days - 1));
+    return {
+      since: cStart.toISOString().slice(0, 10),
+      until: cEnd.toISOString().slice(0, 10),
+      days,
+    };
+  })();
+  const cs = req.query.compare_since;
+  const cu = req.query.compare_until;
+  const useCustomCompare = cs && cu && dateRe.test(cs) && dateRe.test(cu);
+  const auto = useCustomCompare
+    ? { since: cs, until: cu, days: Math.round((new Date(cu) - new Date(cs)) / 86400000) + 1, mode: 'custom' }
+    : { ...autoCompare, mode: 'auto-prev-period' };
+
+  // Optional Shopify join for sessions/CVR per ad. Off by default to keep
+  // the request fast; the dashboard's primary metrics are Meta-side.
+  const includeShopify = req.query.include_shopify === '1' || req.query.include_shopify === 'true';
+  const source = (req.query.source || 'facebook').replace(/'/g, "\\'");
+  const medium = (req.query.medium || 'paid_social').replace(/'/g, "\\'");
+
+  // Min daily spend filter (in last 7 days, $/day average). Replaces the
+  // session threshold from the ad-set tab — for creative fatigue, the
+  // signal-to-noise threshold is "is this ad even getting meaningful spend".
+  const minDailySpend = parseFloat(req.query.min_daily_spend || '5');
+
+  console.log('\n[creative-fatigue] ──────────────────────────────────────────');
+  console.log('[creative-fatigue] request', {
+    account_id, since, until,
+    compare_since: auto.since, compare_until: auto.until, compare_mode: auto.mode,
+    period_days: auto.days,
+    include_shopify: includeShopify,
+    min_daily_spend: minDailySpend,
+    source: includeShopify ? source : '(skipped)',
+    medium: includeShopify ? medium : '(skipped)',
+  });
+
+  const proof = generateAppSecretProof(req.accessToken);
+  const ensureProof = (u) => u.includes('appsecret_proof=') ? u : (u + `&appsecret_proof=${proof}`);
+
+  const META_FIELDS = [
+    'ad_id', 'ad_name', 'adset_id', 'adset_name', 'campaign_id', 'campaign_name',
+    'date_start', 'date_stop',
+    'spend', 'impressions', 'reach', 'frequency', 'clicks',
+    'inline_link_clicks', 'cpc', 'ctr', 'outbound_clicks',
+    'actions', 'action_values',
+  ].join(',');
+
+  const fetchInsights = async (s, u, increment, label) => {
+    const tStart = Date.now();
+    const url = `${META_BASE_URL}/${account_id}/insights`
+      + `?fields=${META_FIELDS}`
+      + `&time_range=${encodeURIComponent(JSON.stringify({ since: s, until: u }))}`
+      + `&level=ad`
+      + `&time_increment=${increment}`
+      + `&filtering=${encodeURIComponent(JSON.stringify([{ field: 'spend', operator: 'GREATER_THAN', value: 0 }]))}`
+      + `&limit=100`
+      + `&${metaParams(req.accessToken)}`;
+    const all = [];
+    let next = url;
+    let pages = 0;
+    while (next && pages < 50) {
+      const resp = await fetch(ensureProof(next));
+      const data = await resp.json();
+      if (data.error) {
+        if (data.error.code === 190) {
+          clearTokenCookie(res);
+          throw Object.assign(new Error('Session expired. Please log in again.'), { status: 401 });
+        }
+        throw new Error(`Meta insights error (${label}): ${data.error.message || JSON.stringify(data.error)}`);
+      }
+      if (Array.isArray(data.data)) all.push(...data.data);
+      next = data.paging?.next || null;
+      pages += 1;
+    }
+    console.log(`[creative-fatigue] meta-insights ${label}: ${all.length} rows in ${Date.now() - tStart}ms (${pages} pages)`);
+    return all;
+  };
+
+  // Batch-fetch ad created_time so we can show "days running."
+  const fetchAdMeta = async (adIds) => {
+    if (!adIds.length) return {};
+    const tStart = Date.now();
+    const out = {};
+    const slices = [];
+    for (let i = 0; i < adIds.length; i += 50) slices.push(adIds.slice(i, i + 50));
+    const proof2 = generateAppSecretProof(req.accessToken);
+    const batchResults = await Promise.all(slices.map(async (slice) => {
+      const batch = slice.map(id => ({
+        method: 'GET', relative_url: `${id}?fields=created_time,effective_status,configured_status`,
+      }));
+      try {
+        const body = new URLSearchParams({
+          access_token: req.accessToken,
+          appsecret_proof: proof2,
+          batch: JSON.stringify(batch),
+        });
+        const resp = await fetch(`${META_BASE_URL}/`, {
+          method: 'POST', body, signal: AbortSignal.timeout(20000),
+        });
+        return { slice, results: await resp.json() };
+      } catch (e) {
+        console.warn(`[creative-fatigue] ad-meta batch failed:`, e.message);
+        return { slice, results: null };
+      }
+    }));
+    let ok = 0, fail = 0;
+    for (const { slice, results } of batchResults) {
+      if (!Array.isArray(results)) { fail += slice.length; continue; }
+      for (let j = 0; j < slice.length; j++) {
+        const r = results[j];
+        if (r && r.code === 200) {
+          try { out[slice[j]] = JSON.parse(r.body); ok++; }
+          catch { fail++; }
+        } else {
+          fail++;
+        }
+      }
+    }
+    console.log(`[creative-fatigue] ad-meta: ${ok} ok / ${fail} fail in ${Date.now() - tStart}ms`);
+    return out;
+  };
+
+  // Optional Shopify pull (only when include_shopify=1).
+  const fetchShopify = async (s, u, label) => {
+    if (!includeShopify) return null;
+    if (!SHOPIFY_URL || !SHOPIFY_TOKEN) {
+      console.warn('[creative-fatigue] Shopify creds missing — skipping join');
+      return null;
+    }
+    const tStart = Date.now();
+    const endpoint = `https://${SHOPIFY_URL}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
+    const gqlQuery = `query R($q:String!){shopifyqlQuery(query:$q){tableData{columns{name dataType} rows} parseErrors}}`;
+    const q = `FROM sessions
+  SHOW sessions, conversion_rate
+  WHERE utm_source = '${source}' AND utm_medium = '${medium}'
+  GROUP BY utm_content WITH TOTALS
+  SINCE ${s} UNTIL ${u}
+  ORDER BY sessions DESC
+  LIMIT 5000`;
+    const resp = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json', 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
+      body: JSON.stringify({ query: gqlQuery, variables: { q } }),
+    });
+    const json = await resp.json();
+    const payload = json.data?.shopifyqlQuery;
+    if (payload?.parseErrors?.length) {
+      console.error(`[creative-fatigue] shopify ${label} parseErrors:`, payload.parseErrors);
+      return null;
+    }
+    const rows = payload?.tableData?.rows || [];
+    console.log(`[creative-fatigue] shopify ${label}: ${rows.length} rows in ${Date.now() - tStart}ms`);
+    return { columns: payload?.tableData?.columns || [], rows };
+  };
+
+  try {
+    const [metaDaily, metaPriorTotals, shopCurrBlock, shopPrevBlock] = await Promise.all([
+      fetchInsights(since, until, '1', 'current-daily'),
+      fetchInsights(auto.since, auto.until, 'all_days', 'prior-total'),
+      fetchShopify(since, until, 'current'),
+      fetchShopify(auto.since, auto.until, 'prior'),
+    ]);
+
+    // ────── Per-ad rollup of current daily series ──────
+    const actionVal = (arr, type) => Array.isArray(arr)
+      ? (arr.find(a => a.action_type === type)?.value ? parseFloat(arr.find(a => a.action_type === type).value) : 0)
+      : 0;
+
+    // adId → { ad_name, adset_id, adset_name, campaign_id, campaign_name,
+    //          daily: Map(date → agg) }
+    const adsCurr = new Map();
+    let droppedNoAdId = 0;
+    for (const r of metaDaily) {
+      if (!r.ad_id) { droppedNoAdId++; continue; }
+      const id = r.ad_id;
+      let entry = adsCurr.get(id);
+      if (!entry) {
+        entry = {
+          ad_id: id,
+          ad_name: r.ad_name || '',
+          adset_id: r.adset_id, adset_name: r.adset_name || '(unknown)',
+          campaign_id: r.campaign_id, campaign_name: r.campaign_name || '',
+          daily: new Map(),
+        };
+        adsCurr.set(id, entry);
+      }
+      const date = r.date_start || r.date_stop || 'unknown';
+      const dayAgg = entry.daily.get(date) || {
+        date, spend: 0, impressions: 0, reach: 0, clicks: 0, link_clicks: 0,
+        outbound_clicks: 0, purchases: 0, purchase_value: 0,
+      };
+      dayAgg.spend       += parseFloat(r.spend) || 0;
+      dayAgg.impressions += parseFloat(r.impressions) || 0;
+      dayAgg.reach       += parseFloat(r.reach) || 0;
+      dayAgg.clicks      += parseFloat(r.clicks) || 0;
+      dayAgg.link_clicks += parseFloat(r.inline_link_clicks) || 0;
+      dayAgg.outbound_clicks += actionVal(r.outbound_clicks, 'outbound_click');
+      dayAgg.purchases       += actionVal(r.actions, 'omni_purchase')
+        || actionVal(r.actions, 'offsite_conversion.fb_pixel_purchase')
+        || actionVal(r.actions, 'purchase');
+      dayAgg.purchase_value  += actionVal(r.action_values, 'omni_purchase')
+        || actionVal(r.action_values, 'offsite_conversion.fb_pixel_purchase')
+        || actionVal(r.action_values, 'purchase');
+      entry.daily.set(date, dayAgg);
+    }
+    console.log(`[creative-fatigue] meta rollup: ${adsCurr.size} ads (dropped ${droppedNoAdId} rows w/o ad_id)`);
+
+    // ────── Prior-period totals per ad ──────
+    const adsPrior = new Map();
+    for (const r of metaPriorTotals) {
+      if (!r.ad_id) continue;
+      const id = r.ad_id;
+      const cur = adsPrior.get(id) || {
+        spend: 0, impressions: 0, clicks: 0, link_clicks: 0,
+        outbound_clicks: 0, purchases: 0, purchase_value: 0,
+      };
+      cur.spend       += parseFloat(r.spend) || 0;
+      cur.impressions += parseFloat(r.impressions) || 0;
+      cur.clicks      += parseFloat(r.clicks) || 0;
+      cur.link_clicks += parseFloat(r.inline_link_clicks) || 0;
+      cur.outbound_clicks += actionVal(r.outbound_clicks, 'outbound_click');
+      cur.purchases       += actionVal(r.actions, 'omni_purchase')
+        || actionVal(r.actions, 'offsite_conversion.fb_pixel_purchase')
+        || actionVal(r.actions, 'purchase');
+      cur.purchase_value  += actionVal(r.action_values, 'omni_purchase')
+        || actionVal(r.action_values, 'offsite_conversion.fb_pixel_purchase')
+        || actionVal(r.action_values, 'purchase');
+      adsPrior.set(id, cur);
+    }
+
+    // ────── Ad metadata (created_time, status) ──────
+    const adIds = [...adsCurr.keys()];
+    const adMeta = await fetchAdMeta(adIds);
+
+    // ────── Optional Shopify join ──────
+    const parseShopifyByAd = (block) => {
+      if (!block) return new Map();
+      const cols = (block.columns || []).map(c => (c.name || '').toLowerCase());
+      const iAd  = cols.indexOf('utm_content');
+      const iSess= cols.indexOf('sessions');
+      const iCvr = cols.indexOf('conversion_rate');
+      const get  = (row, idx) => Array.isArray(row) ? row[idx] : row[block.columns[idx].name];
+      const map = new Map();
+      for (const row of (block.rows || [])) {
+        const ad = String(get(row, iAd) ?? '').trim();
+        if (!ad) continue;
+        const sess = parseFloat(get(row, iSess)) || 0;
+        const cvrRaw = parseFloat(get(row, iCvr)) || 0;
+        const cvr = cvrRaw > 1 ? cvrRaw / 100 : cvrRaw;
+        const orders = Math.round(sess * cvr);
+        // ShopifyQL groups by utm_content — should already be unique. Defend anyway.
+        const prev = map.get(ad);
+        if (prev) {
+          const totalSess = prev.sessions + Math.round(sess);
+          const totalOrd  = prev.orders + orders;
+          map.set(ad, { sessions: totalSess, orders: totalOrd, cvr: totalSess > 0 ? totalOrd / totalSess : 0 });
+        } else {
+          map.set(ad, { sessions: Math.round(sess), orders, cvr });
+        }
+      }
+      return map;
+    };
+    const shopCurr = parseShopifyByAd(shopCurrBlock);
+    const shopPrev = parseShopifyByAd(shopPrevBlock);
+    if (includeShopify) {
+      console.log(`[creative-fatigue] shopify joined: ${shopCurr.size} curr / ${shopPrev.size} prev (key = utm_content)`);
+    }
+
+    // ────── Score every ad + filter by min daily spend ──────
+    const out = [];
+    let kept = 0, droppedSpend = 0;
+    let spendByState = { healthy: 0, watching: 0, fatiguing: 0, fatigued: 0, replace_now: 0, unknown: 0 };
+    let countByState = { healthy: 0, watching: 0, fatiguing: 0, fatigued: 0, replace_now: 0, unknown: 0 };
+
+    for (const ad of adsCurr.values()) {
+      const dailySorted = [...ad.daily.values()].sort((a, b) => (a.date < b.date ? -1 : 1));
+      const last7 = dailySorted.slice(-7);
+      const totalSpend = dailySorted.reduce((s, x) => s + x.spend, 0);
+      const last7Spend = last7.reduce((s, x) => s + x.spend, 0);
+      const dailyAvgLast7 = last7.length > 0 ? last7Spend / last7.length : 0;
+
+      if (dailyAvgLast7 < minDailySpend) {
+        droppedSpend++;
+        continue;
+      }
+      kept++;
+
+      const fatigue = computeFatigueScore(dailySorted, null);
+      const meta = adMeta[ad.ad_id] || {};
+      const created = meta.created_time ? new Date(meta.created_time) : null;
+      const daysRunning = created ? Math.round((Date.now() - created.getTime()) / 86400000) : null;
+
+      const prior = adsPrior.get(ad.ad_id) || { spend: 0, impressions: 0, clicks: 0, link_clicks: 0,
+                                                outbound_clicks: 0, purchases: 0, purchase_value: 0 };
+
+      const totalImpr = dailySorted.reduce((s, x) => s + x.impressions, 0);
+      const totalClicks = dailySorted.reduce((s, x) => s + x.clicks, 0);
+      const totalLinkClicks = dailySorted.reduce((s, x) => s + x.link_clicks, 0);
+      const totalOutbound = dailySorted.reduce((s, x) => s + x.outbound_clicks, 0);
+      const totalPurchases = dailySorted.reduce((s, x) => s + x.purchases, 0);
+      const totalPurchaseValue = dailySorted.reduce((s, x) => s + x.purchase_value, 0);
+      const totalReachSum = dailySorted.reduce((s, x) => s + x.reach, 0);
+
+      const isTesting = /testing/i.test(ad.campaign_name);
+      const sCurr = shopCurr.get(ad.ad_name);
+      const sPrev = shopPrev.get(ad.ad_name);
+
+      const row = {
+        ad_id: ad.ad_id,
+        ad_name: ad.ad_name,
+        adset_id: ad.adset_id, adset_name: ad.adset_name,
+        campaign_id: ad.campaign_id, campaign_name: ad.campaign_name,
+        is_testing: isTesting,
+        created_time: meta.created_time || null,
+        days_running: daysRunning,
+        effective_status: meta.effective_status || null,
+        configured_status: meta.configured_status || null,
+        // Current period totals
+        spend: totalSpend,
+        prev_spend: prior.spend,
+        last7_spend: last7Spend,
+        daily_avg_spend_last7: dailyAvgLast7,
+        impressions: totalImpr,
+        clicks: totalClicks,
+        link_clicks: totalLinkClicks,
+        outbound_clicks: totalOutbound,
+        prev_outbound_clicks: prior.outbound_clicks,
+        reach_sum: totalReachSum,                  // sum across days, NOT unique
+        meta_purchases: totalPurchases,
+        meta_purchase_value: totalPurchaseValue,
+        meta_roas: totalSpend > 0 ? totalPurchaseValue / totalSpend : null,
+        // Optional Shopify
+        sessions: sCurr?.sessions || null,
+        prev_sessions: sPrev?.sessions || null,
+        cvr: sCurr?.cvr || null,
+        prev_cvr: sPrev?.cvr || null,
+        orders: sCurr?.orders || null,
+        prev_orders: sPrev?.orders || null,
+        // Fatigue
+        fatigue,
+      };
+
+      out.push(row);
+      const st = fatigue.state || 'unknown';
+      countByState[st] = (countByState[st] || 0) + 1;
+      spendByState[st] = (spendByState[st] || 0) + dailyAvgLast7;
+    }
+
+    const summary = {
+      total_ads: out.length,
+      dropped_low_spend: droppedSpend,
+      min_daily_spend: minDailySpend,
+      counts: countByState,
+      daily_spend_by_state: {
+        healthy:     +spendByState.healthy.toFixed(2),
+        watching:    +spendByState.watching.toFixed(2),
+        fatiguing:   +spendByState.fatiguing.toFixed(2),
+        fatigued:    +spendByState.fatigued.toFixed(2),
+        replace_now: +spendByState.replace_now.toFixed(2),
+        unknown:     +spendByState.unknown.toFixed(2),
+      },
+      total_daily_spend: +Object.values(spendByState).reduce((s, x) => s + x, 0).toFixed(2),
+      total_ms: Date.now() - t0,
+    };
+    console.log('[creative-fatigue] summary', summary);
+
+    res.json({
+      account_id, since, until,
+      compare: { since: auto.since, until: auto.until, days: auto.days, mode: auto.mode },
+      filter: {
+        source: includeShopify ? source : null,
+        medium: includeShopify ? medium : null,
+        include_shopify: includeShopify,
+        min_daily_spend: minDailySpend,
+      },
+      meta_counts: {
+        meta_daily_rows: metaDaily.length,
+        meta_prior_rows: metaPriorTotals.length,
+        ads_current: adsCurr.size,
+        ads_meta_resolved: Object.keys(adMeta).length,
+        shopify_curr_rows: shopCurr.size,
+        shopify_prev_rows: shopPrev.size,
+      },
+      summary,
+      rows: out,
+    });
+  } catch (err) {
+    console.error('[creative-fatigue] ✗', err.message, err.stack ? '\n' + err.stack.split('\n').slice(0, 5).join('\n') : '');
     if (err.status === 401) return res.status(401).json({ error: err.message });
     res.status(500).json({ error: err.message });
   }
