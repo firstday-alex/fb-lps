@@ -279,6 +279,30 @@
     table.diag tbody tr { cursor: pointer; }
     table.diag tbody tr:hover { background: #fafbfd; }
     table.diag tbody tr.row-selected { background: #eef3ff; }
+    table.diag tfoot td {
+      padding: 10px;
+      border-top: 2px solid var(--border);
+      border-bottom: none;
+      font-weight: 700;
+      background: #f7f9fc;
+      font-size: 0.85rem;
+    }
+    table.diag tfoot td.r { text-align: right; }
+    table.diag tfoot .totals-label { color: var(--text-secondary); font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    .delta {
+      display: inline-block;
+      margin-left: 5px;
+      padding: 0 4px;
+      font-size: 0.68rem;
+      font-weight: 700;
+      border-radius: 3px;
+      vertical-align: middle;
+      line-height: 1.5;
+      white-space: nowrap;
+    }
+    .delta.pos { color: var(--positive); background: var(--positive-bg); }
+    .delta.neg { color: var(--negative); background: var(--negative-bg); }
+    .delta.neu { color: var(--text-secondary); background: var(--neutral-bg); }
 
     .ad-name-cell {
       max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -638,6 +662,7 @@
           </tr>
         </thead>
         <tbody id="diag-tbody"></tbody>
+        <tfoot id="diag-tfoot"></tfoot>
       </table>
     </div>
   </div>
@@ -844,9 +869,181 @@ function renderBucketRule(rule, cfg) {
 }
 
 // ─────────────────────────────────────────────
+// AGGREGATE / DERIVE HELPERS
+// ─────────────────────────────────────────────
+// Build a Shopify map keyed by stripped(utm_content)+lp from the diag-shopify
+// `sessions` table response.
+function indexShopify(shopifyTable, stripJoinName) {
+  const out = new Map();
+  if (!shopifyTable || !shopifyTable.columns || !shopifyTable.rows) return out;
+  const cols = shopifyTable.columns.map(c => (c.name || '').toLowerCase());
+  const idx = (n) => cols.findIndex(c => c === n);
+  const iAd       = idx('utm_content');
+  const iLp       = idx('landing_page_path');
+  const iSessions = idx('sessions');
+  const iCvr      = idx('conversion_rate');
+  const iAvgDur   = idx('average_session_duration');
+  const iBounce   = idx('bounce_rate');
+  const iCompleted = idx('sessions_that_completed_checkout') >= 0
+    ? idx('sessions_that_completed_checkout')
+    : idx('sessions_that_reached_and_completed_checkout');
+  for (const row of shopifyTable.rows) {
+    const get = (i) => i < 0 ? null : (Array.isArray(row) ? row[i] : row[shopifyTable.columns[i].name]);
+    const ad = String(get(iAd) ?? '').trim();
+    const lp = String(get(iLp) ?? '').trim();
+    if (!ad && !lp) continue;
+    const k = stripJoinName(ad) + '||' + lp;
+    const sessions = parseFloat(get(iSessions)) || 0;
+    let cvrRaw = parseFloat(get(iCvr));
+    if (isFinite(cvrRaw) && cvrRaw > 1) cvrRaw = cvrRaw / 100;
+    let bounceRaw = parseFloat(get(iBounce));
+    if (isFinite(bounceRaw) && bounceRaw > 1) bounceRaw = bounceRaw / 100;
+    const avgDur = parseFloat(get(iAvgDur)) || 0;
+    const completedCheckout = parseFloat(get(iCompleted)) || 0;
+    const orders = completedCheckout || (isFinite(cvrRaw) ? sessions * cvrRaw : 0);
+
+    const existing = out.get(k);
+    if (existing) {
+      const totalSess = existing.sessions + sessions;
+      if (totalSess > 0) {
+        existing.site_bounce_rate = (existing.site_bounce_rate * existing.sessions + (bounceRaw || 0) * sessions) / totalSess;
+        existing.site_avg_duration = (existing.site_avg_duration * existing.sessions + avgDur * sessions) / totalSess;
+      }
+      existing.sessions = totalSess;
+      existing.orders   += orders;
+      existing.site_cvr = totalSess > 0 ? existing.orders / totalSess : 0;
+    } else {
+      out.set(k, {
+        sessions, orders,
+        revenue: 0, aov: 0,
+        new_customer_orders: 0, pct_new: 0,
+        site_cvr: isFinite(cvrRaw) ? cvrRaw : 0,
+        site_bounce_rate: isFinite(bounceRaw) ? bounceRaw : 0,
+        site_avg_duration: avgDur,
+      });
+    }
+  }
+  return out;
+}
+
+// Sum a list of {meta, shop} aggregates into one. Tracks session-weighted
+// duration / bounce so we can derive site averages from the totals.
+function emptyAgg() {
+  return {
+    spend: 0, impressions: 0, reach: 0,
+    link_clicks: 0, clicks_all: 0, landing_page_views: 0,
+    v3: 0, vthru: 0,
+    meta_purchases: 0, meta_purchase_value: 0,
+    shopify_orders: 0, shopify_sessions: 0,
+    shopify_avg_dur_x_sess: 0, shopify_bounce_x_sess: 0,
+  };
+}
+function addToAgg(agg, src) {
+  agg.spend += src.spend || 0;
+  agg.impressions += src.impressions || 0;
+  agg.reach += src.reach || 0;
+  agg.link_clicks += src.link_clicks || 0;
+  agg.clicks_all += src.clicks_all || 0;
+  agg.landing_page_views += src.landing_page_views || 0;
+  agg.v3 += src.v3 || 0;
+  agg.vthru += src.vthru || 0;
+  agg.meta_purchases += src.meta_purchases || 0;
+  agg.meta_purchase_value += src.meta_purchase_value || 0;
+  agg.shopify_orders += src.shopify_orders || 0;
+  agg.shopify_sessions += src.shopify_sessions || 0;
+  agg.shopify_avg_dur_x_sess += src.shopify_avg_dur_x_sess || 0;
+  agg.shopify_bounce_x_sess += src.shopify_bounce_x_sess || 0;
+}
+// Derive displayed metrics from raw aggregates.
+function deriveMetrics(agg) {
+  return {
+    spend: agg.spend,
+    impressions: agg.impressions,
+    link_clicks: agg.link_clicks,
+    meta_purchases: agg.meta_purchases,
+    meta_purchase_value: agg.meta_purchase_value,
+    ctr: agg.impressions > 0 ? (agg.clicks_all / agg.impressions) * 100 : 0,
+    link_ctr: agg.impressions > 0 ? (agg.link_clicks / agg.impressions) * 100 : 0,
+    cpm: agg.impressions > 0 ? (agg.spend / agg.impressions) * 1000 : 0,
+    cpc: agg.link_clicks > 0 ? agg.spend / agg.link_clicks : 0,
+    cpa: agg.meta_purchases > 0 ? agg.spend / agg.meta_purchases : null,
+    frequency: agg.reach > 0 ? agg.impressions / agg.reach : 0,
+    hook_rate: agg.impressions > 0 && agg.v3 > 0 ? agg.v3 / agg.impressions : null,
+    hold_rate: agg.v3 > 0 && agg.vthru > 0 ? agg.vthru / agg.v3 : null,
+    cvr: agg.link_clicks > 0 ? agg.shopify_orders / agg.link_clicks : 0,
+    meta_roas: agg.spend > 0 ? agg.meta_purchase_value / agg.spend : 0,
+    shopify_orders: agg.shopify_orders,
+    shopify_sessions: agg.shopify_sessions,
+    shopify_avg_duration: agg.shopify_sessions > 0 ? agg.shopify_avg_dur_x_sess / agg.shopify_sessions : 0,
+    shopify_bounce_rate: agg.shopify_sessions > 0 ? agg.shopify_bounce_x_sess / agg.shopify_sessions : 0,
+  };
+}
+// Build raw-aggregate object from a meta aggregate + shopify aggregate.
+function rawFromMetaShop(meta, shop) {
+  const sessions = (shop && shop.sessions) || 0;
+  return {
+    spend: meta?.spend || 0,
+    impressions: meta?.impressions || 0,
+    reach: meta?.reach || 0,
+    link_clicks: meta?.link_clicks || 0,
+    clicks_all: meta?.clicks_all || 0,
+    landing_page_views: meta?.landing_page_views || 0,
+    v3: meta?.v3 || 0,
+    vthru: meta?.vthru || 0,
+    meta_purchases: meta?.meta_purchases || 0,
+    meta_purchase_value: meta?.meta_purchase_value || 0,
+    shopify_orders: (shop && shop.orders) || 0,
+    shopify_sessions: sessions,
+    shopify_avg_dur_x_sess: ((shop && shop.site_avg_duration) || 0) * sessions,
+    shopify_bounce_x_sess: ((shop && shop.site_bounce_rate) || 0) * sessions,
+  };
+}
+
+// Inclusive day count between two YYYY-MM-DD strings.
+function daysBetween(since, until) {
+  if (!since || !until) return null;
+  const a = Date.parse(since + 'T00:00:00Z');
+  const b = Date.parse(until + 'T00:00:00Z');
+  if (!isFinite(a) || !isFinite(b)) return null;
+  return Math.max(1, Math.round((b - a) / 86400000) + 1);
+}
+
+// Period-over-period change %. Optionally normalize totals per-day when window
+// lengths differ. For rate metrics (isRate=true) no normalization is applied.
+function pctChange(curr, prior, opts) {
+  opts = opts || {};
+  if (curr == null || !isFinite(curr)) return null;
+  if (prior == null || !isFinite(prior)) return null;
+  let cn = curr, pn = prior;
+  if (!opts.isRate && opts.currDays && opts.priorDays && opts.currDays > 0 && opts.priorDays > 0) {
+    cn = curr / opts.currDays;
+    pn = prior / opts.priorDays;
+  }
+  if (pn === 0) return null;
+  return ((cn - pn) / Math.abs(pn)) * 100;
+}
+
+// Render a small change badge. `lowerIsBetter` flips the green/red coloring.
+// `neutral` colors it gray regardless of sign.
+function renderDelta(curr, prior, opts) {
+  const pct = pctChange(curr, prior, opts);
+  if (pct == null) return '';
+  const lower = !!(opts && opts.lowerIsBetter);
+  const neutral = !!(opts && opts.neutral);
+  const arrow = pct > 0.5 ? '↑' : pct < -0.5 ? '↓' : '→';
+  let cls = 'neu';
+  if (!neutral) {
+    const good = lower ? pct < -0.5 : pct > 0.5;
+    const bad  = lower ? pct > 0.5  : pct < -0.5;
+    cls = good ? 'pos' : (bad ? 'neg' : 'neu');
+  }
+  return `<span class="delta ${cls}" title="vs prior period">${arrow}${Math.abs(pct).toFixed(0)}%</span>`;
+}
+
+// ─────────────────────────────────────────────
 // JOIN: Meta + Shopify → AdRow[]
 // ─────────────────────────────────────────────
-function buildRows(metaCurrent, metaPrior, shopifyTable) {
+function buildRows(metaCurrent, metaPrior, shopifyTable, shopifyPriorTable) {
   // If the strip-date-prefix toggle is on, build join keys from the ad_name
   // with any leading "YYYY/MM/DD_" stripped — merges daily duplicates and
   // post-launch renames into a single row.
@@ -932,66 +1129,13 @@ function buildRows(metaCurrent, metaPrior, shopifyTable) {
   const cur = aggregateMeta(metaCurrent);
   const pri = aggregateMeta(metaPrior);
 
-  // Index Shopify rows by (utm_content, landing_page_path).
+  // Index Shopify rows for current and prior periods by (utm_content, lp).
   // Backend returns `sessions`-topic data: sessions, conversion_rate, and
   // sessions_that_reached_and_completed_checkout (≈ orders count). This store
   // doesn't expose orders/sales topics, so revenue/AOV/%new are unavailable —
   // we set them to 0/null and the bucketing rules guard for that.
-  const shop = new Map();
-  if (shopifyTable && shopifyTable.columns && shopifyTable.rows) {
-    const cols = shopifyTable.columns.map(c => (c.name || '').toLowerCase());
-    const idx = (n) => cols.findIndex(c => c === n);
-    const iAd       = idx('utm_content');
-    const iLp       = idx('landing_page_path');
-    const iSessions = idx('sessions');
-    const iCvr      = idx('conversion_rate');
-    const iAvgDur   = idx('average_session_duration');
-    const iBounce   = idx('bounce_rate');
-    // Match column the existing /api/shopify-metrics query produces.
-    const iCompleted = idx('sessions_that_completed_checkout') >= 0
-      ? idx('sessions_that_completed_checkout')
-      : idx('sessions_that_reached_and_completed_checkout');
-    for (const row of shopifyTable.rows) {
-      const get = (i) => i < 0 ? null : (Array.isArray(row) ? row[i] : row[shopifyTable.columns[i].name]);
-      const ad = String(get(iAd) ?? '').trim();
-      const lp = String(get(iLp) ?? '').trim();
-      if (!ad && !lp) continue;
-      // skip Shopify totals row (both keys empty) — already filtered above
-      const k = stripJoinName(ad) + '||' + lp;
-      const sessions = parseFloat(get(iSessions)) || 0;
-      let cvrRaw = parseFloat(get(iCvr));
-      // ShopifyQL returns rate columns as 0–1 in some setups, 0–100 in others
-      if (isFinite(cvrRaw) && cvrRaw > 1) cvrRaw = cvrRaw / 100;
-      let bounceRaw = parseFloat(get(iBounce));
-      if (isFinite(bounceRaw) && bounceRaw > 1) bounceRaw = bounceRaw / 100;
-      const avgDur = parseFloat(get(iAvgDur)) || 0;            // seconds
-      const completedCheckout = parseFloat(get(iCompleted)) || 0;
-      const orders = completedCheckout || (isFinite(cvrRaw) ? sessions * cvrRaw : 0);
-
-      // Same (utm_content, lp) may show up across multiple utm_sources (FB + IG)
-      // — sum sessions/orders, weight rate columns by sessions.
-      const existing = shop.get(k);
-      if (existing) {
-        const totalSess = existing.sessions + sessions;
-        if (totalSess > 0) {
-          existing.site_bounce_rate = (existing.site_bounce_rate * existing.sessions + (bounceRaw || 0) * sessions) / totalSess;
-          existing.site_avg_duration = (existing.site_avg_duration * existing.sessions + avgDur * sessions) / totalSess;
-        }
-        existing.sessions = totalSess;
-        existing.orders   += orders;
-        existing.site_cvr = totalSess > 0 ? existing.orders / totalSess : 0;
-      } else {
-        shop.set(k, {
-          sessions, orders,
-          revenue: 0, aov: 0,                 // not available in `sessions` topic
-          new_customer_orders: 0, pct_new: 0,
-          site_cvr: isFinite(cvrRaw) ? cvrRaw : 0,
-          site_bounce_rate: isFinite(bounceRaw) ? bounceRaw : 0,
-          site_avg_duration: avgDur,
-        });
-      }
-    }
-  }
+  const shop  = indexShopify(shopifyTable, stripJoinName);
+  const shopP = indexShopify(shopifyPriorTable, stripJoinName);
 
   // Stitch together
   const rows = [];
@@ -1011,20 +1155,29 @@ function buildRows(metaCurrent, metaPrior, shopifyTable) {
     const truth_check_ratio = s.orders > 0 ? c.meta_purchases / s.orders : null;
     const lpv_ratio = c.link_clicks > 0 ? c.landing_page_views / c.link_clicks : null;
 
+    const sP = shopP.get(key) || null;
     let prior = null;
-    if (p) {
-      const p_ctr = p.impressions > 0 ? (p.clicks_all / p.impressions) * 100 : 0;
-      const p_cpm = p.impressions > 0 ? (p.spend / p.impressions) * 1000 : 0;
-      const p_freq = p.reach > 0 ? p.impressions / p.reach : 0;
-      const p_cpa = p.meta_purchases > 0 ? p.spend / p.meta_purchases : null;
+    if (p || sP) {
+      const pm = deriveMetrics(rawFromMetaShop(p, sP));
       const cpa = c.meta_purchases > 0 ? c.spend / c.meta_purchases : null;
       prior = {
-        spend: p.spend, ctr: p_ctr, cpm: p_cpm, frequency: p_freq, cpa: p_cpa,
-        ctr_change_pct: p_ctr > 0 ? ((ctr - p_ctr) / p_ctr) * 100 : null,
-        cpm_change_pct: p_cpm > 0 ? ((cpm - p_cpm) / p_cpm) * 100 : null,
-        frequency_change_pct: p_freq > 0 ? ((frequency - p_freq) / p_freq) * 100 : null,
-        cpa_change_pct: p_cpa && cpa ? ((cpa - p_cpa) / p_cpa) * 100 : null,
-        spend_change_pct: p.spend > 0 ? ((c.spend - p.spend) / p.spend) * 100 : null,
+        // Existing fields kept for back-compat with detail panel + bucket rules.
+        spend: pm.spend, ctr: pm.ctr, cpm: pm.cpm, frequency: pm.frequency, cpa: pm.cpa,
+        ctr_change_pct: pm.ctr > 0 ? ((ctr - pm.ctr) / pm.ctr) * 100 : null,
+        cpm_change_pct: pm.cpm > 0 ? ((cpm - pm.cpm) / pm.cpm) * 100 : null,
+        frequency_change_pct: pm.frequency > 0 ? ((frequency - pm.frequency) / pm.frequency) * 100 : null,
+        cpa_change_pct: pm.cpa && cpa ? ((cpa - pm.cpa) / pm.cpa) * 100 : null,
+        spend_change_pct: pm.spend > 0 ? ((c.spend - pm.spend) / pm.spend) * 100 : null,
+        // Extended per-row prior metrics for the table delta column.
+        meta_roas: pm.meta_roas,
+        hook_rate: pm.hook_rate,
+        cvr: pm.cvr,
+        shopify_avg_duration: pm.shopify_avg_duration,
+        shopify_bounce_rate:  pm.shopify_bounce_rate,
+        shopify_orders: pm.shopify_orders,
+        shopify_sessions: pm.shopify_sessions,
+        impressions: pm.impressions,
+        link_clicks: pm.link_clicks,
       };
     }
 
@@ -1061,6 +1214,10 @@ function buildRows(metaCurrent, metaPrior, shopifyTable) {
       shopify_bounce_rate:  s.site_bounce_rate  || 0,
       cvr, truth_check_ratio,
       prior,                                        // null when ad is brand-new
+      // Raw aggregates kept on the row so the table rollup can sum them across
+      // whatever subset of rows is currently filtered, then re-derive metrics.
+      _curRaw: rawFromMetaShop(c, s),
+      _priRaw: (p || sP) ? rawFromMetaShop(p, sP) : null,
       created_time_earliest: c.created_time_earliest,
       created_time_latest:   c.created_time_latest,
       bucket: 'UNCATEGORIZED', secondary_flags: [], reasons: [],
@@ -1502,7 +1659,7 @@ function applyCriteriaToLoadedData() {
   state.config.window_end_ms   = we;
   // Rebuild from cached responses so any join-key change (e.g. strip-date
   // toggle) takes effect.
-  state.rows = buildRows(state.metaCurrent, state.metaPrior || [], state.shopifyRaw);
+  state.rows = buildRows(state.metaCurrent, state.metaPrior || [], state.shopifyRaw, state.shopifyPriorRaw);
   state.benchmarks = computeBenchmarks(state.rows, state.config);
   for (const r of state.rows) {
     const result = assignBucket(r, state.benchmarks, state.config);
@@ -1537,11 +1694,18 @@ async function loadData() {
     const metaParams = new URLSearchParams({ account_id: acct, since, until });
     if (cs && cu) { metaParams.set('compare_since', cs); metaParams.set('compare_until', cu); }
     const shopParams = new URLSearchParams({ since, until, utm_sources: utm, utm_medium: utmM });
+    const havePrior = !!(cs && cu);
+    const shopPriorParams = havePrior
+      ? new URLSearchParams({ since: cs, until: cu, utm_sources: utm, utm_medium: utmM })
+      : null;
 
-    const [metaResp, shopResp] = await Promise.all([
+    const fetches = [
       fetch('/api/diag-meta?' + metaParams.toString()),
       fetch('/api/diag-shopify?' + shopParams.toString()),
-    ]);
+    ];
+    if (havePrior) fetches.push(fetch('/api/diag-shopify?' + shopPriorParams.toString()));
+    const responses = await Promise.all(fetches);
+    const [metaResp, shopResp, shopPriorResp] = responses;
     if (!metaResp.ok) {
       const j = await metaResp.json().catch(() => ({}));
       throw new Error('Meta: ' + (j.error || metaResp.status));
@@ -1550,8 +1714,13 @@ async function loadData() {
       const j = await shopResp.json().catch(() => ({}));
       throw new Error('Shopify: ' + (j.error || shopResp.status));
     }
+    if (havePrior && !shopPriorResp.ok) {
+      const j = await shopPriorResp.json().catch(() => ({}));
+      throw new Error('Shopify (prior): ' + (j.error || shopPriorResp.status));
+    }
     const metaData = await metaResp.json();
     const shopData = await shopResp.json();
+    const shopPriorData = havePrior ? await shopPriorResp.json() : null;
 
     state.config = readConfig();
     // Stash the active window on config so rules (e.g. FRESH_CREATIVE) can use it.
@@ -1562,8 +1731,13 @@ async function loadData() {
     state.metaCurrent    = metaData.current || [];
     state.metaPrior      = metaData.prior   || [];
     state.shopifyRaw     = shopData.sessions || null;       // for the why-no-Shopify diagnostic
+    state.shopifyPriorRaw = shopPriorData?.sessions || null;
     state.shopifyQueries = shopData.queries || [];          // for the diagnostic to surface the literal query
-    state.rows = buildRows(state.metaCurrent, state.metaPrior, state.shopifyRaw);
+    state.windows = {
+      currentDays: daysBetween(since, until),
+      priorDays:   havePrior ? daysBetween(cs, cu) : null,
+    };
+    state.rows = buildRows(state.metaCurrent, state.metaPrior, state.shopifyRaw, state.shopifyPriorRaw);
     state.benchmarks = computeBenchmarks(state.rows, state.config);
 
     // Bucket each row
@@ -1730,6 +1904,18 @@ function renderTable() {
 
   document.getElementById('row-count').textContent = `${rows.length} rows · ${fmtUSD(rows.reduce((s,r) => s + r.spend, 0))} spend`;
 
+  const W = state.windows || {};
+  const havePrior = !!(W.priorDays);
+  const norm = { currDays: W.currentDays, priorDays: W.priorDays };
+
+  // Per-row metric cell with a small period-over-period delta badge.
+  // For totals (spend), `pctChange` normalizes per-day when periods differ;
+  // for rates (isRate=true), it compares directly.
+  const cell = (curVal, priVal, formatted, opts) => {
+    const delta = havePrior && priVal != null ? renderDelta(curVal, priVal, { ...norm, ...(opts || {}) }) : '';
+    return `<td class="r">${formatted}${delta}</td>`;
+  };
+
   tbody.innerHTML = rows.map(r => {
     const adShort = r.ad_name.length > 42 ? r.ad_name.slice(0, 40) + '…' : r.ad_name;
     const lpShort = r.landing_page_path.length > 28 ? r.landing_page_path.slice(0, 26) + '…' : r.landing_page_path;
@@ -1738,6 +1924,7 @@ function renderTable() {
       : '';
     const sel = state.selectedKey === r.ad_name + '||' + r.landing_page_path ? 'row-selected' : '';
     const rowKey = r.ad_name + '||' + r.landing_page_path;
+    const p = r.prior;
     return `<tr class="${sel}" data-key="${esc(rowKey)}">
       <td>${bucketChip(r.bucket)}${secondary}</td>
       <td>
@@ -1745,16 +1932,18 @@ function renderTable() {
         ${r.ad_ids.length > 1 ? `<span class="ad-count-badge${r.ad_ids.length >= 5 ? ' warn' : ''}" title="Aggregated across ${r.ad_ids.length} ad_ids that share this name & landing page (different ad sets / campaigns). Spend is the sum across all of them.">+${r.ad_ids.length - 1} ads</span>` : ''}
       </td>
       <td><div class="lp-cell" title="${esc(r.landing_page_path)}">${esc(lpShort)}</div></td>
-      <td class="r">${fmtUSD(r.spend)}</td>
-      <td class="r ${r.meta_roas >= state.config.target_roas ? 'pos' : 'neg'}">${fmtX(r.meta_roas)}</td>
-      <td class="r">${fmtPctRaw(r.ctr)}</td>
-      <td class="r">${r.hook_rate != null ? fmtPct(r.hook_rate, 1) : '—'}</td>
-      <td class="r">${r.cvr > 0 ? fmtPct(r.cvr, 2) : '—'}</td>
-      <td class="r">${r.shopify_avg_duration > 0 ? Math.round(r.shopify_avg_duration) + 's' : '—'}</td>
-      <td class="r">${r.shopify_bounce_rate > 0 ? fmtPct(r.shopify_bounce_rate, 0) : '—'}</td>
-      <td class="r">${fmtN(r.frequency, 2)}</td>
+      ${cell(r.spend, p?.spend, fmtUSD(r.spend), { neutral: true })}
+      <td class="r ${r.meta_roas >= state.config.target_roas ? 'pos' : 'neg'}">${fmtX(r.meta_roas)}${havePrior && p?.meta_roas != null ? renderDelta(r.meta_roas, p.meta_roas, { isRate: true }) : ''}</td>
+      ${cell(r.ctr, p?.ctr, fmtPctRaw(r.ctr), { isRate: true })}
+      ${cell(r.hook_rate, p?.hook_rate, r.hook_rate != null ? fmtPct(r.hook_rate, 1) : '—', { isRate: true })}
+      ${cell(r.cvr, p?.cvr, r.cvr > 0 ? fmtPct(r.cvr, 2) : '—', { isRate: true })}
+      ${cell(r.shopify_avg_duration, p?.shopify_avg_duration, r.shopify_avg_duration > 0 ? Math.round(r.shopify_avg_duration) + 's' : '—', { isRate: true })}
+      ${cell(r.shopify_bounce_rate, p?.shopify_bounce_rate, r.shopify_bounce_rate > 0 ? fmtPct(r.shopify_bounce_rate, 0) : '—', { isRate: true, lowerIsBetter: true })}
+      ${cell(r.frequency, p?.frequency, fmtN(r.frequency, 2), { isRate: true, lowerIsBetter: true })}
     </tr>`;
   }).join('');
+
+  renderTotalsRow(rows, havePrior, norm);
 
   // Sort header indicators
   document.querySelectorAll('table.diag thead th[data-sort]').forEach(th => {
@@ -1780,6 +1969,49 @@ function renderTable() {
       openAdPreview(a);
     });
   });
+}
+
+// Roll up every row currently in the filtered table into one totals row.
+// Sums raw aggregates, derives metrics, and shows period-over-period change %.
+// When current/prior windows have different lengths, totals are normalized
+// per-day before computing the change (rates compare directly).
+function renderTotalsRow(rows, havePrior, norm) {
+  const tfoot = document.getElementById('diag-tfoot');
+  if (!tfoot) return;
+  if (!rows.length) { tfoot.innerHTML = ''; return; }
+
+  // Sum every row's raw current + prior aggregates. Rows without prior data
+  // (ads that didn't exist in the compare window) contribute 0 to the prior
+  // total — that's intentional, the rollup represents the current set of ads
+  // and how those same ads performed in the prior window.
+  const curAgg = emptyAgg();
+  const priAgg = emptyAgg();
+  for (const r of rows) {
+    if (r._curRaw) addToAgg(curAgg, r._curRaw);
+    if (r._priRaw) addToAgg(priAgg, r._priRaw);
+  }
+  const c = deriveMetrics(curAgg);
+  const p = havePrior ? deriveMetrics(priAgg) : null;
+
+  const showDelta = havePrior && p != null;
+  const dTotal = (cv, pv, opts) => showDelta ? renderDelta(cv, pv, { ...norm, ...(opts || {}) }) : '';
+  const dRate  = (cv, pv, opts) => showDelta ? renderDelta(cv, pv, { isRate: true, ...(opts || {}) }) : '';
+
+  const dayLabel = (havePrior && norm.currDays && norm.priorDays && norm.currDays !== norm.priorDays)
+    ? ` <span style="font-weight:400;color:var(--text-secondary);font-size:0.74rem">(Δ normalized to per-day: ${norm.currDays}d vs ${norm.priorDays}d)</span>`
+    : '';
+
+  tfoot.innerHTML = `<tr>
+    <td colspan="3"><span class="totals-label">Totals · ${rows.length} ${rows.length === 1 ? 'ad' : 'ads'}${state.campaignFilter ? ' · ' + esc(state.campaignFilter) : ''}</span>${dayLabel}</td>
+    <td class="r">${fmtUSD(c.spend)}${dTotal(c.spend, p?.spend, { neutral: true })}</td>
+    <td class="r ${c.meta_roas >= state.config.target_roas ? 'pos' : 'neg'}">${fmtX(c.meta_roas)}${dRate(c.meta_roas, p?.meta_roas)}</td>
+    <td class="r">${fmtPctRaw(c.ctr)}${dRate(c.ctr, p?.ctr)}</td>
+    <td class="r">${c.hook_rate != null ? fmtPct(c.hook_rate, 1) : '—'}${dRate(c.hook_rate, p?.hook_rate)}</td>
+    <td class="r">${c.cvr > 0 ? fmtPct(c.cvr, 2) : '—'}${dRate(c.cvr, p?.cvr)}</td>
+    <td class="r">${c.shopify_avg_duration > 0 ? Math.round(c.shopify_avg_duration) + 's' : '—'}${dRate(c.shopify_avg_duration, p?.shopify_avg_duration)}</td>
+    <td class="r">${c.shopify_bounce_rate > 0 ? fmtPct(c.shopify_bounce_rate, 0) : '—'}${dRate(c.shopify_bounce_rate, p?.shopify_bounce_rate, { lowerIsBetter: true })}</td>
+    <td class="r">${fmtN(c.frequency, 2)}${dRate(c.frequency, p?.frequency, { lowerIsBetter: true })}</td>
+  </tr>`;
 }
 
 // Open the Meta preview for an ad in a new tab.
