@@ -1980,6 +1980,69 @@ function metaParams(accessToken) {
   return `access_token=${encodeURIComponent(accessToken)}&appsecret_proof=${generateAppSecretProof(accessToken)}`;
 }
 
+// ─────────────────────────────────────────────
+// META RATE-LIMIT HANDLING
+// ─────────────────────────────────────────────
+// Meta returns several error codes when rate-limited. Any of these triggers
+// retry with exponential backoff (3s → 6s → 12s → 24s, max 4 attempts).
+//   code 4     — Application request limit reached
+//   code 17    — User request limit reached
+//   code 32    — Page request limit reached
+//   code 613   — Calls to this api have exceeded the rate limit
+//   code 80000 — There have been too many calls from this ad-account
+//   code 80004 — There have been too many calls to this ad-account
+const META_RATE_LIMIT_CODES = new Set([4, 17, 32, 613, 80000, 80001, 80002, 80003, 80004]);
+
+async function metaFetchWithBackoff(url, label = 'meta', maxRetries = 4) {
+  let attempt = 0;
+  let delay = 3000;
+  while (true) {
+    const resp = await fetch(url);
+    const data = await resp.json();
+    if (!data.error) return data;
+    const err = data.error;
+    const isRateLimit = META_RATE_LIMIT_CODES.has(err.code)
+      || /rate limit|request limit|too many calls/i.test(err.message || '');
+    if (!isRateLimit || attempt >= maxRetries) {
+      const e = new Error(err.message || 'Meta error');
+      e.code = err.code;
+      e.error = err;
+      throw e;
+    }
+    console.warn(`[meta-backoff] ${label}: rate-limited (code ${err.code}); retry ${attempt + 1}/${maxRetries} in ${delay}ms — ${err.message}`);
+    await new Promise(r => setTimeout(r, delay));
+    delay *= 2;
+    attempt++;
+  }
+}
+
+// ─────────────────────────────────────────────
+// IN-MEMORY ENDPOINT-RESPONSE CACHE
+// ─────────────────────────────────────────────
+// Short-lived cache (default 5 min) keyed on (endpoint + JSON-stringified
+// params). Lets the user re-render or open a second tab without re-blasting
+// the Meta API. Successful responses only — errors and rate-limit failures
+// are NEVER cached so a transient failure doesn't poison subsequent calls.
+const _ENDPOINT_CACHE = new Map();
+
+function endpointCacheKey(endpointName, params) {
+  return endpointName + ':' + JSON.stringify(params);
+}
+function getEndpointCache(key) {
+  const v = _ENDPOINT_CACHE.get(key);
+  if (!v) return null;
+  if (Date.now() > v.expires) { _ENDPOINT_CACHE.delete(key); return null; }
+  return v.data;
+}
+function setEndpointCache(key, data, ttlMs = 5 * 60 * 1000) {
+  _ENDPOINT_CACHE.set(key, { data, expires: Date.now() + ttlMs });
+  // Bound cache size — drop oldest entries beyond 50.
+  if (_ENDPOINT_CACHE.size > 50) {
+    const first = _ENDPOINT_CACHE.keys().next().value;
+    _ENDPOINT_CACHE.delete(first);
+  }
+}
+
 function extractDestinationUrl(storySpec) {
   if (storySpec.link_data?.link) {
     return storySpec.link_data.link;
@@ -2452,6 +2515,18 @@ app.get('/api/ad-set-fatigue-data', requireAuth, async (req, res) => {
     source, medium,
   });
 
+  // Cache check (5 min TTL). Avoids re-blasting Meta on tab refresh.
+  const cacheKey = endpointCacheKey('ad-set-fatigue', {
+    account_id, since, until,
+    compare_since: auto.since, compare_until: auto.until,
+    source, medium,
+  });
+  const cached = getEndpointCache(cacheKey);
+  if (cached) {
+    console.log(`[ad-set-fatigue] ✓ cache HIT → ${Date.now() - t0}ms`);
+    return res.json({ ...cached, _cache: 'hit' });
+  }
+
   const proof = generateAppSecretProof(req.accessToken);
   const ensureProof = (u) => u.includes('appsecret_proof=') ? u : (u + `&appsecret_proof=${proof}`);
 
@@ -2463,7 +2538,7 @@ app.get('/api/ad-set-fatigue-data', requireAuth, async (req, res) => {
     'actions', 'action_values',
   ].join(',');
 
-  // ────── Meta insights fetcher (paginated) ──────
+  // ────── Meta insights fetcher (paginated, with rate-limit backoff) ──────
   // `time_increment` controls daily vs total roll-up.
   const fetchInsights = async (s, u, increment, label) => {
     const tStart = Date.now();
@@ -2473,23 +2548,23 @@ app.get('/api/ad-set-fatigue-data', requireAuth, async (req, res) => {
       + `&level=ad`
       + `&time_increment=${increment}`
       + `&filtering=${encodeURIComponent(JSON.stringify([{ field: 'spend', operator: 'GREATER_THAN', value: 0 }]))}`
-      + `&limit=100`
+      + `&limit=500`                                       // bumped 100→500: fewer pages
       + `&${metaParams(req.accessToken)}`;
     const all = [];
     let next = url;
     let pages = 0;
     while (next && pages < 30) {
-      const resp = await fetch(ensureProof(next));
-      const data = await resp.json();
-      if (data.error) {
-        if (data.error.code === 190) {
+      try {
+        const data = await metaFetchWithBackoff(ensureProof(next), `ad-set-fatigue.${label}.p${pages}`);
+        if (Array.isArray(data.data)) all.push(...data.data);
+        next = data.paging?.next || null;
+      } catch (err) {
+        if (err.code === 190) {
           clearTokenCookie(res);
           throw Object.assign(new Error('Session expired. Please log in again.'), { status: 401 });
         }
-        throw new Error(`Meta insights error (${label}): ${data.error.message || JSON.stringify(data.error)}`);
+        throw new Error(`Meta insights error (${label}): ${err.message || JSON.stringify(err)}`);
       }
-      if (Array.isArray(data.data)) all.push(...data.data);
-      next = data.paging?.next || null;
       pages += 1;
     }
     console.log(`[ad-set-fatigue] meta-insights ${label}: ${all.length} rows in ${Date.now() - tStart}ms (${pages} pages)`);
@@ -2845,7 +2920,7 @@ app.get('/api/ad-set-fatigue-data', requireAuth, async (req, res) => {
     };
     console.log('[ad-set-fatigue] summary', summary);
 
-    res.json({
+    const payload = {
       account_id, since, until,
       compare: { since: auto.since, until: auto.until, days: auto.days, mode: auto.mode },
       filter: { source, medium },
@@ -2860,10 +2935,20 @@ app.get('/api/ad-set-fatigue-data', requireAuth, async (req, res) => {
       },
       summary,
       rows: out,
-    });
+      __cached_at: Date.now(),
+    };
+    setEndpointCache(cacheKey, payload);
+    res.json({ ...payload, _cache: 'miss' });
   } catch (err) {
     console.error('[ad-set-fatigue] ✗', err.message, err.stack ? '\n' + err.stack.split('\n').slice(0, 5).join('\n') : '');
     if (err.status === 401) return res.status(401).json({ error: err.message });
+    if (err.code && META_RATE_LIMIT_CODES.has(err.code)) {
+      return res.status(429).json({
+        error: `Meta API rate limit hit (code ${err.code}): ${err.message}. We retried with backoff but still hit the cap. Wait 5-15 minutes and try again, or narrow the date range.`,
+        rate_limited: true,
+        meta_code: err.code,
+      });
+    }
     res.status(500).json({ error: err.message });
   }
 });
@@ -2933,6 +3018,19 @@ app.get('/api/creative-fatigue-data', requireAuth, async (req, res) => {
     medium: includeShopify ? medium : '(skipped)',
   });
 
+  // Cache check (short TTL). Saves a re-blast on refresh / tab-flip.
+  const cacheKey = endpointCacheKey('creative-fatigue', {
+    account_id, since, until,
+    compare_since: auto.since, compare_until: auto.until,
+    include_shopify: includeShopify, source, medium,
+    min_daily_spend: minDailySpend,
+  });
+  const cached = getEndpointCache(cacheKey);
+  if (cached) {
+    console.log(`[creative-fatigue] ✓ cache HIT (age ${Math.round((Date.now() - (cached.__cached_at || Date.now())) / 1000)}s) → ${Date.now() - t0}ms`);
+    return res.json({ ...cached, _cache: 'hit' });
+  }
+
   const proof = generateAppSecretProof(req.accessToken);
   const ensureProof = (u) => u.includes('appsecret_proof=') ? u : (u + `&appsecret_proof=${proof}`);
 
@@ -2952,23 +3050,23 @@ app.get('/api/creative-fatigue-data', requireAuth, async (req, res) => {
       + `&level=ad`
       + `&time_increment=${increment}`
       + `&filtering=${encodeURIComponent(JSON.stringify([{ field: 'spend', operator: 'GREATER_THAN', value: 0 }]))}`
-      + `&limit=100`
+      + `&limit=500`                                       // bumped 100→500: fewer pages = fewer requests = less rate-limit pressure
       + `&${metaParams(req.accessToken)}`;
     const all = [];
     let next = url;
     let pages = 0;
-    while (next && pages < 50) {
-      const resp = await fetch(ensureProof(next));
-      const data = await resp.json();
-      if (data.error) {
-        if (data.error.code === 190) {
+    while (next && pages < 30) {                           // dropped 50→30 since each page is now ~5x bigger
+      try {
+        const data = await metaFetchWithBackoff(ensureProof(next), `creative-fatigue.${label}.p${pages}`);
+        if (Array.isArray(data.data)) all.push(...data.data);
+        next = data.paging?.next || null;
+      } catch (err) {
+        if (err.code === 190) {
           clearTokenCookie(res);
           throw Object.assign(new Error('Session expired. Please log in again.'), { status: 401 });
         }
-        throw new Error(`Meta insights error (${label}): ${data.error.message || JSON.stringify(data.error)}`);
+        throw new Error(`Meta insights error (${label}): ${err.message || JSON.stringify(err)}`);
       }
-      if (Array.isArray(data.data)) all.push(...data.data);
-      next = data.paging?.next || null;
       pages += 1;
     }
     console.log(`[creative-fatigue] meta-insights ${label}: ${all.length} rows in ${Date.now() - tStart}ms (${pages} pages)`);
@@ -3263,7 +3361,7 @@ app.get('/api/creative-fatigue-data', requireAuth, async (req, res) => {
     };
     console.log('[creative-fatigue] summary', summary);
 
-    res.json({
+    const payload = {
       account_id, since, until,
       compare: { since: auto.since, until: auto.until, days: auto.days, mode: auto.mode },
       filter: {
@@ -3282,10 +3380,21 @@ app.get('/api/creative-fatigue-data', requireAuth, async (req, res) => {
       },
       summary,
       rows: out,
-    });
+      __cached_at: Date.now(),
+    };
+    setEndpointCache(cacheKey, payload);
+    res.json({ ...payload, _cache: 'miss' });
   } catch (err) {
     console.error('[creative-fatigue] ✗', err.message, err.stack ? '\n' + err.stack.split('\n').slice(0, 5).join('\n') : '');
     if (err.status === 401) return res.status(401).json({ error: err.message });
+    // Surface Meta rate-limit errors as 429 with a clear message + retry hint.
+    if (err.code && META_RATE_LIMIT_CODES.has(err.code)) {
+      return res.status(429).json({
+        error: `Meta API rate limit hit (code ${err.code}): ${err.message}. We retried ${4} times with backoff. Wait 5-15 minutes and try again, or narrow the date range / increase min_daily_spend.`,
+        rate_limited: true,
+        meta_code: err.code,
+      });
+    }
     res.status(500).json({ error: err.message });
   }
 });
