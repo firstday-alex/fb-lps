@@ -1024,10 +1024,17 @@ function pctChange(curr, prior, opts) {
 }
 
 // Render a small change badge. `lowerIsBetter` flips the green/red coloring.
-// `neutral` colors it gray regardless of sign.
+// `neutral` colors it gray regardless of sign. When `showNewIfMissing` is set
+// and we have no usable prior value (ad didn't exist, or that metric had no
+// data in the prior window), render a "NEW" badge instead of nothing.
 function renderDelta(curr, prior, opts) {
   const pct = pctChange(curr, prior, opts);
-  if (pct == null) return '';
+  if (pct == null) {
+    if (opts && opts.showNewIfMissing) {
+      return `<span class="delta neu" title="No prior-period data for this metric — treating as new.">NEW</span>`;
+    }
+    return '';
+  }
   const lower = !!(opts && opts.lowerIsBetter);
   const neutral = !!(opts && opts.neutral);
   const arrow = pct > 0.5 ? '↑' : pct < -0.5 ? '↓' : '→';
@@ -1910,9 +1917,10 @@ function renderTable() {
 
   // Per-row metric cell with a small period-over-period delta badge.
   // For totals (spend), `pctChange` normalizes per-day when periods differ;
-  // for rates (isRate=true), it compares directly.
+  // for rates (isRate=true), it compares directly. When the compare window is
+  // set but this metric has no usable prior value, render "NEW".
   const cell = (curVal, priVal, formatted, opts) => {
-    const delta = havePrior && priVal != null ? renderDelta(curVal, priVal, { ...norm, ...(opts || {}) }) : '';
+    const delta = havePrior ? renderDelta(curVal, priVal, { ...norm, ...(opts || {}), showNewIfMissing: true }) : '';
     return `<td class="r">${formatted}${delta}</td>`;
   };
 
@@ -1933,7 +1941,7 @@ function renderTable() {
       </td>
       <td><div class="lp-cell" title="${esc(r.landing_page_path)}">${esc(lpShort)}</div></td>
       ${cell(r.spend, p?.spend, fmtUSD(r.spend), { neutral: true })}
-      <td class="r ${r.meta_roas >= state.config.target_roas ? 'pos' : 'neg'}">${fmtX(r.meta_roas)}${havePrior && p?.meta_roas != null ? renderDelta(r.meta_roas, p.meta_roas, { isRate: true }) : ''}</td>
+      <td class="r ${r.meta_roas >= state.config.target_roas ? 'pos' : 'neg'}">${fmtX(r.meta_roas)}${havePrior ? renderDelta(r.meta_roas, p?.meta_roas, { isRate: true, showNewIfMissing: true }) : ''}</td>
       ${cell(r.ctr, p?.ctr, fmtPctRaw(r.ctr), { isRate: true })}
       ${cell(r.hook_rate, p?.hook_rate, r.hook_rate != null ? fmtPct(r.hook_rate, 1) : '—', { isRate: true })}
       ${cell(r.cvr, p?.cvr, r.cvr > 0 ? fmtPct(r.cvr, 2) : '—', { isRate: true })}
@@ -1994,8 +2002,8 @@ function renderTotalsRow(rows, havePrior, norm) {
   const p = havePrior ? deriveMetrics(priAgg) : null;
 
   const showDelta = havePrior && p != null;
-  const dTotal = (cv, pv, opts) => showDelta ? renderDelta(cv, pv, { ...norm, ...(opts || {}) }) : '';
-  const dRate  = (cv, pv, opts) => showDelta ? renderDelta(cv, pv, { isRate: true, ...(opts || {}) }) : '';
+  const dTotal = (cv, pv, opts) => showDelta ? renderDelta(cv, pv, { ...norm, ...(opts || {}), showNewIfMissing: true }) : '';
+  const dRate  = (cv, pv, opts) => showDelta ? renderDelta(cv, pv, { isRate: true, ...(opts || {}), showNewIfMissing: true }) : '';
 
   const dayLabel = (havePrior && norm.currDays && norm.priorDays && norm.currDays !== norm.priorDays)
     ? ` <span style="font-weight:400;color:var(--text-secondary);font-size:0.74rem">(Δ normalized to per-day: ${norm.currDays}d vs ${norm.priorDays}d)</span>`
