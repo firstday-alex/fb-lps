@@ -1029,6 +1029,14 @@ app.get('/api/conversion-impact-data', async (req, res) => {
     return res.status(400).json({ error: 'start and end query params required (YYYY-MM-DD)' });
   }
 
+  // Optional custom comparison range. When both compare_start + compare_end
+  // are valid YYYY-MM-DD, run a second ShopifyQL query for that window and
+  // overwrite the previous_period values in the main response.
+  const cs = req.query.compare_start;
+  const ce = req.query.compare_end;
+  const useCustomCompare = cs && ce
+    && /^\d{4}-\d{2}-\d{2}$/.test(cs) && /^\d{4}-\d{2}-\d{2}$/.test(ce);
+
   const endpoint = `https://${SHOPIFY_URL}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
   const gqlQuery = `query RunShopifyQL($q: String!) {
     shopifyqlQuery(query: $q) {
@@ -1046,6 +1054,12 @@ app.get('/api/conversion-impact-data', async (req, res) => {
   ORDER BY sessions DESC
 VISUALIZE conversion_rate TYPE table`;
 
+  const compareQuery = useCustomCompare ? `FROM sessions
+  SHOW sessions, conversion_rate, average_session_duration, sessions_with_cart_additions, sessions_that_reached_checkout, sessions_that_reached_and_completed_checkout
+  GROUP BY utm_source WITH TOTALS
+  SINCE ${cs} UNTIL ${ce}
+  ORDER BY sessions DESC` : null;
+
   // Correlation dataset: session duration vs conversion rate, grouped by source + LP
   const correlationQuery = `FROM sessions
   SHOW sessions, conversion_rate, average_session_duration
@@ -1054,6 +1068,7 @@ VISUALIZE conversion_rate TYPE table`;
   ORDER BY sessions DESC`;
 
   console.log('\n[conversion-impact-data] Main query:\n' + mainQuery);
+  if (compareQuery) console.log('\n[conversion-impact-data] Compare query:\n' + compareQuery);
   console.log('\n[conversion-impact-data] Correlation query:\n' + correlationQuery);
 
   const runQuery = async (q) => {
@@ -1074,15 +1089,117 @@ VISUALIZE conversion_rate TYPE table`;
   };
 
   try {
-    const [main, correlation] = await Promise.all([
+    const [main, correlation, compare] = await Promise.all([
       runQuery(mainQuery),
       runQuery(correlationQuery),
+      compareQuery ? runQuery(compareQuery) : Promise.resolve(null),
     ]);
+
+    if (!compare) {
+      return res.json({
+        query: mainQuery,
+        columns: main.columns,
+        rows: main.rows,
+        correlation: {
+          query: correlationQuery,
+          columns: correlation.columns,
+          rows: correlation.rows,
+        },
+      });
+    }
+
+    // Overwrite the previous_period values in the main response with values
+    // from the custom compare window. The main column shape stays identical;
+    // we just swap the numbers in `comparison_*__previous_period[__totals]`.
+    if (!Array.isArray(main.rows) || !Array.isArray(main.columns)) {
+      throw new Error('Main Shopify response missing rows/columns array');
+    }
+    if (!Array.isArray(compare.rows) || !Array.isArray(compare.columns)) {
+      throw new Error('Compare Shopify response missing rows/columns array');
+    }
+
+    const mainColNames = main.columns.map(c => c.name);
+    const cmpColNames  = compare.columns.map(c => c.name);
+    const toArray = (row, names) => {
+      if (Array.isArray(row)) return row;
+      if (row && typeof row === 'object') return names.map(n => row[n]);
+      return [];
+    };
+
+    const cols = mainColNames.map(n => (n || '').toLowerCase());
+    const cmpCols = cmpColNames.map(n => (n || '').toLowerCase());
+    const idx = (arr, n) => arr.findIndex(s => s === n);
+
+    const METRICS = [
+      'sessions',
+      'conversion_rate',
+      'average_session_duration',
+      'sessions_with_cart_additions',
+      'sessions_that_reached_checkout',
+      'sessions_that_reached_and_completed_checkout',
+    ];
+    const iSource = idx(cols, 'utm_source');
+    const cmpISource = idx(cmpCols, 'utm_source');
+
+    // Per-metric source/dest indexes
+    const slots = METRICS.map(m => ({
+      metric: m,
+      iMainPrev:    idx(cols,    `comparison_${m}__previous_period`),
+      iMainPrevTot: idx(cols,    `comparison_${m}__previous_period__totals`),
+      cmpI:         idx(cmpCols, m),
+      cmpITot:      idx(cmpCols, `${m}__totals`),
+    }));
+
+    // Index compare rows by utm_source. Read totals from the first row's
+    // __totals columns (ShopifyQL emits them on every data row with WITH TOTALS).
+    const cmpMap = new Map();
+    const cmpTotals = compare.rows.length > 0
+      ? toArray(compare.rows[0], cmpColNames)
+      : null;
+    for (const row of compare.rows) {
+      const arr = toArray(row, cmpColNames);
+      const s = String(arr[cmpISource] ?? '').trim();
+      if (!s) continue;
+      cmpMap.set(s, arr);
+    }
+
+    let matched = 0;
+    let unmatched = 0;
+    const newRows = main.rows.map(row => {
+      const arr = toArray(row, mainColNames).slice();
+      const s = String(arr[iSource] ?? '').trim();
+      const isTotalsRow = !s;
+      const cmpRow = isTotalsRow ? cmpTotals : cmpMap.get(s);
+      if (cmpRow) matched++; else if (!isTotalsRow) unmatched++;
+
+      for (const slot of slots) {
+        if (slot.iMainPrev >= 0) {
+          arr[slot.iMainPrev] = cmpRow != null && slot.cmpI >= 0 ? cmpRow[slot.cmpI] : null;
+        }
+        if (slot.iMainPrevTot >= 0) {
+          arr[slot.iMainPrevTot] = cmpTotals != null && slot.cmpITot >= 0 ? cmpTotals[slot.cmpITot] : null;
+        }
+      }
+      return arr;
+    });
+
+    const mergeStats = {
+      main_rows: main.rows.length,
+      compare_rows: compare.rows.length,
+      compare_keys_indexed: cmpMap.size,
+      had_compare_totals: !!cmpTotals,
+      matched_keys: matched,
+      unmatched_keys: unmatched,
+    };
+    console.log('[conversion-impact-data] custom-compare merge:', mergeStats);
 
     res.json({
       query: mainQuery,
+      compare_query: compareQuery,
+      compare_window: { start: cs, end: ce },
+      merge_stats: mergeStats,
       columns: main.columns,
-      rows: main.rows,
+      rows: newRows,
       correlation: {
         query: correlationQuery,
         columns: correlation.columns,

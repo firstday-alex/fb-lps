@@ -1009,6 +1009,11 @@
       <label>Start <input type="date" id="date-start"></label>
       <label>End <input type="date" id="date-end"></label>
     </div>
+    <div class="date-row" style="margin-top:4px">
+      <label>Compare Start <input type="date" id="compare-start"></label>
+      <label>Compare End <input type="date" id="compare-end"></label>
+      <button type="button" id="compare-reset" class="btn-reset" style="font-size:0.75rem;padding:4px 10px" title="Reset comparison to the period immediately preceding Start–End">↻ Auto</button>
+    </div>
     <button class="shopify-load-btn" id="btn-shopify-load">Load from Shopify</button>
     <div class="shopify-status" id="shopify-status"></div>
     <div class="upload-divider"><span>or upload CSV</span></div>
@@ -2717,12 +2722,43 @@ function parseShopifyQL(data) {
   return parsed;
 }
 
+// ─────────────────────────────────────────────
+// COMPARISON-WINDOW HELPERS
+// ─────────────────────────────────────────────
+// Tracks whether the user has manually edited the compare-* inputs. While
+// false, the comparison window auto-snaps to the period immediately preceding
+// the main range each time start/end change.
+let _compareManualOverride = false;
+
+function autoComputeCompareRange() {
+  const startStr = document.getElementById('date-start').value;
+  const endStr   = document.getElementById('date-end').value;
+  if (!startStr || !endStr) return null;
+  const sd = new Date(startStr + 'T00:00:00Z');
+  const ed = new Date(endStr   + 'T00:00:00Z');
+  if (isNaN(sd.getTime()) || isNaN(ed.getTime()) || ed < sd) return null;
+  const days = Math.round((ed - sd) / 86400000) + 1;       // inclusive day count
+  const cEnd = new Date(sd);   cEnd.setUTCDate(cEnd.getUTCDate() - 1);
+  const cStart = new Date(cEnd); cStart.setUTCDate(cStart.getUTCDate() - (days - 1));
+  return { start: cStart.toISOString().slice(0, 10), end: cEnd.toISOString().slice(0, 10) };
+}
+
+function syncCompareInputs() {
+  if (_compareManualOverride) return;
+  const r = autoComputeCompareRange();
+  if (!r) return;
+  document.getElementById('compare-start').value = r.start;
+  document.getElementById('compare-end').value   = r.end;
+}
+
 async function loadFromShopify() {
   const btn    = document.getElementById('btn-shopify-load');
   const status = document.getElementById('shopify-status');
   const errEl  = document.getElementById('upload-error');
   const startDate = document.getElementById('date-start').value;
   const endDate   = document.getElementById('date-end').value;
+  const compareStart = document.getElementById('compare-start').value;
+  const compareEnd   = document.getElementById('compare-end').value;
 
   if (!startDate || !endDate) {
     status.className = 'shopify-status error';
@@ -2730,13 +2766,26 @@ async function loadFromShopify() {
     return;
   }
 
+  // Determine whether the comparison window matches the auto-computed
+  // "previous period". If yes, omit it from the request and let the backend
+  // use ShopifyQL's built-in COMPARE TO previous_period.
+  const auto = autoComputeCompareRange();
+  const isAuto = !_compareManualOverride
+    || (auto && compareStart === auto.start && compareEnd === auto.end);
+  const useCustomCompare = !isAuto && compareStart && compareEnd;
+
   btn.disabled = true;
   status.className = 'shopify-status';
   status.textContent = 'Querying Shopify…';
   errEl.className = 'upload-error';
 
   try {
-    const resp = await fetch(`/api/conversion-impact-data?start=${startDate}&end=${endDate}`);
+    const params = new URLSearchParams({ start: startDate, end: endDate });
+    if (useCustomCompare) {
+      params.set('compare_start', compareStart);
+      params.set('compare_end',   compareEnd);
+    }
+    const resp = await fetch(`/api/conversion-impact-data?${params.toString()}`);
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
       throw new Error(err.error || `HTTP ${resp.status}`);
@@ -2744,19 +2793,34 @@ async function loadFromShopify() {
 
     const data = await resp.json();
     if (data.query) console.log('[ShopifyQL — main]\n' + data.query);
+    if (data.compare_query) console.log('[ShopifyQL — compare]\n' + data.compare_query);
     if (data.correlation?.query) console.log('[ShopifyQL — correlation]\n' + data.correlation.query);
     status.textContent = 'Parsing response…';
     const rows = parseShopifyQL(data);
     _correlationData = data.correlation || null;
-    render(rows, `Shopify · ${startDate} to ${endDate} vs previous period`);
+    const compareLabel = useCustomCompare
+      ? `${compareStart} → ${compareEnd}`
+      : (auto ? `${auto.start} → ${auto.end} (auto · prev period)` : 'previous period');
+    render(rows, `Shopify · ${startDate} to ${endDate} vs ${compareLabel}`);
     // Expose queries in the top bar
     const info = document.getElementById('top-bar-info');
     if (info) {
+      // Surface merge stats inline so the user can see whether the custom
+      // comparison actually joined to anything.
+      if (data.merge_stats) {
+        const m = data.merge_stats;
+        const tag = m.matched_keys === 0
+          ? `<span style="color:var(--negative)">⚠ 0 of ${m.main_rows} rows matched the comparison window</span>`
+          : `${m.matched_keys}/${m.main_rows} rows matched compare window`;
+        info.innerHTML += ` &nbsp;·&nbsp; ${tag}`;
+      }
       info.innerHTML += ` &nbsp;·&nbsp; <a href="#" id="show-query-link" style="color:var(--fb-blue)">Show ShopifyQL</a>`;
       document.getElementById('show-query-link').addEventListener('click', (e) => {
         e.preventDefault();
-        const both = `--- Main ---\n${data.query}\n\n--- Correlation ---\n${data.correlation?.query || '(none)'}`;
-        alert(both);
+        const parts = [`--- Main ---\n${data.query}`];
+        if (data.compare_query) parts.push(`--- Compare ---\n${data.compare_query}`);
+        parts.push(`--- Correlation ---\n${data.correlation?.query || '(none)'}`);
+        alert(parts.join('\n\n'));
       });
     }
   } catch (err) {
@@ -2820,6 +2884,25 @@ document.addEventListener('DOMContentLoaded', () => {
   const fmt = d => d.toISOString().slice(0, 10);
   document.getElementById('date-start').value = fmt(yesterday);
   document.getElementById('date-end').value = fmt(yesterday);
+  syncCompareInputs();
+
+  // When the user changes Start/End: snap the comparison window to the
+  // immediately-preceding window UNLESS they've manually edited it.
+  document.getElementById('date-start').addEventListener('change', syncCompareInputs);
+  document.getElementById('date-end').addEventListener('change', syncCompareInputs);
+
+  // Mark compare inputs as manually overridden the moment the user edits them.
+  ['compare-start', 'compare-end'].forEach(id => {
+    document.getElementById(id).addEventListener('change', () => {
+      _compareManualOverride = true;
+    });
+  });
+
+  // ↻ Auto button — reset comparison to the auto-computed previous period.
+  document.getElementById('compare-reset').addEventListener('click', () => {
+    _compareManualOverride = false;
+    syncCompareInputs();
+  });
 
   // Shopify load
   document.getElementById('btn-shopify-load').addEventListener('click', loadFromShopify);
