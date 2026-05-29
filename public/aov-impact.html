@@ -1,0 +1,832 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AOV Impact Analysis</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --fb-blue: #1877f2;
+      --bg: #f0f2f5;
+      --surface: #fff;
+      --text-primary: #1c1e21;
+      --text-secondary: #65676b;
+      --border: #dddfe2;
+      --positive: #1a7f37;
+      --positive-bg: #dcfce7;
+      --negative: #c0392b;
+      --negative-bg: #fee2e2;
+      --neutral-bg: #e4e6eb;
+      --shadow: 0 1px 3px rgba(0,0,0,0.12);
+      --radius: 8px;
+      --c-meta: #1877f2;
+      --c-retention: #7c3aed;
+      --c-direct: #65676b;
+      --c-search: #ea4335;
+      --c-topoffunnel: #f97316;
+      --c-other: #9ca3af;
+      --c-unknown: #cbd5e1;
+      --amber: #d97706;
+      --amber-bg: #fef3c7;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text-primary);
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    header {
+      background: var(--fb-blue);
+      color: white;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .header__back {
+      color: rgba(255,255,255,0.85);
+      text-decoration: none;
+      font-size: 0.875rem;
+      border: 1px solid rgba(255,255,255,0.3);
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+    }
+    .header__back:hover { background: rgba(255,255,255,0.15); color: white; }
+    header h1 { font-size: 1.2rem; font-weight: 700; }
+    header p { font-size: 0.8rem; opacity: 0.75; }
+
+    /* Upload screen */
+    #upload-screen { max-width: 560px; margin: 60px auto; padding: 0 24px; }
+    .upload-card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 32px;
+      text-align: center;
+    }
+    .upload-card h2 { font-size: 1.1rem; margin-bottom: 8px; }
+    .upload-card p { font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 24px; }
+    .date-row {
+      display: flex; gap: 12px; align-items: center; justify-content: center;
+      flex-wrap: wrap; margin-bottom: 16px;
+    }
+    .date-row label {
+      font-size: 0.8rem; color: var(--text-secondary);
+      display: flex; gap: 6px; align-items: center;
+    }
+    .date-row input[type=date] {
+      padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px;
+      font: inherit; font-size: 0.85rem;
+    }
+    .btn-reset {
+      font-size: 0.75rem; padding: 4px 10px; background: var(--neutral-bg);
+      border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
+    }
+    .load-btn {
+      width: 100%; padding: 12px 16px; font: inherit; font-weight: 600;
+      background: var(--fb-blue); color: white; border: 0; border-radius: 6px;
+      cursor: pointer; margin-top: 8px;
+    }
+    .load-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .load-status { font-size: 0.8rem; color: var(--text-secondary); margin-top: 12px; min-height: 1.2em; }
+    .load-status.error { color: var(--negative); }
+
+    /* Results */
+    #results-screen { display: none; }
+    .results-wrap { max-width: 1280px; margin: 24px auto; padding: 0 24px; }
+
+    .top-bar {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 16px; flex-wrap: wrap; gap: 8px;
+    }
+    .top-bar__info {
+      font-size: 0.85rem; color: var(--text-secondary);
+    }
+    .top-bar__info strong { color: var(--text-primary); }
+
+    .kpi-row {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px; margin-bottom: 16px;
+    }
+    .kpi {
+      background: var(--surface); border-radius: var(--radius); padding: 14px 16px;
+      box-shadow: var(--shadow);
+    }
+    .kpi__label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-secondary); }
+    .kpi__value { font-size: 1.25rem; font-weight: 700; margin-top: 4px; }
+    .kpi__delta { font-size: 0.78rem; margin-top: 2px; }
+    .kpi__delta.up { color: var(--positive); }
+    .kpi__delta.down { color: var(--negative); }
+
+    .card {
+      background: var(--surface); border-radius: var(--radius); padding: 20px;
+      box-shadow: var(--shadow); margin-bottom: 16px;
+    }
+    .card h3 { font-size: 1rem; margin-bottom: 8px; }
+    .card__sub { font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 14px; }
+    .card__sub strong { color: var(--text-primary); }
+
+    table { width: 100%; border-collapse: collapse; font-size: 0.83rem; }
+    th { text-align: left; padding: 8px 10px; font-size: 0.72rem;
+         text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-secondary);
+         background: #f7f8fa; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    th.r { text-align: right; }
+    td { padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    td.r { text-align: right; font-variant-numeric: tabular-nums; }
+    tr:last-child td { border-bottom: none; }
+    tfoot td { background: #f7f8fa; font-weight: 600; border-top: 2px solid var(--border); }
+
+    .channel-dot {
+      display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+      margin-right: 8px; vertical-align: middle;
+    }
+    .channel-cell { display: inline-flex; align-items: center; }
+
+    .pos { color: var(--positive); }
+    .neg { color: var(--negative); }
+    .pos-bg { background: var(--positive-bg); }
+    .neg-bg { background: var(--negative-bg); }
+
+    .scroll-x { overflow-x: auto; }
+
+    .drill-row td {
+      background: #fafbfc;
+      font-size: 0.78rem;
+    }
+    .drill-row td .indent { display: inline-block; width: 18px; }
+    .drill-row.lp td { background: #f4f6f9; padding-left: 30px; }
+    .drill-row.lp td:first-child { padding-left: 50px; color: var(--text-secondary); }
+
+    .drill-toggle {
+      cursor: pointer; user-select: none;
+      color: var(--fb-blue); font-size: 0.78rem;
+    }
+    .drill-toggle:hover { text-decoration: underline; }
+
+    .num-pos { color: var(--positive); }
+    .num-neg { color: var(--negative); }
+
+    .footnote {
+      font-size: 0.75rem; color: var(--text-secondary);
+      margin-top: 12px; line-height: 1.5;
+    }
+    .warning {
+      background: var(--amber-bg); color: var(--amber);
+      padding: 10px 14px; border-radius: 6px; font-size: 0.8rem; margin-bottom: 12px;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <a class="header__back" href="/">&#8592; Ads Viewer</a>
+  <div>
+    <h1>AOV Impact Analysis</h1>
+    <p>Per-channel decomposition of revenue and blended-AOV change, loaded from Shopify orders</p>
+  </div>
+</header>
+
+<!-- ===== LOAD SCREEN ===== -->
+<div id="upload-screen">
+  <div class="upload-card">
+    <h2>AOV Impact Analysis</h2>
+    <p>Loads Shopify orders for a date range and the previous period, attributes by customerJourney first-visit UTM, and decomposes Δ Revenue + Δ Blended AOV across channels.</p>
+    <div class="date-row">
+      <label>Start <input type="date" id="date-start"></label>
+      <label>End <input type="date" id="date-end"></label>
+    </div>
+    <div class="date-row" style="margin-top:4px">
+      <label>Compare Start <input type="date" id="compare-start"></label>
+      <label>Compare End <input type="date" id="compare-end"></label>
+      <button type="button" id="compare-reset" class="btn-reset" title="Reset comparison to the period immediately preceding Start–End">↻ Auto</button>
+    </div>
+    <button class="load-btn" id="btn-load">Load from Shopify</button>
+    <div class="load-status" id="load-status"></div>
+  </div>
+</div>
+
+<!-- ===== RESULTS SCREEN ===== -->
+<div id="results-screen">
+  <div class="results-wrap">
+    <div class="top-bar">
+      <div class="top-bar__info" id="top-bar-info"></div>
+      <button class="btn-reset" id="btn-reset">← Load another range</button>
+    </div>
+
+    <div id="warning-area"></div>
+
+    <div class="kpi-row" id="kpi-row"></div>
+
+    <!-- Δ Revenue decomposition -->
+    <div class="card">
+      <h3>Channel Revenue Decomposition</h3>
+      <p class="card__sub">
+        Each channel's contribution to <strong>Δ Revenue</strong>, split into:
+        <strong>Orders Effect</strong> = ΔOrders × prevAOV (more/fewer orders at the old basket),
+        <strong>AOV Effect</strong> = prevOrders × ΔAOV (same orders earning a higher/lower basket),
+        and <strong>Interaction</strong> = ΔOrders × ΔAOV (the cross-term).
+        The three sum to Δ Revenue for that channel; rows sum to the overall Δ Revenue.
+      </p>
+      <div class="scroll-x">
+        <table id="rev-table">
+          <thead>
+            <tr>
+              <th>Channel</th>
+              <th class="r">Prev Orders</th>
+              <th class="r">Curr Orders</th>
+              <th class="r">Δ Orders</th>
+              <th class="r">Prev AOV</th>
+              <th class="r">Curr AOV</th>
+              <th class="r">Δ AOV</th>
+              <th class="r">Prev Rev</th>
+              <th class="r">Curr Rev</th>
+              <th class="r">Δ Rev</th>
+              <th class="r">Orders Effect</th>
+              <th class="r">AOV Effect</th>
+              <th class="r">Interaction</th>
+            </tr>
+          </thead>
+          <tbody id="rev-tbody"></tbody>
+          <tfoot id="rev-tfoot"></tfoot>
+        </table>
+      </div>
+    </div>
+
+    <!-- Δ Blended AOV decomposition -->
+    <div class="card">
+      <h3>Blended AOV Decomposition</h3>
+      <p class="card__sub">
+        Decomposes the change in <strong>blended AOV</strong> (overall revenue ÷ overall orders) into per-channel contributions.
+        <strong>Own-AOV Effect</strong> = prevOrderShare × ΔAOV (this channel's own AOV move, weighted by its share of last period's orders).
+        <strong>Mix-Shift Effect</strong> = ΔOrderShare × (currAOV − blended avg) (gaining/losing orders at a basket above or below the blended average).
+        The two sum to this channel's contribution; rows sum to total Δ Blended AOV.
+      </p>
+      <div class="scroll-x">
+        <table id="aov-table">
+          <thead>
+            <tr>
+              <th>Channel</th>
+              <th class="r">Prev Order Share</th>
+              <th class="r">Curr Order Share</th>
+              <th class="r">Δ Share</th>
+              <th class="r">Prev AOV</th>
+              <th class="r">Curr AOV</th>
+              <th class="r">Δ AOV</th>
+              <th class="r">Own-AOV Effect</th>
+              <th class="r">Mix-Shift Effect</th>
+              <th class="r">Total Contribution</th>
+              <th class="r">% of Δ Blended</th>
+            </tr>
+          </thead>
+          <tbody id="aov-tbody"></tbody>
+          <tfoot id="aov-tfoot"></tfoot>
+        </table>
+      </div>
+    </div>
+
+    <!-- Drill-down Channel → utm_source → landing page -->
+    <div class="card">
+      <h3>Drill-down: Channel → utm_source → landing page</h3>
+      <p class="card__sub">Click a channel to expand its utm_sources; click a source to expand its landing pages. Each row carries the same Δ Revenue split for that slice.</p>
+      <div class="scroll-x">
+        <table id="drill-table">
+          <thead>
+            <tr>
+              <th>Slice</th>
+              <th class="r">Prev Orders</th>
+              <th class="r">Curr Orders</th>
+              <th class="r">Δ Orders</th>
+              <th class="r">Prev AOV</th>
+              <th class="r">Curr AOV</th>
+              <th class="r">Δ AOV</th>
+              <th class="r">Δ Rev</th>
+              <th class="r">Orders Effect</th>
+              <th class="r">AOV Effect</th>
+            </tr>
+          </thead>
+          <tbody id="drill-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <p class="footnote">
+      Attribution is read from each order's <code>customerJourneySummary.firstVisit</code>. Orders without a recorded
+      first visit are bucketed as <strong>Unknown</strong>. AOV = total_price ÷ orders. Revenue is order
+      total_price (incl. tax/shipping, currency = shop currency).
+    </p>
+  </div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────
+// CHANNEL CONFIG (mirrors conversion-impact.html)
+// ─────────────────────────────────────────────
+const CHANNELS = {
+  meta:        { label: 'Meta',          color: '#1877f2', match: s => ['facebook','ig','instagram','igshopping'].includes(s) || s.startsWith('facebook') },
+  retention:   { label: 'Retention',     color: '#7c3aed', match: s => ['klaviyo','postscript','attentive'].includes(s) },
+  direct:      { label: 'Direct',        color: '#65676b', match: s => s === '' || s === 'direct' || s === 'none' || s === 'null' },
+  search:      { label: 'Search',        color: '#ea4335', match: s => ['google','bing'].includes(s) },
+  topOfFunnel: { label: 'Top of Funnel', color: '#f97316', match: s => ['demand-gen','snapchat','squaredance','applovin','tiktok'].includes(s) },
+};
+const CHANNEL_ORDER = ['meta','retention','direct','search','topOfFunnel','other','unknown'];
+
+function classifySource(rawSource, rawLp) {
+  const s = (rawSource == null ? '' : String(rawSource)).trim().toLowerCase();
+  // Orders with no firstVisit at all come back with empty source AND empty LP — treat as Unknown
+  if (!s && !rawLp) return 'unknown';
+  for (const [key, ch] of Object.entries(CHANNELS)) {
+    if (ch.match(s)) return key;
+  }
+  return 'other';
+}
+function chLabel(key) {
+  if (key === 'other') return 'Other';
+  if (key === 'unknown') return 'Unknown (no journey)';
+  return CHANNELS[key].label;
+}
+function chColor(key) {
+  if (key === 'other') return '#9ca3af';
+  if (key === 'unknown') return '#cbd5e1';
+  return CHANNELS[key].color;
+}
+
+// ─────────────────────────────────────────────
+// FORMATTERS
+// ─────────────────────────────────────────────
+const fmt$ = n => (n == null || !isFinite(n)) ? '—' : '$' + n.toLocaleString('en-US', { maximumFractionDigits: 0 });
+const fmt$2 = n => (n == null || !isFinite(n)) ? '—' : '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtInt = n => (n == null || !isFinite(n)) ? '—' : n.toLocaleString('en-US');
+const fmtPct = n => (n == null || !isFinite(n)) ? '—' : (n * 100).toFixed(1) + '%';
+const signed$ = n => {
+  if (n == null || !isFinite(n)) return '—';
+  const s = n >= 0 ? '+' : '−';
+  return s + '$' + Math.abs(n).toLocaleString('en-US', { maximumFractionDigits: 0 });
+};
+const signed$2 = n => {
+  if (n == null || !isFinite(n)) return '—';
+  const s = n >= 0 ? '+' : '−';
+  return s + '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
+const signedInt = n => {
+  if (n == null || !isFinite(n)) return '—';
+  const s = n >= 0 ? '+' : '−';
+  return s + Math.abs(n).toLocaleString('en-US');
+};
+const signedPct = n => {
+  if (n == null || !isFinite(n)) return '—';
+  const s = n >= 0 ? '+' : '−';
+  return s + (Math.abs(n) * 100).toFixed(2) + 'pp';
+};
+const cls = n => n == null || !isFinite(n) ? '' : (n > 0 ? 'num-pos' : (n < 0 ? 'num-neg' : ''));
+
+// ─────────────────────────────────────────────
+// MATH
+// ─────────────────────────────────────────────
+// Per-slice Δ Revenue decomposition: Rev = Orders × AOV
+function decomposeRev(prevO, prevA, currO, currA) {
+  const dO = currO - prevO;
+  const dA = currA - prevA;
+  const ordersEffect = dO * prevA;
+  const aovEffect    = prevO * dA;
+  const interaction  = dO * dA;
+  const prevRev = prevO * prevA;
+  const currRev = currO * currA;
+  return { dO, dA, ordersEffect, aovEffect, interaction, prevRev, currRev, dRev: currRev - prevRev };
+}
+
+// Blended AOV per-channel contribution: Δblended = Σ prevShare·ΔAOV + Σ ΔShare·(currAOV − blendedAvg)
+// where blendedAvg is the previous-period blended AOV (so mix-shift is measured relative to the old mix).
+function decomposeBlendedAOV(channels, prevTotalO, prevBlendedA, currTotalO) {
+  return channels.map(c => {
+    const prevShare = prevTotalO > 0 ? c.prevO / prevTotalO : 0;
+    const currShare = currTotalO > 0 ? c.currO / currTotalO : 0;
+    const dShare = currShare - prevShare;
+    const dA = (c.currA || 0) - (c.prevA || 0);
+    const ownEffect = prevShare * dA;
+    const mixEffect = dShare * ((c.currA || 0) - prevBlendedA);
+    return {
+      ...c,
+      prevShare, currShare, dShare, dA,
+      ownEffect, mixEffect, total: ownEffect + mixEffect,
+    };
+  });
+}
+
+// ─────────────────────────────────────────────
+// AGGREGATION
+// ─────────────────────────────────────────────
+function aggregateChannel(rowsCur, rowsPrev) {
+  // map: channel → { prevO, prevR, currO, currR }
+  const m = new Map();
+  const touch = (key) => {
+    if (!m.has(key)) m.set(key, { channel: key, prevO: 0, prevR: 0, currO: 0, currR: 0 });
+    return m.get(key);
+  };
+  rowsCur.forEach(r => {
+    const k = classifySource(r.utm_source, r.landing_page);
+    const g = touch(k);
+    g.currO += r.orders; g.currR += r.revenue;
+  });
+  rowsPrev.forEach(r => {
+    const k = classifySource(r.utm_source, r.landing_page);
+    const g = touch(k);
+    g.prevO += r.orders; g.prevR += r.revenue;
+  });
+  const list = Array.from(m.values()).map(g => ({
+    ...g,
+    prevA: g.prevO > 0 ? g.prevR / g.prevO : 0,
+    currA: g.currO > 0 ? g.currR / g.currO : 0,
+  }));
+  list.sort((a, b) => CHANNEL_ORDER.indexOf(a.channel) - CHANNEL_ORDER.indexOf(b.channel));
+  return list;
+}
+
+// channel → utm_source → landing_page, with the same prevO/currO/prevR/currR shape
+function buildDrill(rowsCur, rowsPrev) {
+  const ch = new Map();
+  const ensureCh = (k) => {
+    if (!ch.has(k)) ch.set(k, { channel: k, sources: new Map(), prevO:0, prevR:0, currO:0, currR:0 });
+    return ch.get(k);
+  };
+  const ensureSrc = (chN, src) => {
+    if (!chN.sources.has(src)) chN.sources.set(src, { source: src, lps: new Map(), prevO:0, prevR:0, currO:0, currR:0 });
+    return chN.sources.get(src);
+  };
+  const ensureLp = (srcN, lp) => {
+    if (!srcN.lps.has(lp)) srcN.lps.set(lp, { lp, prevO:0, prevR:0, currO:0, currR:0 });
+    return srcN.lps.get(lp);
+  };
+  const apply = (rows, slot) => {
+    rows.forEach(r => {
+      const k = classifySource(r.utm_source, r.landing_page);
+      const chN = ensureCh(k);
+      const srcKey = r.utm_source || '(none)';
+      const srcN = ensureSrc(chN, srcKey);
+      const lpN = ensureLp(srcN, r.landing_page || '(none)');
+      chN[slot + 'O']  += r.orders;  chN[slot + 'R']  += r.revenue;
+      srcN[slot + 'O'] += r.orders;  srcN[slot + 'R'] += r.revenue;
+      lpN[slot + 'O']  += r.orders;  lpN[slot + 'R']  += r.revenue;
+    });
+  };
+  apply(rowsCur,  'curr');
+  apply(rowsPrev, 'prev');
+
+  const finalize = (n) => ({
+    ...n,
+    prevA: n.prevO > 0 ? n.prevR / n.prevO : 0,
+    currA: n.currO > 0 ? n.currR / n.currO : 0,
+  });
+
+  const out = [];
+  for (const [ckey, cN] of ch) {
+    const sources = [];
+    for (const [skey, sN] of cN.sources) {
+      const lps = Array.from(sN.lps.values()).map(finalize)
+        .sort((a, b) => Math.abs(b.currR - b.prevR) - Math.abs(a.currR - a.prevR));
+      sources.push({ ...finalize(sN), lps });
+    }
+    sources.sort((a, b) => Math.abs(b.currR - b.prevR) - Math.abs(a.currR - a.prevR));
+    out.push({ ...finalize(cN), sources });
+  }
+  out.sort((a, b) => CHANNEL_ORDER.indexOf(a.channel) - CHANNEL_ORDER.indexOf(b.channel));
+  return out;
+}
+
+// ─────────────────────────────────────────────
+// RENDER
+// ─────────────────────────────────────────────
+function renderKpi(channels) {
+  const prevR = channels.reduce((a,c)=>a+c.prevR, 0);
+  const currR = channels.reduce((a,c)=>a+c.currR, 0);
+  const prevO = channels.reduce((a,c)=>a+c.prevO, 0);
+  const currO = channels.reduce((a,c)=>a+c.currO, 0);
+  const prevA = prevO > 0 ? prevR / prevO : 0;
+  const currA = currO > 0 ? currR / currO : 0;
+  const kpis = [
+    { label: 'Revenue', curr: fmt$(currR), prev: fmt$(prevR), d: currR - prevR, fmt: signed$ },
+    { label: 'Orders',  curr: fmtInt(currO), prev: fmtInt(prevO), d: currO - prevO, fmt: signedInt },
+    { label: 'Blended AOV', curr: fmt$2(currA), prev: fmt$2(prevA), d: currA - prevA, fmt: signed$2 },
+  ];
+  document.getElementById('kpi-row').innerHTML = kpis.map(k => `
+    <div class="kpi">
+      <div class="kpi__label">${k.label}</div>
+      <div class="kpi__value">${k.curr}</div>
+      <div class="kpi__delta ${k.d > 0 ? 'up' : (k.d < 0 ? 'down' : '')}">
+        prev ${k.prev} · ${k.fmt(k.d)}
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderRevTable(channels) {
+  const tbody = document.getElementById('rev-tbody');
+  let totalPrevR=0, totalCurrR=0, totalPrevO=0, totalCurrO=0;
+  const rows = channels.map(c => {
+    const d = decomposeRev(c.prevO, c.prevA, c.currO, c.currA);
+    totalPrevR += d.prevRev; totalCurrR += d.currRev;
+    totalPrevO += c.prevO;   totalCurrO += c.currO;
+    return `
+      <tr>
+        <td><span class="channel-cell"><span class="channel-dot" style="background:${chColor(c.channel)}"></span>${chLabel(c.channel)}</span></td>
+        <td class="r">${fmtInt(c.prevO)}</td>
+        <td class="r">${fmtInt(c.currO)}</td>
+        <td class="r ${cls(d.dO)}">${signedInt(d.dO)}</td>
+        <td class="r">${fmt$2(c.prevA)}</td>
+        <td class="r">${fmt$2(c.currA)}</td>
+        <td class="r ${cls(d.dA)}">${signed$2(d.dA)}</td>
+        <td class="r">${fmt$(d.prevRev)}</td>
+        <td class="r">${fmt$(d.currRev)}</td>
+        <td class="r ${cls(d.dRev)}">${signed$(d.dRev)}</td>
+        <td class="r ${cls(d.ordersEffect)}">${signed$(d.ordersEffect)}</td>
+        <td class="r ${cls(d.aovEffect)}">${signed$(d.aovEffect)}</td>
+        <td class="r ${cls(d.interaction)}">${signed$(d.interaction)}</td>
+      </tr>`;
+  }).join('');
+  tbody.innerHTML = rows;
+
+  const dRev = totalCurrR - totalPrevR;
+  const dO = totalCurrO - totalPrevO;
+  const totalPrevA = totalPrevO > 0 ? totalPrevR / totalPrevO : 0;
+  const totalCurrA = totalCurrO > 0 ? totalCurrR / totalCurrO : 0;
+  const dA = totalCurrA - totalPrevA;
+  // Aggregate effects from per-channel sums (these sum exactly to dRev)
+  const aggOE = channels.reduce((a,c)=>a + (c.currO - c.prevO) * c.prevA, 0);
+  const aggAE = channels.reduce((a,c)=>a + c.prevO * (c.currA - c.prevA), 0);
+  const aggInt = channels.reduce((a,c)=>a + (c.currO - c.prevO) * (c.currA - c.prevA), 0);
+  document.getElementById('rev-tfoot').innerHTML = `
+    <tr>
+      <td>Total</td>
+      <td class="r">${fmtInt(totalPrevO)}</td>
+      <td class="r">${fmtInt(totalCurrO)}</td>
+      <td class="r ${cls(dO)}">${signedInt(dO)}</td>
+      <td class="r">${fmt$2(totalPrevA)}</td>
+      <td class="r">${fmt$2(totalCurrA)}</td>
+      <td class="r ${cls(dA)}">${signed$2(dA)}</td>
+      <td class="r">${fmt$(totalPrevR)}</td>
+      <td class="r">${fmt$(totalCurrR)}</td>
+      <td class="r ${cls(dRev)}">${signed$(dRev)}</td>
+      <td class="r ${cls(aggOE)}">${signed$(aggOE)}</td>
+      <td class="r ${cls(aggAE)}">${signed$(aggAE)}</td>
+      <td class="r ${cls(aggInt)}">${signed$(aggInt)}</td>
+    </tr>`;
+}
+
+function renderAovTable(channels) {
+  const prevTotalO = channels.reduce((a,c)=>a+c.prevO,0);
+  const currTotalO = channels.reduce((a,c)=>a+c.currO,0);
+  const prevTotalR = channels.reduce((a,c)=>a+c.prevR,0);
+  const currTotalR = channels.reduce((a,c)=>a+c.currR,0);
+  const prevBlended = prevTotalO > 0 ? prevTotalR / prevTotalO : 0;
+  const currBlended = currTotalO > 0 ? currTotalR / currTotalO : 0;
+  const dBlended = currBlended - prevBlended;
+  const decomp = decomposeBlendedAOV(channels, prevTotalO, prevBlended, currTotalO);
+  const rows = decomp.map(c => `
+    <tr>
+      <td><span class="channel-cell"><span class="channel-dot" style="background:${chColor(c.channel)}"></span>${chLabel(c.channel)}</span></td>
+      <td class="r">${fmtPct(c.prevShare)}</td>
+      <td class="r">${fmtPct(c.currShare)}</td>
+      <td class="r ${cls(c.dShare)}">${signedPct(c.dShare)}</td>
+      <td class="r">${fmt$2(c.prevA)}</td>
+      <td class="r">${fmt$2(c.currA)}</td>
+      <td class="r ${cls(c.dA)}">${signed$2(c.dA)}</td>
+      <td class="r ${cls(c.ownEffect)}">${signed$2(c.ownEffect)}</td>
+      <td class="r ${cls(c.mixEffect)}">${signed$2(c.mixEffect)}</td>
+      <td class="r ${cls(c.total)}">${signed$2(c.total)}</td>
+      <td class="r">${dBlended === 0 ? '—' : ((c.total / dBlended) * 100).toFixed(0) + '%'}</td>
+    </tr>`).join('');
+  document.getElementById('aov-tbody').innerHTML = rows;
+  const sumOwn = decomp.reduce((a,c)=>a+c.ownEffect,0);
+  const sumMix = decomp.reduce((a,c)=>a+c.mixEffect,0);
+  const sumTot = sumOwn + sumMix;
+  document.getElementById('aov-tfoot').innerHTML = `
+    <tr>
+      <td>Total Δ Blended AOV</td>
+      <td class="r">100%</td>
+      <td class="r">100%</td>
+      <td class="r">—</td>
+      <td class="r">${fmt$2(prevBlended)}</td>
+      <td class="r">${fmt$2(currBlended)}</td>
+      <td class="r ${cls(dBlended)}">${signed$2(dBlended)}</td>
+      <td class="r ${cls(sumOwn)}">${signed$2(sumOwn)}</td>
+      <td class="r ${cls(sumMix)}">${signed$2(sumMix)}</td>
+      <td class="r ${cls(sumTot)}">${signed$2(sumTot)}</td>
+      <td class="r">100%</td>
+    </tr>`;
+}
+
+function drillRowHtml(label, indent, c, type) {
+  const d = decomposeRev(c.prevO, c.prevA, c.currO, c.currA);
+  const cellLabel = type === 'channel'
+    ? `<span class="channel-cell"><span class="channel-dot" style="background:${chColor(c.channel)}"></span>${label}</span>`
+    : (type === 'source' ? `<span class="indent"></span><span class="indent"></span>${label}` : `${label}`);
+  return `
+    <tr class="drill-row ${type === 'lp' ? 'lp' : ''}" data-type="${type}" data-key="${c.__key || ''}">
+      <td>${cellLabel}</td>
+      <td class="r">${fmtInt(c.prevO)}</td>
+      <td class="r">${fmtInt(c.currO)}</td>
+      <td class="r ${cls(d.dO)}">${signedInt(d.dO)}</td>
+      <td class="r">${fmt$2(c.prevA)}</td>
+      <td class="r">${fmt$2(c.currA)}</td>
+      <td class="r ${cls(d.dA)}">${signed$2(d.dA)}</td>
+      <td class="r ${cls(d.dRev)}">${signed$(d.dRev)}</td>
+      <td class="r ${cls(d.ordersEffect)}">${signed$(d.ordersEffect)}</td>
+      <td class="r ${cls(d.aovEffect)}">${signed$(d.aovEffect)}</td>
+    </tr>`;
+}
+
+let _drillTree = [];
+const _expandedCh = new Set();
+const _expandedSrc = new Set();
+
+function renderDrill() {
+  const tbody = document.getElementById('drill-tbody');
+  const parts = [];
+  _drillTree.forEach((cN, ci) => {
+    const chKey = 'c' + ci;
+    const expanded = _expandedCh.has(chKey);
+    const d = decomposeRev(cN.prevO, cN.prevA, cN.currO, cN.currA);
+    parts.push(`
+      <tr data-row-type="channel" data-ch="${chKey}" style="cursor:pointer">
+        <td>
+          <span class="channel-cell">
+            <span class="channel-dot" style="background:${chColor(cN.channel)}"></span>
+            <span class="drill-toggle">${expanded ? '▾' : '▸'}</span>&nbsp;${chLabel(cN.channel)}
+            <span style="color:var(--text-secondary); font-size:0.78rem; margin-left:6px">(${cN.sources.length} src)</span>
+          </span>
+        </td>
+        <td class="r">${fmtInt(cN.prevO)}</td>
+        <td class="r">${fmtInt(cN.currO)}</td>
+        <td class="r ${cls(d.dO)}">${signedInt(d.dO)}</td>
+        <td class="r">${fmt$2(cN.prevA)}</td>
+        <td class="r">${fmt$2(cN.currA)}</td>
+        <td class="r ${cls(d.dA)}">${signed$2(d.dA)}</td>
+        <td class="r ${cls(d.dRev)}">${signed$(d.dRev)}</td>
+        <td class="r ${cls(d.ordersEffect)}">${signed$(d.ordersEffect)}</td>
+        <td class="r ${cls(d.aovEffect)}">${signed$(d.aovEffect)}</td>
+      </tr>`);
+    if (!expanded) return;
+    cN.sources.forEach((sN, si) => {
+      const srcKey = chKey + '-s' + si;
+      const sExp = _expandedSrc.has(srcKey);
+      const sd = decomposeRev(sN.prevO, sN.prevA, sN.currO, sN.currA);
+      parts.push(`
+        <tr class="drill-row" data-row-type="source" data-src="${srcKey}" style="cursor:pointer">
+          <td>
+            <span class="indent"></span>
+            <span class="drill-toggle">${sExp ? '▾' : '▸'}</span>&nbsp;
+            <code style="font-size:0.78rem">${sN.source}</code>
+            <span style="color:var(--text-secondary); font-size:0.75rem; margin-left:6px">(${sN.lps.length} LP)</span>
+          </td>
+          <td class="r">${fmtInt(sN.prevO)}</td>
+          <td class="r">${fmtInt(sN.currO)}</td>
+          <td class="r ${cls(sd.dO)}">${signedInt(sd.dO)}</td>
+          <td class="r">${fmt$2(sN.prevA)}</td>
+          <td class="r">${fmt$2(sN.currA)}</td>
+          <td class="r ${cls(sd.dA)}">${signed$2(sd.dA)}</td>
+          <td class="r ${cls(sd.dRev)}">${signed$(sd.dRev)}</td>
+          <td class="r ${cls(sd.ordersEffect)}">${signed$(sd.ordersEffect)}</td>
+          <td class="r ${cls(sd.aovEffect)}">${signed$(sd.aovEffect)}</td>
+        </tr>`);
+      if (!sExp) return;
+      sN.lps.forEach(lpN => {
+        const ld = decomposeRev(lpN.prevO, lpN.prevA, lpN.currO, lpN.currA);
+        parts.push(`
+          <tr class="drill-row lp">
+            <td><code style="font-size:0.75rem; color:var(--text-secondary)">${lpN.lp}</code></td>
+            <td class="r">${fmtInt(lpN.prevO)}</td>
+            <td class="r">${fmtInt(lpN.currO)}</td>
+            <td class="r ${cls(ld.dO)}">${signedInt(ld.dO)}</td>
+            <td class="r">${fmt$2(lpN.prevA)}</td>
+            <td class="r">${fmt$2(lpN.currA)}</td>
+            <td class="r ${cls(ld.dA)}">${signed$2(ld.dA)}</td>
+            <td class="r ${cls(ld.dRev)}">${signed$(ld.dRev)}</td>
+            <td class="r ${cls(ld.ordersEffect)}">${signed$(ld.ordersEffect)}</td>
+            <td class="r ${cls(ld.aovEffect)}">${signed$(ld.aovEffect)}</td>
+          </tr>`);
+      });
+    });
+  });
+  tbody.innerHTML = parts.join('');
+  tbody.querySelectorAll('tr[data-row-type=channel]').forEach(tr => {
+    tr.addEventListener('click', () => {
+      const k = tr.dataset.ch;
+      if (_expandedCh.has(k)) _expandedCh.delete(k); else _expandedCh.add(k);
+      renderDrill();
+    });
+  });
+  tbody.querySelectorAll('tr[data-row-type=source]').forEach(tr => {
+    tr.addEventListener('click', () => {
+      const k = tr.dataset.src;
+      if (_expandedSrc.has(k)) _expandedSrc.delete(k); else _expandedSrc.add(k);
+      renderDrill();
+    });
+  });
+}
+
+// ─────────────────────────────────────────────
+// LOADER
+// ─────────────────────────────────────────────
+function setDefaultDates() {
+  // Default: yesterday + day before, compare = same length immediately prior
+  const today = new Date(); today.setUTCHours(0,0,0,0);
+  const y = new Date(today.getTime() - 86400000);
+  const y2 = new Date(today.getTime() - 7 * 86400000);
+  document.getElementById('date-start').value = y2.toISOString().slice(0,10);
+  document.getElementById('date-end').value = y.toISOString().slice(0,10);
+  autoCompare();
+}
+function autoCompare() {
+  const s = document.getElementById('date-start').value;
+  const e = document.getElementById('date-end').value;
+  if (!s || !e) return;
+  const sD = new Date(s + 'T00:00:00Z');
+  const eD = new Date(e + 'T00:00:00Z');
+  if (eD < sD) return;
+  const len = Math.round((eD - sD) / 86400000) + 1;
+  const pe = new Date(sD.getTime() - 86400000);
+  const ps = new Date(pe.getTime() - (len - 1) * 86400000);
+  document.getElementById('compare-start').value = ps.toISOString().slice(0,10);
+  document.getElementById('compare-end').value = pe.toISOString().slice(0,10);
+}
+
+async function load() {
+  const startEl = document.getElementById('date-start');
+  const endEl = document.getElementById('date-end');
+  const csEl = document.getElementById('compare-start');
+  const ceEl = document.getElementById('compare-end');
+  const statusEl = document.getElementById('load-status');
+  const btn = document.getElementById('btn-load');
+  const s = startEl.value, e = endEl.value, cs = csEl.value, ce = ceEl.value;
+  if (!s || !e) { statusEl.textContent = 'Pick start and end.'; statusEl.classList.add('error'); return; }
+  statusEl.classList.remove('error');
+  btn.disabled = true; statusEl.textContent = 'Fetching orders from Shopify…';
+  try {
+    const url = `/api/aov-impact-data?start=${s}&end=${e}` + (cs && ce ? `&compare_start=${cs}&compare_end=${ce}` : '');
+    const t0 = Date.now();
+    const r = await fetch(url);
+    if (!r.ok) {
+      const txt = await r.text();
+      throw new Error('HTTP ' + r.status + ': ' + txt);
+    }
+    const j = await r.json();
+    statusEl.textContent = `Loaded in ${(Date.now()-t0)/1000|0}s. ${j.current.order_count} current orders, ${j.previous.order_count} previous.`;
+    render(j);
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = 'Failed: ' + err.message;
+    statusEl.classList.add('error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function render(payload) {
+  const channels = aggregateChannel(payload.current.rows, payload.previous.rows);
+  _drillTree = buildDrill(payload.current.rows, payload.previous.rows);
+
+  // Top bar
+  document.getElementById('top-bar-info').innerHTML = `
+    <strong>Current</strong> ${payload.current.start} → ${payload.current.end}
+    &nbsp;·&nbsp;
+    <strong>Previous</strong> ${payload.previous.start} → ${payload.previous.end}
+  `;
+
+  // Truncation warnings
+  const warns = [];
+  if (payload.current.truncated)  warns.push(`Current period exceeded page cap — ${payload.current.order_count} orders shown.`);
+  if (payload.previous.truncated) warns.push(`Previous period exceeded page cap — ${payload.previous.order_count} orders shown.`);
+  document.getElementById('warning-area').innerHTML = warns.length
+    ? warns.map(w => `<div class="warning">${w}</div>`).join('')
+    : '';
+
+  renderKpi(channels);
+  renderRevTable(channels);
+  renderAovTable(channels);
+  renderDrill();
+
+  document.getElementById('upload-screen').style.display = 'none';
+  document.getElementById('results-screen').style.display = 'block';
+}
+
+// ─────────────────────────────────────────────
+// WIRE-UP
+// ─────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  setDefaultDates();
+  ['date-start','date-end'].forEach(id => document.getElementById(id).addEventListener('change', autoCompare));
+  document.getElementById('compare-reset').addEventListener('click', autoCompare);
+  document.getElementById('btn-load').addEventListener('click', load);
+  document.getElementById('btn-reset').addEventListener('click', () => {
+    document.getElementById('results-screen').style.display = 'none';
+    document.getElementById('upload-screen').style.display = 'block';
+  });
+});
+</script>
+
+</body>
+</html>

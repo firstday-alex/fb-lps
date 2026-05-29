@@ -1212,6 +1212,135 @@ VISUALIZE conversion_rate TYPE table`;
   }
 });
 
+// --- AOV Impact (Admin GraphQL orders, paginated, aggregated by source × LP) ---
+// ShopifyQL doesn't expose orders/sales on this store, so we hit the Admin
+// GraphQL Orders API directly and read customerJourneySummary.firstVisit for
+// attribution. Paginates by cursor; pre-aggregates server-side to keep payload
+// small. Returns current + previous period as { rows: [{utm_source, utm_medium,
+// landing_page, orders, revenue}], order_count, truncated }.
+
+app.get('/api/aov-impact-data', async (req, res) => {
+  if (!SHOPIFY_URL || !SHOPIFY_TOKEN) {
+    return res.status(500).json({ error: 'Shopify credentials not configured' });
+  }
+
+  const { start, end } = req.query;
+  if (!start || !end || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+    return res.status(400).json({ error: 'start and end query params required (YYYY-MM-DD)' });
+  }
+
+  // Default compare = same-length period immediately preceding [start, end]
+  let cs = req.query.compare_start;
+  let ce = req.query.compare_end;
+  const useCustomCompare = cs && ce && /^\d{4}-\d{2}-\d{2}$/.test(cs) && /^\d{4}-\d{2}-\d{2}$/.test(ce);
+  if (!useCustomCompare) {
+    const s0 = new Date(start + 'T00:00:00Z');
+    const e0 = new Date(end + 'T00:00:00Z');
+    const lenDays = Math.round((e0 - s0) / 86400000) + 1;
+    const prevEnd = new Date(s0.getTime() - 86400000);
+    const prevStart = new Date(prevEnd.getTime() - (lenDays - 1) * 86400000);
+    cs = prevStart.toISOString().slice(0, 10);
+    ce = prevEnd.toISOString().slice(0, 10);
+  }
+
+  const endpoint = `https://${SHOPIFY_URL}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
+  const ORDERS_GQL = `query Orders($q: String!, $after: String) {
+    orders(first: 250, query: $q, after: $after, sortKey: CREATED_AT) {
+      edges {
+        cursor
+        node {
+          id
+          totalPriceSet { shopMoney { amount } }
+          customerJourneySummary {
+            firstVisit {
+              source
+              utmParameters { source medium campaign content }
+              landingPage
+            }
+          }
+        }
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }`;
+
+  const lpPath = (url) => {
+    if (!url) return '';
+    try { return new URL(url).pathname || ''; } catch { return url; }
+  };
+
+  const fetchOrders = async (s, e) => {
+    const all = [];
+    let cursor = null;
+    let pages = 0;
+    const MAX_PAGES = 60; // up to ~15k orders per period — guard against runaway
+    const q = `created_at:>=${s}T00:00:00 AND created_at:<=${e}T23:59:59`;
+    while (true) {
+      const resp = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
+        body: JSON.stringify({ query: ORDERS_GQL, variables: { q, after: cursor } }),
+      });
+      const j = await resp.json();
+      if (j.errors) throw new Error(j.errors[0].message);
+      const data = j.data?.orders;
+      if (!data) break;
+      for (const edge of data.edges) {
+        const n = edge.node;
+        const amt = parseFloat(n.totalPriceSet?.shopMoney?.amount || '0');
+        const fv = n.customerJourneySummary?.firstVisit;
+        const utm = fv?.utmParameters;
+        const src = ((utm?.source || (fv?.source && fv.source !== 'an unknown source' ? fv.source : '')) || '').toString().toLowerCase().trim();
+        const med = ((utm?.medium || '') + '').toLowerCase().trim();
+        all.push({
+          revenue: isFinite(amt) ? amt : 0,
+          source: src,
+          medium: med,
+          landing_page: lpPath(fv?.landingPage),
+        });
+      }
+      pages++;
+      const truncated = data.pageInfo.hasNextPage && pages >= MAX_PAGES;
+      if (!data.pageInfo.hasNextPage || pages >= MAX_PAGES) {
+        return { orders: all, pages, truncated };
+      }
+      cursor = data.pageInfo.endCursor;
+    }
+    return { orders: all, pages, truncated: false };
+  };
+
+  const aggregate = (orders) => {
+    const map = new Map();
+    for (const o of orders) {
+      const key = o.source + '|' + o.medium + '|' + o.landing_page;
+      let g = map.get(key);
+      if (!g) {
+        g = { utm_source: o.source, utm_medium: o.medium, landing_page: o.landing_page, orders: 0, revenue: 0 };
+        map.set(key, g);
+      }
+      g.orders += 1;
+      g.revenue += o.revenue;
+    }
+    return Array.from(map.values());
+  };
+
+  console.log(`\n[aov-impact-data] current=${start}..${end} previous=${cs}..${ce}`);
+  try {
+    const [cur, prev] = await Promise.all([
+      fetchOrders(start, end),
+      fetchOrders(cs, ce),
+    ]);
+    console.log(`[aov-impact-data] orders: current=${cur.orders.length} (pages=${cur.pages}, trunc=${cur.truncated}) previous=${prev.orders.length} (pages=${prev.pages}, trunc=${prev.truncated})`);
+    res.json({
+      current:  { start, end,    rows: aggregate(cur.orders),  order_count: cur.orders.length,  truncated: cur.truncated },
+      previous: { start: cs, end: ce, rows: aggregate(prev.orders), order_count: prev.orders.length, truncated: prev.truncated },
+    });
+  } catch (err) {
+    console.error('[aov-impact-data] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // --- Meta Paid Social CVR Impact (by campaign + LP, filtered utm_source/medium) ---
 
 app.get('/api/meta-cvr-impact-data', async (req, res) => {
