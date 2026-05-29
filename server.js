@@ -1273,7 +1273,7 @@ app.get('/api/aov-impact-data', async (req, res) => {
     const all = [];
     let cursor = null;
     let pages = 0;
-    const MAX_PAGES = 60; // up to ~15k orders per period — guard against runaway
+    const MAX_PAGES = 240; // up to ~60k orders per period — covers ~3 weeks at this store
     const q = `created_at:>=${s}T00:00:00 AND created_at:<=${e}T23:59:59`;
     while (true) {
       const resp = await fetch(endpoint, {
