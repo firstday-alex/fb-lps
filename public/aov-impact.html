@@ -257,6 +257,42 @@
       </div>
     </div>
 
+    <!-- Why is AOV moving? UPT × ASP per channel -->
+    <div class="card">
+      <h3>Why is AOV moving? &nbsp;<span style="font-weight:400;color:var(--text-secondary);font-size:0.85rem">(units/order × price/unit)</span></h3>
+      <p class="card__sub">
+        AOV is identical to <strong>UPT × ASP</strong>: units per transaction (basket size) times average selling price per unit.
+        <strong>UPT Effect</strong> = ΔUPT × prevASP (basket-size move at the old price).
+        <strong>ASP Effect</strong> = prevUPT × ΔASP (per-unit price move at the old basket).
+        <strong>Interaction</strong> = ΔUPT × ΔASP. The three sum to Δ AOV for that channel.
+        If UPT Effect dominates → people are buying fewer items per order. If ASP Effect dominates → average unit price fell (discounts or mix-shift to cheaper SKUs).
+      </p>
+      <div class="scroll-x">
+        <table id="upt-table">
+          <thead>
+            <tr>
+              <th>Channel</th>
+              <th class="r">Prev UPT</th>
+              <th class="r">Curr UPT</th>
+              <th class="r">Δ UPT</th>
+              <th class="r">Prev ASP</th>
+              <th class="r">Curr ASP</th>
+              <th class="r">Δ ASP</th>
+              <th class="r">Prev AOV</th>
+              <th class="r">Curr AOV</th>
+              <th class="r">Δ AOV</th>
+              <th class="r">UPT Effect</th>
+              <th class="r">ASP Effect</th>
+              <th class="r">Interaction</th>
+              <th class="r" title="Which effect is the larger driver of Δ AOV?">Driver</th>
+            </tr>
+          </thead>
+          <tbody id="upt-tbody"></tbody>
+          <tfoot id="upt-tfoot"></tfoot>
+        </table>
+      </div>
+    </div>
+
     <!-- Δ Blended AOV decomposition -->
     <div class="card">
       <h3>Blended AOV Decomposition</h3>
@@ -421,26 +457,30 @@ function decomposeBlendedAOV(channels, prevTotalO, prevBlendedA, currTotalO) {
 // AGGREGATION
 // ─────────────────────────────────────────────
 function aggregateChannel(rowsCur, rowsPrev) {
-  // map: channel → { prevO, prevR, currO, currR }
+  // map: channel → { prevO, prevR, prevU, currO, currR, currU }
   const m = new Map();
   const touch = (key) => {
-    if (!m.has(key)) m.set(key, { channel: key, prevO: 0, prevR: 0, currO: 0, currR: 0 });
+    if (!m.has(key)) m.set(key, { channel: key, prevO: 0, prevR: 0, prevU: 0, currO: 0, currR: 0, currU: 0 });
     return m.get(key);
   };
   rowsCur.forEach(r => {
     const k = classifySource(r.utm_source, r.landing_page);
     const g = touch(k);
-    g.currO += r.orders; g.currR += r.revenue;
+    g.currO += r.orders; g.currR += r.revenue; g.currU += (r.units || 0);
   });
   rowsPrev.forEach(r => {
     const k = classifySource(r.utm_source, r.landing_page);
     const g = touch(k);
-    g.prevO += r.orders; g.prevR += r.revenue;
+    g.prevO += r.orders; g.prevR += r.revenue; g.prevU += (r.units || 0);
   });
   const list = Array.from(m.values()).map(g => ({
     ...g,
     prevA: g.prevO > 0 ? g.prevR / g.prevO : 0,
     currA: g.currO > 0 ? g.currR / g.currO : 0,
+    prevUpt: g.prevO > 0 ? g.prevU / g.prevO : 0,
+    currUpt: g.currO > 0 ? g.currU / g.currO : 0,
+    prevAsp: g.prevU > 0 ? g.prevR / g.prevU : 0,
+    currAsp: g.currU > 0 ? g.currR / g.currU : 0,
   }));
   list.sort((a, b) => CHANNEL_ORDER.indexOf(a.channel) - CHANNEL_ORDER.indexOf(b.channel));
   return list;
@@ -573,6 +613,82 @@ function renderRevTable(channels) {
       <td class="r ${cls(aggOE)}">${signed$(aggOE)}</td>
       <td class="r ${cls(aggAE)}">${signed$(aggAE)}</td>
       <td class="r ${cls(aggInt)}">${signed$(aggInt)}</td>
+    </tr>`;
+}
+
+function renderUptTable(channels) {
+  const tbody = document.getElementById('upt-tbody');
+  const fmtUpt = n => (n == null || !isFinite(n)) ? '—' : n.toFixed(2);
+  const sUpt = n => {
+    if (n == null || !isFinite(n)) return '—';
+    return (n >= 0 ? '+' : '−') + Math.abs(n).toFixed(2);
+  };
+  let totalPrevU = 0, totalCurrU = 0, totalPrevO = 0, totalCurrO = 0, totalPrevR = 0, totalCurrR = 0;
+  let aggUE = 0, aggSE = 0, aggInt = 0;
+  const rows = channels.map(c => {
+    const dUpt = c.currUpt - c.prevUpt;
+    const dAsp = c.currAsp - c.prevAsp;
+    const dAov = c.currA - c.prevA;
+    const uptEffect = dUpt * c.prevAsp;
+    const aspEffect = c.prevUpt * dAsp;
+    const interaction = dUpt * dAsp;
+    totalPrevU += c.prevU; totalCurrU += c.currU;
+    totalPrevO += c.prevO; totalCurrO += c.currO;
+    totalPrevR += c.prevR; totalCurrR += c.currR;
+    aggUE += uptEffect; aggSE += aspEffect; aggInt += interaction;
+    const driver = (Math.abs(uptEffect) === 0 && Math.abs(aspEffect) === 0)
+      ? '—'
+      : (Math.abs(uptEffect) > Math.abs(aspEffect)
+          ? `UPT (${(uptEffect / (uptEffect + aspEffect || 1) * 100).toFixed(0)}%)`
+          : `ASP (${(aspEffect / (uptEffect + aspEffect || 1) * 100).toFixed(0)}%)`);
+    return `
+      <tr>
+        <td><span class="channel-cell"><span class="channel-dot" style="background:${chColor(c.channel)}"></span>${chLabel(c.channel)}</span></td>
+        <td class="r">${fmtUpt(c.prevUpt)}</td>
+        <td class="r">${fmtUpt(c.currUpt)}</td>
+        <td class="r ${cls(dUpt)}">${sUpt(dUpt)}</td>
+        <td class="r">${fmt$2(c.prevAsp)}</td>
+        <td class="r">${fmt$2(c.currAsp)}</td>
+        <td class="r ${cls(dAsp)}">${signed$2(dAsp)}</td>
+        <td class="r">${fmt$2(c.prevA)}</td>
+        <td class="r">${fmt$2(c.currA)}</td>
+        <td class="r ${cls(dAov)}">${signed$2(dAov)}</td>
+        <td class="r ${cls(uptEffect)}">${signed$2(uptEffect)}</td>
+        <td class="r ${cls(aspEffect)}">${signed$2(aspEffect)}</td>
+        <td class="r ${cls(interaction)}">${signed$2(interaction)}</td>
+        <td class="r" style="font-weight:600">${driver}</td>
+      </tr>`;
+  }).join('');
+  tbody.innerHTML = rows;
+
+  const tPrevUpt = totalPrevO > 0 ? totalPrevU / totalPrevO : 0;
+  const tCurrUpt = totalCurrO > 0 ? totalCurrU / totalCurrO : 0;
+  const tPrevAsp = totalPrevU > 0 ? totalPrevR / totalPrevU : 0;
+  const tCurrAsp = totalCurrU > 0 ? totalCurrR / totalCurrU : 0;
+  const tPrevAov = totalPrevO > 0 ? totalPrevR / totalPrevO : 0;
+  const tCurrAov = totalCurrO > 0 ? totalCurrR / totalCurrO : 0;
+  const dUptT = tCurrUpt - tPrevUpt;
+  const dAspT = tCurrAsp - tPrevAsp;
+  const dAovT = tCurrAov - tPrevAov;
+  const totalDriver = (Math.abs(aggUE) === 0 && Math.abs(aggSE) === 0)
+    ? '—'
+    : (Math.abs(aggUE) > Math.abs(aggSE) ? 'UPT' : 'ASP');
+  document.getElementById('upt-tfoot').innerHTML = `
+    <tr>
+      <td>Blended</td>
+      <td class="r">${fmtUpt(tPrevUpt)}</td>
+      <td class="r">${fmtUpt(tCurrUpt)}</td>
+      <td class="r ${cls(dUptT)}">${sUpt(dUptT)}</td>
+      <td class="r">${fmt$2(tPrevAsp)}</td>
+      <td class="r">${fmt$2(tCurrAsp)}</td>
+      <td class="r ${cls(dAspT)}">${signed$2(dAspT)}</td>
+      <td class="r">${fmt$2(tPrevAov)}</td>
+      <td class="r">${fmt$2(tCurrAov)}</td>
+      <td class="r ${cls(dAovT)}">${signed$2(dAovT)}</td>
+      <td class="r ${cls(aggUE)}">${signed$2(aggUE)}</td>
+      <td class="r ${cls(aggSE)}">${signed$2(aggSE)}</td>
+      <td class="r ${cls(aggInt)}">${signed$2(aggInt)}</td>
+      <td class="r" style="font-weight:600">${totalDriver}</td>
     </tr>`;
 }
 
@@ -806,6 +922,7 @@ function render(payload) {
 
   renderKpi(channels);
   renderRevTable(channels);
+  renderUptTable(channels);
   renderAovTable(channels);
   renderDrill();
 

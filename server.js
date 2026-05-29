@@ -1251,6 +1251,7 @@ app.get('/api/aov-impact-data', async (req, res) => {
         node {
           id
           totalPriceSet { shopMoney { amount } }
+          subtotalLineItemsQuantity
           customerJourneySummary {
             firstVisit {
               source
@@ -1288,12 +1289,14 @@ app.get('/api/aov-impact-data', async (req, res) => {
       for (const edge of data.edges) {
         const n = edge.node;
         const amt = parseFloat(n.totalPriceSet?.shopMoney?.amount || '0');
+        const units = parseInt(n.subtotalLineItemsQuantity ?? 0, 10) || 0;
         const fv = n.customerJourneySummary?.firstVisit;
         const utm = fv?.utmParameters;
         const src = ((utm?.source || (fv?.source && fv.source !== 'an unknown source' ? fv.source : '')) || '').toString().toLowerCase().trim();
         const med = ((utm?.medium || '') + '').toLowerCase().trim();
         all.push({
           revenue: isFinite(amt) ? amt : 0,
+          units,
           source: src,
           medium: med,
           landing_page: lpPath(fv?.landingPage),
@@ -1315,11 +1318,12 @@ app.get('/api/aov-impact-data', async (req, res) => {
       const key = o.source + '|' + o.medium + '|' + o.landing_page;
       let g = map.get(key);
       if (!g) {
-        g = { utm_source: o.source, utm_medium: o.medium, landing_page: o.landing_page, orders: 0, revenue: 0 };
+        g = { utm_source: o.source, utm_medium: o.medium, landing_page: o.landing_page, orders: 0, revenue: 0, units: 0 };
         map.set(key, g);
       }
       g.orders += 1;
       g.revenue += o.revenue;
+      g.units   += o.units;
     }
     return Array.from(map.values());
   };
