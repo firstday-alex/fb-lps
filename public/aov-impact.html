@@ -187,7 +187,7 @@
   <a class="header__back" href="/">&#8592; Ads Viewer</a>
   <div>
     <h1>AOV Impact Analysis</h1>
-    <p>Per-channel decomposition of revenue and blended-AOV change, loaded from Shopify orders</p>
+    <p>Per-utm_source decomposition of revenue and blended-AOV change, loaded from Shopify orders</p>
   </div>
 </header>
 
@@ -195,7 +195,7 @@
 <div id="upload-screen">
   <div class="upload-card">
     <h2>AOV Impact Analysis</h2>
-    <p>Loads Shopify orders for a date range and the previous period, attributes by customerJourney first-visit UTM, and decomposes Δ Revenue + Δ Blended AOV across channels.</p>
+    <p>Loads Shopify orders for a date range and the previous period, attributes by customerJourney first-visit UTM, and decomposes Δ Revenue + Δ Blended AOV across utm_sources.</p>
     <div class="date-row">
       <label>Start <input type="date" id="date-start"></label>
       <label>End <input type="date" id="date-end"></label>
@@ -224,19 +224,19 @@
 
     <!-- Δ Revenue decomposition -->
     <div class="card">
-      <h3>Channel Revenue Decomposition</h3>
+      <h3>Revenue Decomposition by utm_source</h3>
       <p class="card__sub">
-        Each channel's contribution to <strong>Δ Revenue</strong>, split into:
+        Each utm_source's contribution to <strong>Δ Revenue</strong>, split into:
         <strong>Orders Effect</strong> = ΔOrders × prevAOV (more/fewer orders at the old basket),
         <strong>AOV Effect</strong> = prevOrders × ΔAOV (same orders earning a higher/lower basket),
         and <strong>Interaction</strong> = ΔOrders × ΔAOV (the cross-term).
-        The three sum to Δ Revenue for that channel; rows sum to the overall Δ Revenue.
+        The three sum to Δ Revenue for that source; rows sum to the overall Δ Revenue.
       </p>
       <div class="scroll-x">
         <table id="rev-table">
           <thead>
             <tr>
-              <th>Channel</th>
+              <th>utm_source</th>
               <th class="r">Prev Orders</th>
               <th class="r">Curr Orders</th>
               <th class="r">Δ Orders</th>
@@ -264,14 +264,14 @@
         AOV is identical to <strong>UPT × ASP</strong>: units per transaction (basket size) times average selling price per unit.
         <strong>UPT Effect</strong> = ΔUPT × prevASP (basket-size move at the old price).
         <strong>ASP Effect</strong> = prevUPT × ΔASP (per-unit price move at the old basket).
-        <strong>Interaction</strong> = ΔUPT × ΔASP. The three sum to Δ AOV for that channel.
+        <strong>Interaction</strong> = ΔUPT × ΔASP. The three sum to Δ AOV for that source.
         If UPT Effect dominates → people are buying fewer items per order. If ASP Effect dominates → average unit price fell (discounts or mix-shift to cheaper SKUs).
       </p>
       <div class="scroll-x">
         <table id="upt-table">
           <thead>
             <tr>
-              <th>Channel</th>
+              <th>utm_source</th>
               <th class="r">Prev UPT</th>
               <th class="r">Curr UPT</th>
               <th class="r">Δ UPT</th>
@@ -297,16 +297,16 @@
     <div class="card">
       <h3>Blended AOV Decomposition</h3>
       <p class="card__sub">
-        Decomposes the change in <strong>blended AOV</strong> (overall revenue ÷ overall orders) into per-channel contributions.
-        <strong>Own-AOV Effect</strong> = prevOrderShare × ΔAOV (this channel's own AOV move, weighted by its share of last period's orders).
+        Decomposes the change in <strong>blended AOV</strong> (overall revenue ÷ overall orders) into per-utm_source contributions.
+        <strong>Own-AOV Effect</strong> = prevOrderShare × ΔAOV (this source's own AOV move, weighted by its share of last period's orders).
         <strong>Mix-Shift Effect</strong> = ΔOrderShare × (currAOV − blended avg) (gaining/losing orders at a basket above or below the blended average).
-        The two sum to this channel's contribution; rows sum to total Δ Blended AOV.
+        The two sum to this source's contribution; rows sum to total Δ Blended AOV.
       </p>
       <div class="scroll-x">
         <table id="aov-table">
           <thead>
             <tr>
-              <th>Channel</th>
+              <th>utm_source</th>
               <th class="r">Prev Order Share</th>
               <th class="r">Curr Order Share</th>
               <th class="r">Δ Share</th>
@@ -329,16 +329,15 @@
     <div class="card">
       <h3>Landing pages where baskets are shrinking</h3>
       <p class="card__sub">
-        Every (channel × utm_source × landing-page) slice with at least
+        Every (utm_source × landing-page) slice with at least
         <input type="number" id="lp-min-orders" value="20" min="1" step="5" style="width:60px; padding:2px 4px; font:inherit; font-size:0.85rem; border:1px solid var(--border); border-radius:4px;">
         orders in both periods, sorted by Δ UPT ascending (largest basket shrinkage at the top).
-        <strong>UPT</strong> = units per order. Use this to identify which LPs are driving the basket-size decline you see at the channel level.
+        <strong>UPT</strong> = units per order. Use this to identify which LPs are driving the basket-size decline you see at the source level.
       </p>
       <div class="scroll-x">
         <table id="lp-upt-table">
           <thead>
             <tr>
-              <th>Channel</th>
               <th>utm_source</th>
               <th>Landing page</th>
               <th class="r">Prev Orders</th>
@@ -359,8 +358,8 @@
 
     <!-- Drill-down Channel → utm_source → landing page -->
     <div class="card">
-      <h3>Drill-down: Channel → utm_source → landing page</h3>
-      <p class="card__sub">Click a channel to expand its utm_sources; click a source to expand its landing pages. Each row carries the same Δ Revenue split for that slice.</p>
+      <h3>Drill-down: utm_source → landing page</h3>
+      <p class="card__sub">Click a utm_source to expand its landing pages. Each row carries the same Δ Revenue split for that slice.</p>
       <div class="scroll-x">
         <table id="drill-table">
           <thead>
@@ -421,6 +420,22 @@ function chColor(key) {
   if (key === 'other') return '#9ca3af';
   if (key === 'unknown') return '#cbd5e1';
   return CHANNELS[key].color;
+}
+
+// ─────────────────────────────────────────────
+// utm_source helpers — top-level grouping is now the raw utm_source.
+// We still classify the source into a channel solely to pick the dot color.
+// ─────────────────────────────────────────────
+function srcKey(raw) {
+  const s = (raw == null ? '' : String(raw)).trim();
+  return s || '(none)';
+}
+function srcColor(source) {
+  if (source === '(none)') return chColor('direct');
+  return chColor(classifySource(source, source));
+}
+function srcCell(source) {
+  return `<span class="channel-cell"><span class="channel-dot" style="background:${srcColor(source)}"></span><code style="font-size:0.82rem">${source}</code></span>`;
 }
 
 // ─────────────────────────────────────────────
@@ -488,21 +503,19 @@ function decomposeBlendedAOV(channels, prevTotalO, prevBlendedA, currTotalO) {
 // ─────────────────────────────────────────────
 // AGGREGATION
 // ─────────────────────────────────────────────
-function aggregateChannel(rowsCur, rowsPrev) {
-  // map: channel → { prevO, prevR, prevU, currO, currR, currU }
+function aggregateSource(rowsCur, rowsPrev) {
+  // map: utm_source → { prevO, prevR, prevU, currO, currR, currU }
   const m = new Map();
   const touch = (key) => {
-    if (!m.has(key)) m.set(key, { channel: key, prevO: 0, prevR: 0, prevU: 0, currO: 0, currR: 0, currU: 0 });
+    if (!m.has(key)) m.set(key, { source: key, prevO: 0, prevR: 0, prevU: 0, currO: 0, currR: 0, currU: 0 });
     return m.get(key);
   };
   rowsCur.forEach(r => {
-    const k = classifySource(r.utm_source, r.landing_page);
-    const g = touch(k);
+    const g = touch(srcKey(r.utm_source));
     g.currO += r.orders; g.currR += r.revenue; g.currU += (r.units || 0);
   });
   rowsPrev.forEach(r => {
-    const k = classifySource(r.utm_source, r.landing_page);
-    const g = touch(k);
+    const g = touch(srcKey(r.utm_source));
     g.prevO += r.orders; g.prevR += r.revenue; g.prevU += (r.units || 0);
   });
   const list = Array.from(m.values()).map(g => ({
@@ -514,20 +527,17 @@ function aggregateChannel(rowsCur, rowsPrev) {
     prevAsp: g.prevU > 0 ? g.prevR / g.prevU : 0,
     currAsp: g.currU > 0 ? g.currR / g.currU : 0,
   }));
-  list.sort((a, b) => CHANNEL_ORDER.indexOf(a.channel) - CHANNEL_ORDER.indexOf(b.channel));
+  // Most impactful sources first (largest absolute revenue move).
+  list.sort((a, b) => Math.abs(b.currR - b.prevR) - Math.abs(a.currR - a.prevR));
   return list;
 }
 
-// channel → utm_source → landing_page, with the same prevO/currO/prevR/currR/prevU/currU shape
-function buildDrill(rowsCur, rowsPrev) {
-  const ch = new Map();
-  const ensureCh = (k) => {
-    if (!ch.has(k)) ch.set(k, { channel: k, sources: new Map(), prevO:0, prevR:0, prevU:0, currO:0, currR:0, currU:0 });
-    return ch.get(k);
-  };
-  const ensureSrc = (chN, src) => {
-    if (!chN.sources.has(src)) chN.sources.set(src, { source: src, lps: new Map(), prevO:0, prevR:0, prevU:0, currO:0, currR:0, currU:0 });
-    return chN.sources.get(src);
+// utm_source → landing_page, with the same prevO/currO/prevR/currR/prevU/currU shape
+function buildSourceDrill(rowsCur, rowsPrev) {
+  const src = new Map();
+  const ensureSrc = (k) => {
+    if (!src.has(k)) src.set(k, { source: k, lps: new Map(), prevO:0, prevR:0, prevU:0, currO:0, currR:0, currU:0 });
+    return src.get(k);
   };
   const ensureLp = (srcN, lp) => {
     if (!srcN.lps.has(lp)) srcN.lps.set(lp, { lp, prevO:0, prevR:0, prevU:0, currO:0, currR:0, currU:0 });
@@ -535,13 +545,9 @@ function buildDrill(rowsCur, rowsPrev) {
   };
   const apply = (rows, slot) => {
     rows.forEach(r => {
-      const k = classifySource(r.utm_source, r.landing_page);
-      const chN = ensureCh(k);
-      const srcKey = r.utm_source || '(none)';
-      const srcN = ensureSrc(chN, srcKey);
+      const srcN = ensureSrc(srcKey(r.utm_source));
       const lpN = ensureLp(srcN, r.landing_page || '(none)');
       const u = r.units || 0;
-      chN[slot + 'O']  += r.orders;  chN[slot + 'R']  += r.revenue;  chN[slot + 'U']  += u;
       srcN[slot + 'O'] += r.orders;  srcN[slot + 'R'] += r.revenue;  srcN[slot + 'U'] += u;
       lpN[slot + 'O']  += r.orders;  lpN[slot + 'R']  += r.revenue;  lpN[slot + 'U']  += u;
     });
@@ -560,17 +566,12 @@ function buildDrill(rowsCur, rowsPrev) {
   });
 
   const out = [];
-  for (const [ckey, cN] of ch) {
-    const sources = [];
-    for (const [skey, sN] of cN.sources) {
-      const lps = Array.from(sN.lps.values()).map(finalize)
-        .sort((a, b) => Math.abs(b.currR - b.prevR) - Math.abs(a.currR - a.prevR));
-      sources.push({ ...finalize(sN), lps });
-    }
-    sources.sort((a, b) => Math.abs(b.currR - b.prevR) - Math.abs(a.currR - a.prevR));
-    out.push({ ...finalize(cN), sources });
+  for (const [skey, sN] of src) {
+    const lps = Array.from(sN.lps.values()).map(finalize)
+      .sort((a, b) => Math.abs(b.currR - b.prevR) - Math.abs(a.currR - a.prevR));
+    out.push({ ...finalize(sN), lps });
   }
-  out.sort((a, b) => CHANNEL_ORDER.indexOf(a.channel) - CHANNEL_ORDER.indexOf(b.channel));
+  out.sort((a, b) => Math.abs(b.currR - b.prevR) - Math.abs(a.currR - a.prevR));
   return out;
 }
 
@@ -609,7 +610,7 @@ function renderRevTable(channels) {
     totalPrevO += c.prevO;   totalCurrO += c.currO;
     return `
       <tr>
-        <td><span class="channel-cell"><span class="channel-dot" style="background:${chColor(c.channel)}"></span>${chLabel(c.channel)}</span></td>
+        <td>${srcCell(c.source)}</td>
         <td class="r">${fmtInt(c.prevO)}</td>
         <td class="r">${fmtInt(c.currO)}</td>
         <td class="r ${cls(d.dO)}">${signedInt(d.dO)}</td>
@@ -680,7 +681,7 @@ function renderUptTable(channels) {
           : `ASP (${(aspEffect / (uptEffect + aspEffect || 1) * 100).toFixed(0)}%)`);
     return `
       <tr>
-        <td><span class="channel-cell"><span class="channel-dot" style="background:${chColor(c.channel)}"></span>${chLabel(c.channel)}</span></td>
+        <td>${srcCell(c.source)}</td>
         <td class="r">${fmtUpt(c.prevUpt)}</td>
         <td class="r">${fmtUpt(c.currUpt)}</td>
         <td class="r ${cls(dUpt)}">${sUpt(dUpt)}</td>
@@ -740,7 +741,7 @@ function renderAovTable(channels) {
   const decomp = decomposeBlendedAOV(channels, prevTotalO, prevBlended, currTotalO);
   const rows = decomp.map(c => `
     <tr>
-      <td><span class="channel-cell"><span class="channel-dot" style="background:${chColor(c.channel)}"></span>${chLabel(c.channel)}</span></td>
+      <td>${srcCell(c.source)}</td>
       <td class="r">${fmtPct(c.prevShare)}</td>
       <td class="r">${fmtPct(c.currShare)}</td>
       <td class="r ${cls(c.dShare)}">${signedPct(c.dShare)}</td>
@@ -772,47 +773,23 @@ function renderAovTable(channels) {
     </tr>`;
 }
 
-function drillRowHtml(label, indent, c, type) {
-  const d = decomposeRev(c.prevO, c.prevA, c.currO, c.currA);
-  const cellLabel = type === 'channel'
-    ? `<span class="channel-cell"><span class="channel-dot" style="background:${chColor(c.channel)}"></span>${label}</span>`
-    : (type === 'source' ? `<span class="indent"></span><span class="indent"></span>${label}` : `${label}`);
-  return `
-    <tr class="drill-row ${type === 'lp' ? 'lp' : ''}" data-type="${type}" data-key="${c.__key || ''}">
-      <td>${cellLabel}</td>
-      <td class="r">${fmtInt(c.prevO)}</td>
-      <td class="r">${fmtInt(c.currO)}</td>
-      <td class="r ${cls(d.dO)}">${signedInt(d.dO)}</td>
-      <td class="r">${fmt$2(c.prevA)}</td>
-      <td class="r">${fmt$2(c.currA)}</td>
-      <td class="r ${cls(d.dA)}">${signed$2(d.dA)}</td>
-      <td class="r ${cls(d.dRev)}">${signed$(d.dRev)}</td>
-      <td class="r ${cls(d.ordersEffect)}">${signed$(d.ordersEffect)}</td>
-      <td class="r ${cls(d.aovEffect)}">${signed$(d.aovEffect)}</td>
-    </tr>`;
-}
-
 let _drillTree = [];
-const _expandedCh = new Set();
 const _expandedSrc = new Set();
 
-// Flatten drill tree to a list of LP slices with channel + source context
+// Flatten drill tree to a list of LP slices with source context
 function flattenLpRows(tree) {
   const out = [];
-  tree.forEach(cN => {
-    cN.sources.forEach(sN => {
-      sN.lps.forEach(lpN => {
-        out.push({
-          channel: cN.channel,
-          source: sN.source,
-          lp: lpN.lp,
-          prevO: lpN.prevO, currO: lpN.currO,
-          prevU: lpN.prevU, currU: lpN.currU,
-          prevR: lpN.prevR, currR: lpN.currR,
-          prevUpt: lpN.prevUpt, currUpt: lpN.currUpt,
-          prevAsp: lpN.prevAsp, currAsp: lpN.currAsp,
-          prevA: lpN.prevA,     currA: lpN.currA,
-        });
+  tree.forEach(sN => {
+    sN.lps.forEach(lpN => {
+      out.push({
+        source: sN.source,
+        lp: lpN.lp,
+        prevO: lpN.prevO, currO: lpN.currO,
+        prevU: lpN.prevU, currU: lpN.currU,
+        prevR: lpN.prevR, currR: lpN.currR,
+        prevUpt: lpN.prevUpt, currUpt: lpN.currUpt,
+        prevAsp: lpN.prevAsp, currAsp: lpN.currAsp,
+        prevA: lpN.prevA,     currA: lpN.currA,
       });
     });
   });
@@ -832,7 +809,7 @@ function renderLpUpt(tree, minOrders) {
 
   if (flat.length === 0) {
     document.getElementById('lp-upt-tbody').innerHTML = `
-      <tr><td colspan="12" style="text-align:center;color:var(--text-secondary);padding:20px">
+      <tr><td colspan="11" style="text-align:center;color:var(--text-secondary);padding:20px">
         No landing pages meet the ${minOrders}-order minimum in both periods. Lower the threshold to see more rows.
       </td></tr>`;
     return;
@@ -840,8 +817,7 @@ function renderLpUpt(tree, minOrders) {
 
   const rows = flat.map(r => `
     <tr>
-      <td><span class="channel-cell"><span class="channel-dot" style="background:${chColor(r.channel)}"></span>${chLabel(r.channel)}</span></td>
-      <td><code style="font-size:0.78rem">${r.source}</code></td>
+      <td>${srcCell(r.source)}</td>
       <td><code style="font-size:0.78rem; color:var(--text-secondary)">${r.lp}</code></td>
       <td class="r">${fmtInt(r.prevO)}</td>
       <td class="r">${fmtInt(r.currO)}</td>
@@ -859,79 +835,48 @@ function renderLpUpt(tree, minOrders) {
 function renderDrill() {
   const tbody = document.getElementById('drill-tbody');
   const parts = [];
-  _drillTree.forEach((cN, ci) => {
-    const chKey = 'c' + ci;
-    const expanded = _expandedCh.has(chKey);
-    const d = decomposeRev(cN.prevO, cN.prevA, cN.currO, cN.currA);
+  _drillTree.forEach((sN, si) => {
+    const srcId = 's' + si;
+    const sExp = _expandedSrc.has(srcId);
+    const sd = decomposeRev(sN.prevO, sN.prevA, sN.currO, sN.currA);
     parts.push(`
-      <tr data-row-type="channel" data-ch="${chKey}" style="cursor:pointer">
+      <tr data-row-type="source" data-src="${srcId}" style="cursor:pointer">
         <td>
           <span class="channel-cell">
-            <span class="channel-dot" style="background:${chColor(cN.channel)}"></span>
-            <span class="drill-toggle">${expanded ? '▾' : '▸'}</span>&nbsp;${chLabel(cN.channel)}
-            <span style="color:var(--text-secondary); font-size:0.78rem; margin-left:6px">(${cN.sources.length} src)</span>
+            <span class="channel-dot" style="background:${srcColor(sN.source)}"></span>
+            <span class="drill-toggle">${sExp ? '▾' : '▸'}</span>&nbsp;<code style="font-size:0.82rem">${sN.source}</code>
+            <span style="color:var(--text-secondary); font-size:0.78rem; margin-left:6px">(${sN.lps.length} LP)</span>
           </span>
         </td>
-        <td class="r">${fmtInt(cN.prevO)}</td>
-        <td class="r">${fmtInt(cN.currO)}</td>
-        <td class="r ${cls(d.dO)}">${signedInt(d.dO)}</td>
-        <td class="r">${fmt$2(cN.prevA)}</td>
-        <td class="r">${fmt$2(cN.currA)}</td>
-        <td class="r ${cls(d.dA)}">${signed$2(d.dA)}</td>
-        <td class="r ${cls(d.dRev)}">${signed$(d.dRev)}</td>
-        <td class="r ${cls(d.ordersEffect)}">${signed$(d.ordersEffect)}</td>
-        <td class="r ${cls(d.aovEffect)}">${signed$(d.aovEffect)}</td>
+        <td class="r">${fmtInt(sN.prevO)}</td>
+        <td class="r">${fmtInt(sN.currO)}</td>
+        <td class="r ${cls(sd.dO)}">${signedInt(sd.dO)}</td>
+        <td class="r">${fmt$2(sN.prevA)}</td>
+        <td class="r">${fmt$2(sN.currA)}</td>
+        <td class="r ${cls(sd.dA)}">${signed$2(sd.dA)}</td>
+        <td class="r ${cls(sd.dRev)}">${signed$(sd.dRev)}</td>
+        <td class="r ${cls(sd.ordersEffect)}">${signed$(sd.ordersEffect)}</td>
+        <td class="r ${cls(sd.aovEffect)}">${signed$(sd.aovEffect)}</td>
       </tr>`);
-    if (!expanded) return;
-    cN.sources.forEach((sN, si) => {
-      const srcKey = chKey + '-s' + si;
-      const sExp = _expandedSrc.has(srcKey);
-      const sd = decomposeRev(sN.prevO, sN.prevA, sN.currO, sN.currA);
+    if (!sExp) return;
+    sN.lps.forEach(lpN => {
+      const ld = decomposeRev(lpN.prevO, lpN.prevA, lpN.currO, lpN.currA);
       parts.push(`
-        <tr class="drill-row" data-row-type="source" data-src="${srcKey}" style="cursor:pointer">
-          <td>
-            <span class="indent"></span>
-            <span class="drill-toggle">${sExp ? '▾' : '▸'}</span>&nbsp;
-            <code style="font-size:0.78rem">${sN.source}</code>
-            <span style="color:var(--text-secondary); font-size:0.75rem; margin-left:6px">(${sN.lps.length} LP)</span>
-          </td>
-          <td class="r">${fmtInt(sN.prevO)}</td>
-          <td class="r">${fmtInt(sN.currO)}</td>
-          <td class="r ${cls(sd.dO)}">${signedInt(sd.dO)}</td>
-          <td class="r">${fmt$2(sN.prevA)}</td>
-          <td class="r">${fmt$2(sN.currA)}</td>
-          <td class="r ${cls(sd.dA)}">${signed$2(sd.dA)}</td>
-          <td class="r ${cls(sd.dRev)}">${signed$(sd.dRev)}</td>
-          <td class="r ${cls(sd.ordersEffect)}">${signed$(sd.ordersEffect)}</td>
-          <td class="r ${cls(sd.aovEffect)}">${signed$(sd.aovEffect)}</td>
+        <tr class="drill-row lp">
+          <td><code style="font-size:0.75rem; color:var(--text-secondary)">${lpN.lp}</code></td>
+          <td class="r">${fmtInt(lpN.prevO)}</td>
+          <td class="r">${fmtInt(lpN.currO)}</td>
+          <td class="r ${cls(ld.dO)}">${signedInt(ld.dO)}</td>
+          <td class="r">${fmt$2(lpN.prevA)}</td>
+          <td class="r">${fmt$2(lpN.currA)}</td>
+          <td class="r ${cls(ld.dA)}">${signed$2(ld.dA)}</td>
+          <td class="r ${cls(ld.dRev)}">${signed$(ld.dRev)}</td>
+          <td class="r ${cls(ld.ordersEffect)}">${signed$(ld.ordersEffect)}</td>
+          <td class="r ${cls(ld.aovEffect)}">${signed$(ld.aovEffect)}</td>
         </tr>`);
-      if (!sExp) return;
-      sN.lps.forEach(lpN => {
-        const ld = decomposeRev(lpN.prevO, lpN.prevA, lpN.currO, lpN.currA);
-        parts.push(`
-          <tr class="drill-row lp">
-            <td><code style="font-size:0.75rem; color:var(--text-secondary)">${lpN.lp}</code></td>
-            <td class="r">${fmtInt(lpN.prevO)}</td>
-            <td class="r">${fmtInt(lpN.currO)}</td>
-            <td class="r ${cls(ld.dO)}">${signedInt(ld.dO)}</td>
-            <td class="r">${fmt$2(lpN.prevA)}</td>
-            <td class="r">${fmt$2(lpN.currA)}</td>
-            <td class="r ${cls(ld.dA)}">${signed$2(ld.dA)}</td>
-            <td class="r ${cls(ld.dRev)}">${signed$(ld.dRev)}</td>
-            <td class="r ${cls(ld.ordersEffect)}">${signed$(ld.ordersEffect)}</td>
-            <td class="r ${cls(ld.aovEffect)}">${signed$(ld.aovEffect)}</td>
-          </tr>`);
-      });
     });
   });
   tbody.innerHTML = parts.join('');
-  tbody.querySelectorAll('tr[data-row-type=channel]').forEach(tr => {
-    tr.addEventListener('click', () => {
-      const k = tr.dataset.ch;
-      if (_expandedCh.has(k)) _expandedCh.delete(k); else _expandedCh.add(k);
-      renderDrill();
-    });
-  });
   tbody.querySelectorAll('tr[data-row-type=source]').forEach(tr => {
     tr.addEventListener('click', () => {
       const k = tr.dataset.src;
@@ -999,8 +944,8 @@ async function load() {
 }
 
 function render(payload) {
-  const channels = aggregateChannel(payload.current.rows, payload.previous.rows);
-  _drillTree = buildDrill(payload.current.rows, payload.previous.rows);
+  const sources = aggregateSource(payload.current.rows, payload.previous.rows);
+  _drillTree = buildSourceDrill(payload.current.rows, payload.previous.rows);
 
   // Top bar
   document.getElementById('top-bar-info').innerHTML = `
@@ -1017,10 +962,10 @@ function render(payload) {
     ? warns.map(w => `<div class="warning">${w}</div>`).join('')
     : '';
 
-  renderKpi(channels);
-  renderRevTable(channels);
-  renderUptTable(channels);
-  renderAovTable(channels);
+  renderKpi(sources);
+  renderRevTable(sources);
+  renderUptTable(sources);
+  renderAovTable(sources);
   const minOrders = parseInt(document.getElementById('lp-min-orders').value, 10) || 20;
   renderLpUpt(_drillTree, minOrders);
   renderDrill();
