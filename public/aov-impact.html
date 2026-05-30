@@ -325,6 +325,38 @@
       </div>
     </div>
 
+    <!-- Landing-page basket-shrinkage ranking -->
+    <div class="card">
+      <h3>Landing pages where baskets are shrinking</h3>
+      <p class="card__sub">
+        Every (channel × utm_source × landing-page) slice with at least
+        <input type="number" id="lp-min-orders" value="20" min="1" step="5" style="width:60px; padding:2px 4px; font:inherit; font-size:0.85rem; border:1px solid var(--border); border-radius:4px;">
+        orders in both periods, sorted by Δ UPT ascending (largest basket shrinkage at the top).
+        <strong>UPT</strong> = units per order. Use this to identify which LPs are driving the basket-size decline you see at the channel level.
+      </p>
+      <div class="scroll-x">
+        <table id="lp-upt-table">
+          <thead>
+            <tr>
+              <th>Channel</th>
+              <th>utm_source</th>
+              <th>Landing page</th>
+              <th class="r">Prev Orders</th>
+              <th class="r">Curr Orders</th>
+              <th class="r">Prev UPT</th>
+              <th class="r">Curr UPT</th>
+              <th class="r">Δ UPT</th>
+              <th class="r">Prev ASP</th>
+              <th class="r">Curr ASP</th>
+              <th class="r">Δ ASP</th>
+              <th class="r">Δ AOV</th>
+            </tr>
+          </thead>
+          <tbody id="lp-upt-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- Drill-down Channel → utm_source → landing page -->
     <div class="card">
       <h3>Drill-down: Channel → utm_source → landing page</h3>
@@ -486,19 +518,19 @@ function aggregateChannel(rowsCur, rowsPrev) {
   return list;
 }
 
-// channel → utm_source → landing_page, with the same prevO/currO/prevR/currR shape
+// channel → utm_source → landing_page, with the same prevO/currO/prevR/currR/prevU/currU shape
 function buildDrill(rowsCur, rowsPrev) {
   const ch = new Map();
   const ensureCh = (k) => {
-    if (!ch.has(k)) ch.set(k, { channel: k, sources: new Map(), prevO:0, prevR:0, currO:0, currR:0 });
+    if (!ch.has(k)) ch.set(k, { channel: k, sources: new Map(), prevO:0, prevR:0, prevU:0, currO:0, currR:0, currU:0 });
     return ch.get(k);
   };
   const ensureSrc = (chN, src) => {
-    if (!chN.sources.has(src)) chN.sources.set(src, { source: src, lps: new Map(), prevO:0, prevR:0, currO:0, currR:0 });
+    if (!chN.sources.has(src)) chN.sources.set(src, { source: src, lps: new Map(), prevO:0, prevR:0, prevU:0, currO:0, currR:0, currU:0 });
     return chN.sources.get(src);
   };
   const ensureLp = (srcN, lp) => {
-    if (!srcN.lps.has(lp)) srcN.lps.set(lp, { lp, prevO:0, prevR:0, currO:0, currR:0 });
+    if (!srcN.lps.has(lp)) srcN.lps.set(lp, { lp, prevO:0, prevR:0, prevU:0, currO:0, currR:0, currU:0 });
     return srcN.lps.get(lp);
   };
   const apply = (rows, slot) => {
@@ -508,9 +540,10 @@ function buildDrill(rowsCur, rowsPrev) {
       const srcKey = r.utm_source || '(none)';
       const srcN = ensureSrc(chN, srcKey);
       const lpN = ensureLp(srcN, r.landing_page || '(none)');
-      chN[slot + 'O']  += r.orders;  chN[slot + 'R']  += r.revenue;
-      srcN[slot + 'O'] += r.orders;  srcN[slot + 'R'] += r.revenue;
-      lpN[slot + 'O']  += r.orders;  lpN[slot + 'R']  += r.revenue;
+      const u = r.units || 0;
+      chN[slot + 'O']  += r.orders;  chN[slot + 'R']  += r.revenue;  chN[slot + 'U']  += u;
+      srcN[slot + 'O'] += r.orders;  srcN[slot + 'R'] += r.revenue;  srcN[slot + 'U'] += u;
+      lpN[slot + 'O']  += r.orders;  lpN[slot + 'R']  += r.revenue;  lpN[slot + 'U']  += u;
     });
   };
   apply(rowsCur,  'curr');
@@ -520,6 +553,10 @@ function buildDrill(rowsCur, rowsPrev) {
     ...n,
     prevA: n.prevO > 0 ? n.prevR / n.prevO : 0,
     currA: n.currO > 0 ? n.currR / n.currO : 0,
+    prevUpt: n.prevO > 0 ? n.prevU / n.prevO : 0,
+    currUpt: n.currO > 0 ? n.currU / n.currO : 0,
+    prevAsp: n.prevU > 0 ? n.prevR / n.prevU : 0,
+    currAsp: n.currU > 0 ? n.currR / n.currU : 0,
   });
 
   const out = [];
@@ -759,6 +796,66 @@ let _drillTree = [];
 const _expandedCh = new Set();
 const _expandedSrc = new Set();
 
+// Flatten drill tree to a list of LP slices with channel + source context
+function flattenLpRows(tree) {
+  const out = [];
+  tree.forEach(cN => {
+    cN.sources.forEach(sN => {
+      sN.lps.forEach(lpN => {
+        out.push({
+          channel: cN.channel,
+          source: sN.source,
+          lp: lpN.lp,
+          prevO: lpN.prevO, currO: lpN.currO,
+          prevU: lpN.prevU, currU: lpN.currU,
+          prevR: lpN.prevR, currR: lpN.currR,
+          prevUpt: lpN.prevUpt, currUpt: lpN.currUpt,
+          prevAsp: lpN.prevAsp, currAsp: lpN.currAsp,
+          prevA: lpN.prevA,     currA: lpN.currA,
+        });
+      });
+    });
+  });
+  return out;
+}
+
+function renderLpUpt(tree, minOrders) {
+  const fmtUpt = n => (n == null || !isFinite(n)) ? '—' : n.toFixed(2);
+  const sUpt = n => {
+    if (n == null || !isFinite(n)) return '—';
+    return (n >= 0 ? '+' : '−') + Math.abs(n).toFixed(2);
+  };
+  const flat = flattenLpRows(tree)
+    .filter(r => r.prevO >= minOrders && r.currO >= minOrders)
+    .map(r => ({ ...r, dUpt: r.currUpt - r.prevUpt, dAsp: r.currAsp - r.prevAsp, dAov: r.currA - r.prevA }))
+    .sort((a, b) => a.dUpt - b.dUpt); // most negative ΔUPT first
+
+  if (flat.length === 0) {
+    document.getElementById('lp-upt-tbody').innerHTML = `
+      <tr><td colspan="12" style="text-align:center;color:var(--text-secondary);padding:20px">
+        No landing pages meet the ${minOrders}-order minimum in both periods. Lower the threshold to see more rows.
+      </td></tr>`;
+    return;
+  }
+
+  const rows = flat.map(r => `
+    <tr>
+      <td><span class="channel-cell"><span class="channel-dot" style="background:${chColor(r.channel)}"></span>${chLabel(r.channel)}</span></td>
+      <td><code style="font-size:0.78rem">${r.source}</code></td>
+      <td><code style="font-size:0.78rem; color:var(--text-secondary)">${r.lp}</code></td>
+      <td class="r">${fmtInt(r.prevO)}</td>
+      <td class="r">${fmtInt(r.currO)}</td>
+      <td class="r">${fmtUpt(r.prevUpt)}</td>
+      <td class="r">${fmtUpt(r.currUpt)}</td>
+      <td class="r ${cls(r.dUpt)}" style="font-weight:600">${sUpt(r.dUpt)}</td>
+      <td class="r">${fmt$2(r.prevAsp)}</td>
+      <td class="r">${fmt$2(r.currAsp)}</td>
+      <td class="r ${cls(r.dAsp)}">${signed$2(r.dAsp)}</td>
+      <td class="r ${cls(r.dAov)}">${signed$2(r.dAov)}</td>
+    </tr>`).join('');
+  document.getElementById('lp-upt-tbody').innerHTML = rows;
+}
+
 function renderDrill() {
   const tbody = document.getElementById('drill-tbody');
   const parts = [];
@@ -924,6 +1021,8 @@ function render(payload) {
   renderRevTable(channels);
   renderUptTable(channels);
   renderAovTable(channels);
+  const minOrders = parseInt(document.getElementById('lp-min-orders').value, 10) || 20;
+  renderLpUpt(_drillTree, minOrders);
   renderDrill();
 
   document.getElementById('upload-screen').style.display = 'none';
@@ -938,6 +1037,11 @@ document.addEventListener('DOMContentLoaded', () => {
   ['date-start','date-end'].forEach(id => document.getElementById(id).addEventListener('change', autoCompare));
   document.getElementById('compare-reset').addEventListener('click', autoCompare);
   document.getElementById('btn-load').addEventListener('click', load);
+  document.getElementById('lp-min-orders').addEventListener('input', () => {
+    if (_drillTree.length === 0) return;
+    const v = parseInt(document.getElementById('lp-min-orders').value, 10) || 1;
+    renderLpUpt(_drillTree, v);
+  });
   document.getElementById('btn-reset').addEventListener('click', () => {
     document.getElementById('results-screen').style.display = 'none';
     document.getElementById('upload-screen').style.display = 'block';
