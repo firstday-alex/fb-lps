@@ -2704,6 +2704,10 @@ function parseShopifyQL(data) {
     // Skip rows where all dimensions are empty (totals row)
     if (!source && !lp) continue;
 
+    // Skip post-conversion pages — CVR is ~100% and they pollute the analysis.
+    // Mirrors the CSV parser; only relevant now that the main query groups by LP.
+    if (/^\/(checkout|checkouts|orders|payment-methods|gift_cards)(\/|$)/i.test(lp)) continue;
+
     const sessRaw    = parseFloat(getVal(row, iSess)) || 0;
     const cvrRaw     = parseFloat(getVal(row, iCvr))  || 0;
     const prevSRaw   = parseFloat(getVal(row, iPrevS)) || 0;

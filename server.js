@@ -1045,10 +1045,13 @@ app.get('/api/conversion-impact-data', async (req, res) => {
     }
   }`;
 
-  // Main summary: all utm_sources with full funnel metrics, selected range vs previous period
+  // Main summary: every utm_source × landing_page_path with full funnel metrics,
+  // selected range vs previous period. Grouping by LP here is what lets the
+  // frontend dice each source down to landing pages (aggregateByLp); the source
+  // and channel views roll these rows back up via aggregateBySource/aggregate.
   const mainQuery = `FROM sessions
   SHOW sessions, conversion_rate, average_session_duration, sessions_with_cart_additions, sessions_that_reached_checkout, sessions_that_reached_and_completed_checkout
-  GROUP BY utm_source WITH TOTALS, PERCENT_CHANGE
+  GROUP BY utm_source, landing_page_path WITH TOTALS, PERCENT_CHANGE
   SINCE ${start} UNTIL ${end}
   COMPARE TO previous_period
   ORDER BY sessions DESC
@@ -1056,7 +1059,7 @@ VISUALIZE conversion_rate TYPE table`;
 
   const compareQuery = useCustomCompare ? `FROM sessions
   SHOW sessions, conversion_rate, average_session_duration, sessions_with_cart_additions, sessions_that_reached_checkout, sessions_that_reached_and_completed_checkout
-  GROUP BY utm_source WITH TOTALS
+  GROUP BY utm_source, landing_page_path WITH TOTALS
   SINCE ${cs} UNTIL ${ce}
   ORDER BY sessions DESC` : null;
 
@@ -1139,7 +1142,15 @@ VISUALIZE conversion_rate TYPE table`;
       'sessions_that_reached_and_completed_checkout',
     ];
     const iSource = idx(cols, 'utm_source');
+    const iLp     = idx(cols, 'landing_page_path');
     const cmpISource = idx(cmpCols, 'utm_source');
+    const cmpILp     = idx(cmpCols, 'landing_page_path');
+
+    // Rows are keyed by utm_source × landing_page_path so each main row joins to
+    // its exact compare-window counterpart. The grand-totals row has both
+    // dimensions empty.
+    const rowKey = (arr, iS, iL) =>
+      `${String(arr[iS] ?? '').trim()}|${iL >= 0 ? String(arr[iL] ?? '').trim() : ''}`;
 
     // Per-metric source/dest indexes
     const slots = METRICS.map(m => ({
@@ -1150,8 +1161,8 @@ VISUALIZE conversion_rate TYPE table`;
       cmpITot:      idx(cmpCols, `${m}__totals`),
     }));
 
-    // Index compare rows by utm_source. Read totals from the first row's
-    // __totals columns (ShopifyQL emits them on every data row with WITH TOTALS).
+    // Index compare rows by utm_source × landing_page_path. Read totals from the
+    // first row's __totals columns (ShopifyQL emits them on every data row with WITH TOTALS).
     const cmpMap = new Map();
     const cmpTotals = compare.rows.length > 0
       ? toArray(compare.rows[0], cmpColNames)
@@ -1159,8 +1170,9 @@ VISUALIZE conversion_rate TYPE table`;
     for (const row of compare.rows) {
       const arr = toArray(row, cmpColNames);
       const s = String(arr[cmpISource] ?? '').trim();
-      if (!s) continue;
-      cmpMap.set(s, arr);
+      const lp = cmpILp >= 0 ? String(arr[cmpILp] ?? '').trim() : '';
+      if (!s && !lp) continue; // skip the compare-window totals row
+      cmpMap.set(rowKey(arr, cmpISource, cmpILp), arr);
     }
 
     let matched = 0;
@@ -1168,8 +1180,9 @@ VISUALIZE conversion_rate TYPE table`;
     const newRows = main.rows.map(row => {
       const arr = toArray(row, mainColNames).slice();
       const s = String(arr[iSource] ?? '').trim();
-      const isTotalsRow = !s;
-      const cmpRow = isTotalsRow ? cmpTotals : cmpMap.get(s);
+      const lp = iLp >= 0 ? String(arr[iLp] ?? '').trim() : '';
+      const isTotalsRow = !s && !lp;
+      const cmpRow = isTotalsRow ? cmpTotals : cmpMap.get(rowKey(arr, iSource, iLp));
       if (cmpRow) matched++; else if (!isTotalsRow) unmatched++;
 
       for (const slot of slots) {
