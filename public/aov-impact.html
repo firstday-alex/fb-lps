@@ -889,16 +889,21 @@ function renderDrill() {
 // ─────────────────────────────────────────────
 // LOADER
 // ─────────────────────────────────────────────
+// Tracks whether the user has manually edited the compare-* inputs. While
+// false, the comparison window auto-snaps to the period immediately preceding
+// the main range each time start/end change.
+let _compareManualOverride = false;
+
 function setDefaultDates() {
-  // Default: yesterday + day before, compare = same length immediately prior
+  // Default: yesterday → yesterday (single-day), compare = day immediately prior
   const today = new Date(); today.setUTCHours(0,0,0,0);
   const y = new Date(today.getTime() - 86400000);
-  const y2 = new Date(today.getTime() - 7 * 86400000);
-  document.getElementById('date-start').value = y2.toISOString().slice(0,10);
+  document.getElementById('date-start').value = y.toISOString().slice(0,10);
   document.getElementById('date-end').value = y.toISOString().slice(0,10);
   autoCompare();
 }
 function autoCompare() {
+  if (_compareManualOverride) return;
   const s = document.getElementById('date-start').value;
   const e = document.getElementById('date-end').value;
   if (!s || !e) return;
@@ -980,7 +985,8 @@ function render(payload) {
 document.addEventListener('DOMContentLoaded', () => {
   setDefaultDates();
   ['date-start','date-end'].forEach(id => document.getElementById(id).addEventListener('change', autoCompare));
-  document.getElementById('compare-reset').addEventListener('click', autoCompare);
+  ['compare-start','compare-end'].forEach(id => document.getElementById(id).addEventListener('change', () => { _compareManualOverride = true; }));
+  document.getElementById('compare-reset').addEventListener('click', () => { _compareManualOverride = false; autoCompare(); });
   document.getElementById('btn-load').addEventListener('click', load);
   document.getElementById('lp-min-orders').addEventListener('input', () => {
     if (_drillTree.length === 0) return;

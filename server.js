@@ -1413,8 +1413,24 @@ VISUALIZE conversion_rate TYPE table`;
   SINCE ${cs} UNTIL ${ce}
   ORDER BY sessions DESC` : null;
 
+  // Trailing 7-day window ENDING on the range's End date, for a rolling
+  // 7-day-average CVR per campaign+lp. Independent of the compare window;
+  // powers the "7d Avg CVR" / "vs 7d" columns on the campaign movement table.
+  const sevenStart = (() => {
+    const d = new Date(end + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() - 6);       // inclusive 7-day window
+    return d.toISOString().slice(0, 10);
+  })();
+  const avg7Query = `FROM sessions
+  SHOW sessions, conversion_rate
+  WHERE utm_source = '${source}' AND utm_medium = '${medium}'
+  GROUP BY utm_campaign, landing_page_path WITH TOTALS
+  SINCE ${sevenStart} UNTIL ${end}
+  ORDER BY sessions DESC`;
+
   console.log('\n[meta-cvr-impact-data] Main query:\n' + mainQuery);
   if (compareQuery) console.log('\n[meta-cvr-impact-data] Compare query:\n' + compareQuery);
+  console.log('\n[meta-cvr-impact-data] 7d-avg query:\n' + avg7Query);
 
   const runShopifyQL = async (q) => {
     const resp = await fetch(endpoint, {
@@ -1434,10 +1450,16 @@ VISUALIZE conversion_rate TYPE table`;
   };
 
   try {
-    const [main, compare] = await Promise.all([
+    const [main, compare, avg7] = await Promise.all([
       runShopifyQL(mainQuery),
       compareQuery ? runShopifyQL(compareQuery) : Promise.resolve(null),
+      // Resilient: a 7d-window failure must not break the main pull.
+      runShopifyQL(avg7Query).catch(e => {
+        console.warn('[meta-cvr-impact-data] 7d-avg query failed:', e.message);
+        return null;
+      }),
     ]);
+    const avg7d = avg7 ? { window: { start: sevenStart, end }, columns: avg7.columns, rows: avg7.rows } : null;
 
     // No custom compare → return main as-is (frontend already handles COMPARE
     // TO previous_period output).
@@ -1447,6 +1469,7 @@ VISUALIZE conversion_rate TYPE table`;
         filter: { source, medium },
         columns: main.columns,
         rows: main.rows,
+        avg7d,
       });
     }
 
@@ -1545,6 +1568,7 @@ VISUALIZE conversion_rate TYPE table`;
       merge_stats: mergeStats,
       columns: main.columns,                                  // unchanged shape
       rows: newRows,
+      avg7d,
     });
   } catch (err) {
     console.error('Meta CVR impact data error:', err);

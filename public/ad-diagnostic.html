@@ -179,19 +179,25 @@
       padding-right: 14px; border-right: 1px solid var(--border);
     }
     .controls__group:last-child { border-right: none; }
-    .quick-buttons { display: flex; gap: 4px; flex-wrap: wrap; }
-    .quick-btn {
-      padding: 5px 10px;
-      font-size: 0.78rem;
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      background: var(--surface);
-      cursor: pointer;
-      color: var(--text-secondary);
+    /* Date picker rows (shared look with conversion-impact) */
+    .date-stack { display: flex; flex-direction: column; gap: 6px; }
+    .date-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .date-row label {
+      font-size: 0.82rem; font-weight: 600; color: var(--text-secondary);
+      display: flex; align-items: center; gap: 6px;
+      text-transform: none; letter-spacing: normal; flex-direction: row;
     }
-    .quick-btn:hover, .quick-btn.active {
-      background: #eef3ff; border-color: var(--fb-blue); color: var(--fb-blue);
+    .date-row input[type="date"] {
+      padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
+      font-size: 0.85rem; font-family: inherit; font-weight: 500;
+      color: var(--text-primary); min-width: 0;
     }
+    .btn-reset {
+      font-size: 0.75rem; padding: 4px 10px;
+      border: 1px solid var(--border); border-radius: 6px;
+      background: var(--surface); color: var(--text-secondary); cursor: pointer;
+    }
+    .btn-reset:hover { background: #eef3ff; border-color: var(--fb-blue); color: var(--fb-blue); }
     .btn-primary {
       padding: 8px 18px;
       background: var(--fb-blue);
@@ -593,22 +599,17 @@
         </label>
       </div>
       <div class="controls__group">
-        <label>Start <input type="date" id="d-start"></label>
-        <label>End <input type="date" id="d-end"></label>
-      </div>
-      <div class="controls__group">
-        <label>Compare Start <input type="date" id="c-start"></label>
-        <label>Compare End <input type="date" id="c-end"></label>
-      </div>
-      <div class="controls__group">
-        <label>Quick range
-          <div class="quick-buttons" id="quick-buttons">
-            <button type="button" class="quick-btn" data-days="7">7d</button>
-            <button type="button" class="quick-btn" data-days="14">14d</button>
-            <button type="button" class="quick-btn" data-days="28">28d</button>
-            <button type="button" class="quick-btn" data-days="30">30d</button>
+        <div class="date-stack">
+          <div class="date-row">
+            <label>Start <input type="date" id="d-start"></label>
+            <label>End <input type="date" id="d-end"></label>
           </div>
-        </label>
+          <div class="date-row">
+            <label>Compare Start <input type="date" id="c-start"></label>
+            <label>Compare End <input type="date" id="c-end"></label>
+            <button type="button" id="compare-reset" class="btn-reset" title="Reset comparison to the period immediately preceding Start–End">↻ Auto</button>
+          </div>
+        </div>
       </div>
       <div class="controls__group">
         <label>utm_source
@@ -2508,17 +2509,15 @@ async function loadAccounts() {
   }
 }
 
-function applyQuickRange(days) {
-  const end = isoDaysAgo(1);                  // yesterday
-  const start = isoDaysAgo(days);             // days ago
-  document.getElementById('d-start').value = start;
-  document.getElementById('d-end').value = end;
-  syncCompareToCurrent();
-}
+// Tracks whether the user has manually edited the compare (c-*) inputs. While
+// false, the compare window auto-snaps to the period immediately preceding the
+// current window each time start/end change.
+let _compareManualOverride = false;
 
-// Always set the compare window to the same-length window immediately before
-// the current window. Called whenever the user edits the start or end date.
+// Set the compare window to the same-length window immediately before the
+// current window. Called whenever the user edits the start or end date.
 function syncCompareToCurrent() {
+  if (_compareManualOverride) return;
   const start = document.getElementById('d-start').value;
   const end   = document.getElementById('d-end').value;
   if (!start || !end) return;
@@ -2540,21 +2539,20 @@ function syncCompareToCurrent() {
 document.addEventListener('DOMContentLoaded', () => {
   loadAccounts();
 
-  // Default: last 7 days vs prior 7 days
-  applyQuickRange(7);
-
-  document.querySelectorAll('.quick-btn').forEach(b => {
-    b.addEventListener('click', () => {
-      document.querySelectorAll('.quick-btn').forEach(x => x.classList.remove('active'));
-      b.classList.add('active');
-      applyQuickRange(parseInt(b.dataset.days, 10));
-    });
-  });
+  // Default: yesterday → yesterday (matches conversion-impact)
+  const yday = isoDaysAgo(1);
+  document.getElementById('d-start').value = yday;
+  document.getElementById('d-end').value = yday;
+  syncCompareToCurrent();
 
   // Whenever the user picks new start/end dates manually, snap the compare
   // window to the immediately-preceding window of the same length.
   document.getElementById('d-start').addEventListener('change', syncCompareToCurrent);
   document.getElementById('d-end').addEventListener('change', syncCompareToCurrent);
+
+  // Manual edits to the compare window disable auto-snapping; ↻ Auto re-enables it.
+  ['c-start','c-end'].forEach(id => document.getElementById(id).addEventListener('change', () => { _compareManualOverride = true; }));
+  document.getElementById('compare-reset').addEventListener('click', () => { _compareManualOverride = false; syncCompareToCurrent(); });
 
   document.getElementById('btn-load').addEventListener('click', loadData);
 

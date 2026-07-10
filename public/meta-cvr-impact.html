@@ -587,6 +587,10 @@
       border-bottom: 2px solid var(--border); padding-bottom: 8px;
     }
     .cvr-chart-row .r { text-align: right; }
+    /* Campaign table with the extra 7d-average + vs-7d columns */
+    .cvr-chart--7d .cvr-chart-row {
+      grid-template-columns: 190px 56px 1fr 56px 62px 1fr 52px;
+    }
     .cvr-src-label { font-weight: 600; display: flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; }
     .cvr-src-label .ch-dot { flex-shrink: 0; }
     .cvr-bar-cell { position: relative; height: 22px; }
@@ -1399,12 +1403,14 @@ function aggregateBy(rows, keyFn) {
   rows.forEach(r => {
     const key = keyFn(r) || '(empty)';
     let g = map.get(key);
-    if (!g) { g = { key, prevS: 0, currS: 0, prevWC: 0, currWC: 0, currWD: 0 }; map.set(key, g); }
+    if (!g) { g = { key, prevS: 0, currS: 0, prevWC: 0, currWC: 0, currWD: 0, avg7S: 0, avg7WC: 0 }; map.set(key, g); }
     g.prevS  += r.prevSess;
     g.currS  += r.currS;
     g.prevWC += r.prevSess * r.prevCvr;
     g.currWC += r.currS    * r.currC;
     g.currWD += r.currS    * (r.currDur || 0);
+    g.avg7S  += r.avg7S || 0;
+    g.avg7WC += (r.avg7S || 0) * (r.avg7C || 0);
   });
   return Array.from(map.values()).map(g => ({
     key: g.key,
@@ -1413,6 +1419,8 @@ function aggregateBy(rows, keyFn) {
     prevSess: g.prevS,
     prevCvr:  g.prevS > 0 ? g.prevWC / g.prevS : 0,
     currDur:  g.currS > 0 ? g.currWD / g.currS : 0,
+    avg7S:    g.avg7S,
+    avg7C:    g.avg7S > 0 ? g.avg7WC / g.avg7S : 0,
   }));
 }
 
@@ -1579,11 +1587,12 @@ function render(rawRows, filename) {
   // Panels
   renderCvrMovement('cvr-movement-card', campaignRows, {
     title: 'CVR Movement by Campaign',
-    sub: "Each row shows how a campaign's CVR changed. Sorted by transactions (highest first). Bar length = magnitude of CVR change.",
+    sub: "Each row shows how a campaign's CVR changed. Sorted by transactions (highest first). Bar length = magnitude of CVR change. <strong>7d Avg</strong> = rolling CVR over the 7 days ending on the End date; <strong>vs 7d</strong> = current CVR minus that average (pp).",
     labelName: 'Campaign',
     color: CAMPAIGN_COLOR,
     minSess: 20,
     drillBy: 'lp',
+    show7d: true,
   });
   renderCvrMovement('cvr-movement-lp-card', lpRows, {
     title: 'CVR Movement by Landing Page',
@@ -1845,16 +1854,23 @@ function renderCvrMovement(cardId, rows, opts) {
   const sorted = [...qualified].sort((a, b) => (b.currS * b.currC) - (a.currS * a.currC));
   const maxAbsDelta = Math.max(...sorted.map(r => Math.abs(r.currC - r.prevCvr)), 0.001);
   const drillByLp = opts.drillBy === 'lp';
+  const show7d = !!opts.show7d;
+  // Scale for the "vs 7d" bars — only over rows that actually have 7d data.
+  const maxAbsDelta7 = show7d
+    ? Math.max(...sorted.filter(r => r.avg7S > 0).map(r => Math.abs(r.currC - r.avg7C)), 0.001)
+    : 0.001;
 
   let html = `
     <h3>${esc(opts.title)}</h3>
     <p class="card__sub">${opts.sub}${drillByLp ? ' <em style="color:var(--text-secondary)">· click a row to break down by landing page</em>' : ''}</p>
-    <div class="cvr-chart">
+    <div class="cvr-chart${show7d ? ' cvr-chart--7d' : ''}">
       <div class="cvr-chart-row cvr-chart-row--header">
         <div>${esc(opts.labelName)}</div>
         <div class="r">Prev CVR</div>
         <div style="text-align:center">CVR Change</div>
         <div class="r">Curr CVR</div>
+        ${show7d ? '<div class="r" title="Rolling conversion rate over the 7 days ending on the End date">7d Avg</div>' : ''}
+        ${show7d ? '<div style="text-align:center" title="Current CVR minus the 7-day average, in percentage points">vs 7d</div>' : ''}
         <div class="r">Txns</div>
       </div>`;
 
@@ -1875,6 +1891,35 @@ function renderCvrMovement(cardId, rows, opts) {
     const rowCls = drillByLp ? 'cvr-chart-row cvr-chart-row--clickable' : 'cvr-chart-row';
     const dataAttr = drillByLp ? ` data-drill-idx="${idx}"` : '';
 
+    // 7d-average CVR column + "vs 7d" delta bar (campaign table only).
+    let sevenCells = '';
+    if (show7d) {
+      if (r.avg7S > 0) {
+        const d7   = r.currC - r.avg7C;
+        const d7pp = d7 * 100;
+        const w7   = Math.round(Math.abs(d7) / maxAbsDelta7 * 45);
+        const pos7 = d7 >= 0;
+        const col7 = pos7 ? 'var(--positive)' : 'var(--negative)';
+        const bar7Style = pos7 ? `left:50%;width:${w7}%` : `right:50%;width:${w7}%`;
+        const lbl7Style = pos7
+          ? `left:calc(50% + ${w7}% + 4px);color:${col7}`
+          : `right:calc(50% + ${w7}% + 4px);color:${col7}`;
+        sevenCells = `
+        <div class="r" style="font-size:0.78rem">${(r.avg7C * 100).toFixed(2)}%</div>
+        <div class="cvr-bar-cell">
+          <div class="cvr-divider" style="left:50%"></div>
+          <div class="cvr-bar-track" style="${bar7Style}">
+            <div class="cvr-bar-fill" style="width:100%;background:${col7};border-radius:${pos7 ? '0 3px 3px 0' : '3px 0 0 3px'}"></div>
+          </div>
+          <div class="cvr-bar-label" style="${lbl7Style}">${fmtPP(d7pp)}</div>
+        </div>`;
+      } else {
+        sevenCells = `
+        <div class="r" style="font-size:0.78rem;color:var(--text-secondary)">—</div>
+        <div class="r" style="font-size:0.78rem;color:var(--text-secondary)" title="No sessions in the trailing 7-day window">—</div>`;
+      }
+    }
+
     html += `
       <div class="${rowCls}"${dataAttr}>
         <div class="cvr-src-label" title="${esc(label)}">
@@ -1891,6 +1936,7 @@ function renderCvrMovement(cardId, rows, opts) {
           <div class="cvr-bar-label" style="${labelStyle}">${fmtPP(deltaPP)}</div>
         </div>
         <div class="r" style="font-size:0.78rem">${(r.currC * 100).toFixed(2)}%</div>
+        ${sevenCells}
         <div class="r" style="font-size:0.78rem;font-weight:600">${fmtN(Math.round(r.currS * r.currC))}</div>
       </div>
       ${drillByLp ? `<div class="cvr-drill-panel" data-drill-panel="${idx}"></div>` : ''}`;
@@ -2765,6 +2811,29 @@ function parseShopifyQL(data) {
     _shopifyTotals = null;
   }
 
+  // Optional trailing-7-day CVR per campaign+lp (window ends on the range End
+  // date). Present only on the Shopify API path, not CSV uploads. Keyed
+  // campaign||lp so it survives aggregation by campaign or by landing page.
+  const avg7Map = new Map();
+  if (data.avg7d && Array.isArray(data.avg7d.rows) && Array.isArray(data.avg7d.columns)) {
+    const a = data.avg7d;
+    const aCols = a.columns.map(c => (c.name || '').toLowerCase());
+    const aGet = (row, i) => i < 0 ? undefined : (Array.isArray(row) ? row[i] : row[a.columns[i].name]);
+    const aiC   = aCols.findIndex(s => s === 'utm_campaign');
+    const aiL   = aCols.findIndex(s => s === 'landing_page_path');
+    const aiS   = aCols.findIndex(s => s === 'sessions');
+    const aiCvr = aCols.findIndex(s => s === 'conversion_rate');
+    for (const row of a.rows) {
+      const c = String(aGet(row, aiC) ?? '').trim();
+      const l = String(aGet(row, aiL) ?? '').trim();
+      if (!c && !l) continue;                       // skip totals row
+      avg7Map.set(c + '||' + l, {
+        s: Math.round(parseFloat(aGet(row, aiS)) || 0),
+        c: normCvr(parseFloat(aGet(row, aiCvr)) || 0) ?? 0,
+      });
+    }
+  }
+
   const parsed = [];
   for (const row of rows) {
     const rawC  = getVal(row, iCampaign);
@@ -2783,6 +2852,7 @@ function parseShopifyQL(data) {
     const prevSRaw   = parseFloat(getVal(row, iPrevS)) || 0;
     const prevCvrRaw = parseFloat(getVal(row, iPrevCvr)) || 0;
 
+    const a7 = avg7Map.get(campaign + '||' + lp);
     parsed.push({
       campaign,
       lp,
@@ -2791,6 +2861,8 @@ function parseShopifyQL(data) {
       currDur:  durRaw,
       prevSess: Math.round(prevSRaw),
       prevCvr:  normCvr(prevCvrRaw) ?? 0,
+      avg7S:    a7 ? a7.s : 0,
+      avg7C:    a7 ? a7.c : 0,
     });
   }
 

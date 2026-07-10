@@ -106,6 +106,21 @@
       border-color: var(--fb-blue);
       box-shadow: 0 0 0 2px rgba(24,119,242,0.15);
     }
+    /* Date picker rows (shared look with conversion-impact) */
+    .date-picker.full { grid-column: 1 / -1; }
+    .date-row {
+      display: flex; gap: 12px; align-items: center; justify-content: center;
+      flex-wrap: wrap; margin-bottom: 4px;
+    }
+    .date-row label {
+      font-size: 0.82rem; font-weight: 600; color: var(--text-secondary);
+      display: flex; align-items: center; gap: 6px;
+      text-transform: none; letter-spacing: normal;
+    }
+    .date-row input[type="date"] {
+      padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
+      font-size: 0.85rem; font-family: inherit;
+    }
     .period-block {
       grid-column: 1 / -1;
       padding: 12px 14px;
@@ -497,19 +512,15 @@
         <input type="text" id="f-lp" placeholder="e.g. /pages/tdk-behind-the-science-lp">
       </div>
 
-      <div class="period-block">
-        <h3>Period A · before</h3>
-        <div class="period-row">
-          <div class="field"><label>start</label><input type="date" id="a-start"></div>
-          <div class="field"><label>end</label><input type="date" id="a-end"></div>
+      <div class="date-picker full">
+        <div class="date-row">
+          <label>Start <input type="date" id="b-start"></label>
+          <label>End <input type="date" id="b-end"></label>
         </div>
-      </div>
-
-      <div class="period-block">
-        <h3>Period B · after</h3>
-        <div class="period-row">
-          <div class="field"><label>start</label><input type="date" id="b-start"></div>
-          <div class="field"><label>end</label><input type="date" id="b-end"></div>
+        <div class="date-row" style="margin-top:4px">
+          <label>Compare Start <input type="date" id="a-start"></label>
+          <label>Compare End <input type="date" id="a-end"></label>
+          <button type="button" class="btn-reset" id="compare-reset" title="Reset comparison to the period immediately preceding Start–End">↻ Auto</button>
         </div>
       </div>
 
@@ -1135,6 +1146,34 @@ function selectComponent(key) {
 // ─────────────────────────────────────────────────────────────────────
 // PIPELINE
 // ─────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────
+// COMPARISON-WINDOW HELPERS
+// The current period is Period B (b-start/b-end); the comparison period is
+// Period A (a-start/a-end). While the user hasn't manually edited Period A,
+// it auto-snaps to the window immediately preceding the current period.
+// ─────────────────────────────────────────────────────────────────────
+let _compareManualOverride = false;
+
+function autoComputeCompareRange() {
+  const startStr = document.getElementById('b-start').value;
+  const endStr   = document.getElementById('b-end').value;
+  if (!startStr || !endStr) return null;
+  const sd = new Date(startStr + 'T00:00:00Z');
+  const ed = new Date(endStr   + 'T00:00:00Z');
+  if (isNaN(sd.getTime()) || isNaN(ed.getTime()) || ed < sd) return null;
+  const days = Math.round((ed - sd) / 86400000) + 1;
+  const cEnd = new Date(sd);   cEnd.setUTCDate(cEnd.getUTCDate() - 1);
+  const cStart = new Date(cEnd); cStart.setUTCDate(cStart.getUTCDate() - (days - 1));
+  return { start: cStart.toISOString().slice(0, 10), end: cEnd.toISOString().slice(0, 10) };
+}
+function syncCompareInputs() {
+  if (_compareManualOverride) return;
+  const r = autoComputeCompareRange();
+  if (!r) return;
+  document.getElementById('a-start').value = r.start;
+  document.getElementById('a-end').value   = r.end;
+}
+
 async function runDecomposition() {
   const btn    = document.getElementById('btn-run');
   const status = document.getElementById('picker-status');
@@ -1245,15 +1284,21 @@ async function runDecomposition() {
 // WIRE UP
 // ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-  // Defaults: previous full month vs the current month-to-date.
-  const aStart = firstOfPrevMonth();
-  const aEnd   = lastDayOfPrevMonth();
-  const bStart = firstOfThisMonth();
-  const bEnd   = todayMinusDays(0);
-  document.getElementById('a-start').value = aStart;
-  document.getElementById('a-end').value   = aEnd;
-  document.getElementById('b-start').value = bStart;
-  document.getElementById('b-end').value   = bEnd;
+  // Default: current period = last 7 days (a single day breaks the
+  // decomposition); comparison period auto-snaps to the preceding 7 days.
+  document.getElementById('b-start').value = todayMinusDays(7);
+  document.getElementById('b-end').value   = todayMinusDays(1);
+  syncCompareInputs();
+
+  // When the current period changes, snap the comparison window unless the
+  // user has manually overridden it.
+  document.getElementById('b-start').addEventListener('change', syncCompareInputs);
+  document.getElementById('b-end').addEventListener('change', syncCompareInputs);
+
+  // Manual edits to the comparison (Period A) inputs disable auto-snapping;
+  // the ↻ Auto button re-enables it.
+  ['a-start', 'a-end'].forEach(id => document.getElementById(id).addEventListener('change', () => { _compareManualOverride = true; }));
+  document.getElementById('compare-reset').addEventListener('click', () => { _compareManualOverride = false; syncCompareInputs(); });
 
   document.getElementById('btn-run').addEventListener('click', runDecomposition);
   document.getElementById('btn-back').addEventListener('click', () => {
@@ -1269,6 +1314,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('b-start').value  = '2026-04-01';
     document.getElementById('b-end').value    = '2026-04-30';
     document.getElementById('f-threshold').value = '100';
+    _compareManualOverride = true;   // preset sets an explicit comparison window
     dbg('TDK preset loaded');
   });
   document.getElementById('debug-toggle').addEventListener('click', () => {

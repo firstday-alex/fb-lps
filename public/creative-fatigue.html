@@ -87,6 +87,21 @@
       outline: none; border-color: var(--fb-blue);
       box-shadow: 0 0 0 2px rgba(24,119,242,0.15);
     }
+    /* Date picker rows (shared look with conversion-impact) */
+    .date-picker.full { grid-column: 1 / -1; }
+    .date-row {
+      display: flex; gap: 12px; align-items: center; justify-content: center;
+      flex-wrap: wrap; margin-bottom: 4px;
+    }
+    .date-row label {
+      font-size: 0.82rem; font-weight: 600; color: var(--text-secondary);
+      display: flex; align-items: center; gap: 6px;
+      text-transform: none; letter-spacing: normal;
+    }
+    .date-row input[type="date"] {
+      padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
+      font-size: 0.85rem; font-family: inherit;
+    }
     .period-block {
       grid-column: 1 / -1;
       padding: 12px 14px;
@@ -521,21 +536,15 @@
         </select>
       </div>
 
-      <div class="period-block">
-        <h3>Current period <span class="auto-tag">14d daily insights from Meta</span></h3>
-        <div class="period-row">
-          <div class="field"><label>since</label><input type="date" id="f-since"></div>
-          <div class="field"><label>until</label><input type="date" id="f-until"></div>
-          <span></span>
+      <div class="date-picker full">
+        <div class="date-row">
+          <label>Start <input type="date" id="f-since"></label>
+          <label>End <input type="date" id="f-until"></label>
         </div>
-      </div>
-
-      <div class="period-block">
-        <h3>Compare period <span class="auto-tag" id="compare-mode-tag">auto · prev period</span></h3>
-        <div class="period-row">
-          <div class="field"><label>since</label><input type="date" id="f-compare-since"></div>
-          <div class="field"><label>until</label><input type="date" id="f-compare-until"></div>
-          <button type="button" class="btn-tiny" id="btn-compare-reset" title="Snap compare window to the period immediately preceding the current window">↻ Auto</button>
+        <div class="date-row" style="margin-top:4px">
+          <label>Compare Start <input type="date" id="f-compare-since"></label>
+          <label>Compare End <input type="date" id="f-compare-until"></label>
+          <button type="button" class="btn-reset" id="btn-compare-reset" title="Reset comparison to the period immediately preceding Start–End">↻ Auto</button>
         </div>
       </div>
 

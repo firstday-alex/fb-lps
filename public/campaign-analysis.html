@@ -54,6 +54,19 @@
       font-size: 0.85rem; background: white; color: var(--text-primary);
     }
     .ctrl-group select { min-width: 140px; }
+    /* Date picker row (shared look with conversion-impact) */
+    .date-row {
+      display: flex; gap: 12px; align-items: center; justify-content: center;
+      flex-wrap: wrap;
+    }
+    .date-row label {
+      font-size: 0.82rem; font-weight: 600; color: var(--text-secondary);
+      display: flex; align-items: center; gap: 6px;
+    }
+    .date-row input[type="date"] {
+      padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
+      font-size: 0.85rem; font-family: inherit; background: white; color: var(--text-primary);
+    }
     .btn {
       padding: 8px 18px; border: none; border-radius: 6px; cursor: pointer;
       font-size: 0.85rem; font-weight: 600; background: var(--fb-blue); color: white;
@@ -122,13 +135,9 @@
         <label>Ad Account</label>
         <select id="account-select"><option value="">Loading...</option></select>
       </div>
-      <div class="ctrl-group">
-        <label>Start Date</label>
-        <input type="date" id="date-start">
-      </div>
-      <div class="ctrl-group">
-        <label>End Date</label>
-        <input type="date" id="date-end">
+      <div class="date-row">
+        <label>Start <input type="date" id="date-start"></label>
+        <label>End <input type="date" id="date-end"></label>
       </div>
       <button class="btn" id="btn-load-campaigns">Load Campaigns</button>
     </div>
@@ -383,12 +392,12 @@ function hideStatus(id) {
 
 // ── Init ──────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
-  // Default date range: last 7 days
-  const today = new Date();
-  const weekAgo = new Date(today);
-  weekAgo.setDate(weekAgo.getDate() - 7);
-  document.getElementById('date-end').value = today.toISOString().slice(0, 10);
-  document.getElementById('date-start').value = weekAgo.toISOString().slice(0, 10);
+  // Default date range: yesterday → yesterday (matches conversion-impact)
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const ymd = yesterday.toISOString().slice(0, 10);
+  document.getElementById('date-end').value = ymd;
+  document.getElementById('date-start').value = ymd;
 
   if (await checkAuth()) {
     await loadAccounts();
