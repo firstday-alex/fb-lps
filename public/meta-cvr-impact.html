@@ -589,7 +589,7 @@
     .cvr-chart-row .r { text-align: right; }
     /* Campaign table with the extra 7d-average + vs-7d columns */
     .cvr-chart--7d .cvr-chart-row {
-      grid-template-columns: 190px 56px 1fr 56px 62px 1fr 52px;
+      grid-template-columns: 166px 50px 1fr 50px 56px 1fr 60px 64px 48px;
     }
     .cvr-src-label { font-weight: 600; display: flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; }
     .cvr-src-label .ch-dot { flex-shrink: 0; }
@@ -1587,7 +1587,7 @@ function render(rawRows, filename) {
   // Panels
   renderCvrMovement('cvr-movement-card', campaignRows, {
     title: 'CVR Movement by Campaign',
-    sub: "Each row shows how a campaign's CVR changed. Sorted by transactions (highest first). Bar length = magnitude of CVR change. <strong>7d Avg</strong> = rolling CVR over the 7 days ending on the End date; <strong>vs 7d</strong> = current CVR minus that average (pp).",
+    sub: "Each row shows how a campaign's CVR changed. Sorted by transactions (highest first). Bar length = magnitude of CVR change. <strong>7d Avg</strong> = rolling CVR over the 7 days ending on the End date; <strong>vs 7d</strong> = current CVR minus that average (pp). <strong>Sessions</strong> = current-period sessions; <strong>Sess Δ</strong> = change vs the previous period.",
     labelName: 'Campaign',
     color: CAMPAIGN_COLOR,
     minSess: 20,
@@ -1871,6 +1871,8 @@ function renderCvrMovement(cardId, rows, opts) {
         <div class="r">Curr CVR</div>
         ${show7d ? '<div class="r" title="Rolling conversion rate over the 7 days ending on the End date">7d Avg</div>' : ''}
         ${show7d ? '<div style="text-align:center" title="Current CVR minus the 7-day average, in percentage points">vs 7d</div>' : ''}
+        ${show7d ? '<div class="r" title="Sessions in the current period">Sessions</div>' : ''}
+        ${show7d ? '<div class="r" title="Change in sessions vs the previous period">Sess Δ</div>' : ''}
         <div class="r">Txns</div>
       </div>`;
 
@@ -1920,6 +1922,16 @@ function renderCvrMovement(cardId, rows, opts) {
       }
     }
 
+    // Sessions + sessions delta (current vs previous period) — campaign table.
+    let sessionCells = '';
+    if (show7d) {
+      const sessDelta = r.currS - r.prevSess;
+      const sPos = sessDelta >= 0;
+      sessionCells = `
+        <div class="r" style="font-size:0.78rem">${fmtN(Math.round(r.currS))}</div>
+        <div class="r" style="font-size:0.78rem;font-weight:600;color:${sPos ? 'var(--positive)' : 'var(--negative)'}" title="${(r.prevSess).toLocaleString()} → ${(r.currS).toLocaleString()}">${sPos ? '+' : '−'}${fmtN(Math.abs(Math.round(sessDelta)))}</div>`;
+    }
+
     html += `
       <div class="${rowCls}"${dataAttr}>
         <div class="cvr-src-label" title="${esc(label)}">
@@ -1937,6 +1949,7 @@ function renderCvrMovement(cardId, rows, opts) {
         </div>
         <div class="r" style="font-size:0.78rem">${(r.currC * 100).toFixed(2)}%</div>
         ${sevenCells}
+        ${sessionCells}
         <div class="r" style="font-size:0.78rem;font-weight:600">${fmtN(Math.round(r.currS * r.currC))}</div>
       </div>
       ${drillByLp ? `<div class="cvr-drill-panel" data-drill-panel="${idx}"></div>` : ''}`;
