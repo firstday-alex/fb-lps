@@ -587,9 +587,13 @@
       border-bottom: 2px solid var(--border); padding-bottom: 8px;
     }
     .cvr-chart-row .r { text-align: right; }
-    /* Campaign table with the extra 7d-average + vs-7d columns */
+    /* Campaign table with the extra 7d-average + vs-7d columns.
+       Wide, so it scrolls horizontally instead of compressing on narrow screens;
+       header and data rows share the grid + min-width, so they scroll together. */
+    .cvr-chart--7d { overflow-x: auto; }
     .cvr-chart--7d .cvr-chart-row {
       grid-template-columns: 158px 48px 1fr 48px 54px 1fr 58px 62px 46px 62px;
+      min-width: 860px;
     }
     .cvr-src-label { font-weight: 600; display: flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; }
     .cvr-src-label .ch-dot { flex-shrink: 0; }
