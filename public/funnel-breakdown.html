@@ -139,7 +139,8 @@
       letter-spacing: 0.05em; color: var(--text-secondary); margin-bottom: 6px;
     }
     .stat__value { font-size: 1.7rem; font-weight: 700; line-height: 1.05; }
-    .stat__delta { font-size: 0.8rem; font-weight: 600; margin-top: 4px; }
+    .stat__deltas { display: flex; flex-direction: column; gap: 2px; margin-top: 5px; }
+    .stat__delta { font-size: 0.78rem; font-weight: 700; display: inline-flex; align-items: baseline; gap: 5px; }
 
     /* Funnel */
     .funnel { display: flex; flex-direction: column; gap: 10px; }
@@ -159,10 +160,16 @@
     .stage__vals { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
     .stage__rate { font-size: 1.15rem; font-weight: 700; }
     .stage__rate-lbl { font-size: 0.72rem; color: var(--text-secondary); }
-    .stage__delta { font-size: 0.82rem; font-weight: 700; }
+    .stage__deltas { display: flex; flex-direction: column; gap: 2px; flex-basis: 100%; margin-top: 2px; }
+    .stage__delta { font-size: 0.8rem; font-weight: 700; display: inline-flex; align-items: baseline; gap: 5px; }
     .delta-pos { color: var(--positive); }
     .delta-neg { color: var(--negative); }
     .delta-flat { color: var(--text-secondary); }
+    .d-tag {
+      color: var(--text-secondary); font-weight: 700; font-size: 0.6rem;
+      text-transform: uppercase; letter-spacing: 0.03em; opacity: 0.85;
+      min-width: 30px; display: inline-block; text-align: left;
+    }
     .funnel-note { font-size: 0.76rem; color: var(--text-secondary); margin-top: 12px; }
     .funnel-note code { background: var(--bg); padding: 1px 5px; border-radius: 4px; font-size: 0.72rem; }
 
@@ -187,7 +194,7 @@
     table.breakdown tbody tr.active { background: rgba(24,119,242,0.09); }
     table.breakdown tr.totals-row td { font-weight: 700; border-top: 2px solid var(--border); border-bottom: none; background: #f9fafc; }
     .cell-val { display: block; }
-    .cell-delta { display: block; font-size: 0.72rem; font-weight: 600; }
+    .cell-delta { display: block; font-size: 0.7rem; font-weight: 600; white-space: nowrap; }
 
     .top-info { font-size: 0.82rem; color: var(--text-secondary); }
     .top-info a { color: var(--fb-blue); }
@@ -305,7 +312,9 @@
         <code>ATC = cart adds ÷ non-bouncers</code> ·
         <code>checkout = reached-checkout ÷ cart adds</code> ·
         <code>completion = purchases ÷ reached-checkout</code>.
-        Δ vs comparison period in percentage points.
+        Each metric shows two deltas: <code>prev</code>/<code>cmp</code> = vs the comparison period,
+        <code>30d</code> = vs the trailing 30-day window. Count metrics use <code>30d/day</code>
+        (per-day average) so a single day is comparable to the 30-day window. Rate deltas in percentage points.
       </div>
     </div>
 
@@ -339,6 +348,9 @@ let _selected = null;      // Set of selected source labels; null = all eligible
 let _focus = 'AGG';        // 'AGG' (selected aggregate) or a source label
 let _sort = { key: 'sessions', dir: -1 };
 let _compareManualOverride = false;
+let _cmpTag = 'prev';      // short tag for the primary comparison delta
+let _curDays = 1;          // days in the selected range (for 30d per-day normalization)
+let _baseDays = 30;        // days in the trailing baseline window
 
 // Per-metric documentation shown in the ⓘ hover tooltips. All funnel data comes
 // from Shopify ShopifyQL (FROM sessions), grouped by utm_source over the range.
@@ -443,6 +455,26 @@ function delta(cur, prev, kind, goodUp) {
   return { text, cls };
 }
 
+function periodDays(a, b) {
+  if (!a || !b) return 1;
+  const d = (new Date(b + 'T00:00:00Z') - new Date(a + 'T00:00:00Z')) / 86400000 + 1;
+  return Math.max(1, Math.round(d));
+}
+
+// Two labeled deltas for a metric: the primary comparison window, then the
+// trailing-30-day baseline. Count metrics are normalized to a per-day basis for
+// the 30d line (a single day vs a 30-day total would otherwise be meaningless).
+function deltaTags(cur, prev, base, kind, goodUp, cls) {
+  const line = (d, tag) => `<span class="${cls} ${d.cls}"><span class="d-tag">${tag}</span>${d.text || '·'}</span>`;
+  const primary = delta(cur, prev, kind, goodUp);
+  let cN = cur, bN = base, tag30 = '30d';
+  if (kind === 'int' && cur != null && base != null) {
+    cN = cur / _curDays; bN = base / _baseDays; tag30 = '30d/day';
+  }
+  const base30 = delta(cN, bN, kind, goodUp);
+  return line(primary, _cmpTag) + line(base30, tag30);
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // DATE / COMPARE HELPERS (shared behavior with the other tabs)
 // ─────────────────────────────────────────────────────────────────────
@@ -540,7 +572,7 @@ function render() {
   // Table rows = eligible sources that are currently selected.
   _rows = _eligible
     .filter(s => isSelected(s.source))
-    .map(s => ({ source: s.source, cur: computeFunnel(s.current), prev: computeFunnel(s.previous) }));
+    .map(s => ({ source: s.source, cur: computeFunnel(s.current), prev: computeFunnel(s.previous), base: computeFunnel(s.baseline) }));
 
   renderTopInfo();
   renderSourceFilter();
@@ -589,29 +621,42 @@ function selectedAggregate() {
   const sel = selectedSources();
   const usingAll = sel.length === _data.sources.length;
   if (usingAll) {
-    return { cur: computeFunnel(_data.totals.current), prev: computeFunnel(_data.totals.previous), count: sel.length, all: true };
+    return {
+      cur: computeFunnel(_data.totals.current),
+      prev: computeFunnel(_data.totals.previous),
+      base: computeFunnel(_data.totals.baseline),
+      count: sel.length, all: true,
+    };
   }
   return {
     cur: computeFunnel(aggregateRaw(sel, 'current')),
     prev: computeFunnel(aggregateRaw(sel, 'previous')),
+    base: computeFunnel(aggregateRaw(sel, 'baseline')),
     count: sel.length, all: false,
   };
 }
 
 function renderTopInfo() {
   const c = _data.compare;
+  const b = _data.baseline30 || {};
+  _cmpTag = c.mode === 'custom' ? 'cmp' : 'prev';
+  _curDays = periodDays(_data.start, _data.end);
+  _baseDays = periodDays(b.start, b.end);
   const compareLabel = c.mode === 'custom'
     ? `${c.start} → ${c.end}`
     : 'previous period (auto)';
   const info = document.getElementById('top-info');
   info.innerHTML =
-    `<strong>${_data.start} → ${_data.end}</strong> vs ${compareLabel}` +
+    `<strong>${_data.start} → ${_data.end}</strong>` +
+    ` &nbsp;·&nbsp; <b>${_cmpTag}</b> = vs ${compareLabel}` +
+    ` &nbsp;·&nbsp; <b>30d</b> = vs last 30 days (${b.start} → ${b.end})` +
     ` &nbsp;·&nbsp; ${_data.sources.length} sources` +
     ` &nbsp;·&nbsp; <a href="#" id="show-ql">show ShopifyQL</a>`;
   document.getElementById('show-ql').addEventListener('click', (e) => {
     e.preventDefault();
     const parts = [`--- Main ---\n${_data.query}`];
     if (_data.compare_query) parts.push(`--- Compare ---\n${_data.compare_query}`);
+    if (_data.baseline30_query) parts.push(`--- 30-day baseline ---\n${_data.baseline30_query}`);
     alert(parts.join('\n\n'));
   });
 }
@@ -641,50 +686,53 @@ function focusFunnels() {
   if (_focus === 'AGG') {
     const agg = selectedAggregate();
     const label = agg.all ? 'All sources' : `${agg.count} selected source${agg.count === 1 ? '' : 's'}`;
-    return { label, cur: agg.cur, prev: agg.prev };
+    return { label, cur: agg.cur, prev: agg.prev, base: agg.base };
   }
   const s = _eligible.find(x => x.source === _focus);
-  return { label: _focus, cur: s ? computeFunnel(s.current) : null, prev: s ? computeFunnel(s.previous) : null };
+  return {
+    label: _focus,
+    cur: s ? computeFunnel(s.current) : null,
+    prev: s ? computeFunnel(s.previous) : null,
+    base: s ? computeFunnel(s.baseline) : null,
+  };
 }
 
 function renderStats() {
   const f = focusFunnels();
-  const cur = f.cur, prev = f.prev;
+  const cur = f.cur, prev = f.prev, base = f.base;
   document.getElementById('funnel-sub').textContent = cur
     ? `${fmtInt(cur.sessions)} sessions · ${fmtInt(cur.purchase)} completed checkouts`
     : '';
   const cards = [
-    { label: 'Sessions',            info: 'sessions', val: fmtInt(cur?.sessions), d: delta(cur?.sessions, prev?.sessions, 'int', true) },
-    { label: 'Avg session duration',info: 'duration', val: fmtDur(cur?.duration), d: delta(cur?.duration, prev?.duration, 'dur', true) },
-    { label: 'Overall CVR',         info: 'cvr',      val: fmtPct(cur?.cvr, 2),   d: delta(cur?.cvr, prev?.cvr, 'pct', true) },
-    { label: 'Completed checkouts', info: 'purchase', val: fmtInt(cur?.purchase), d: delta(cur?.purchase, prev?.purchase, 'int', true) },
+    { label: 'Sessions',            info: 'sessions', key: 'sessions', kind: 'int', goodUp: true, val: fmtInt(cur?.sessions) },
+    { label: 'Avg session duration',info: 'duration', key: 'duration', kind: 'dur', goodUp: true, val: fmtDur(cur?.duration) },
+    { label: 'Overall CVR',         info: 'cvr',      key: 'cvr',      kind: 'pct', goodUp: true, val: fmtPct(cur?.cvr, 2) },
+    { label: 'Completed checkouts', info: 'purchase', key: 'purchase', kind: 'int', goodUp: true, val: fmtInt(cur?.purchase) },
   ];
   document.getElementById('stats').innerHTML = cards.map(c => `
     <div class="stat">
       <div class="stat__label">${c.label}${infoIcon(c.info)}</div>
       <div class="stat__value">${c.val}</div>
-      <div class="stat__delta ${c.d.cls}">${c.d.text || '&nbsp;'}</div>
+      <div class="stat__deltas">${cur ? deltaTags(cur[c.key], prev ? prev[c.key] : null, base ? base[c.key] : null, c.kind, c.goodUp, 'stat__delta') : ''}</div>
     </div>`).join('');
 }
 
 function renderFunnel() {
   const f = focusFunnels();
   document.getElementById('focus-tag').textContent = f.label;
-  const cur = f.cur, prev = f.prev;
+  const cur = f.cur, prev = f.prev, baseF = f.base;
   const el = document.getElementById('funnel');
-  if (!cur) { el.innerHTML = '<p style="color:var(--text-secondary)">No data for this source.</p>'; return; }
+  if (!cur) { el.innerHTML = '<p style="color:var(--text-secondary)">No data for this selection.</p>'; return; }
 
   const base = cur._counts.sessions || 1;
   el.innerHTML = STAGES.map(st => {
     const count = cur._counts[st.key];
     const widthPct = Math.max(1.5, Math.min(100, (count / base) * 100));
-    // Step conversion rate + delta, in a dedicated column so they stay readable
-    // no matter how narrow the bar gets.
+    // Step conversion rate + both comparison deltas, in a dedicated column so
+    // they stay readable no matter how narrow the bar gets.
     let deltaHtml = '';
     if (st.rateKey) {
-      const rate = cur[st.rateKey];
-      const d = delta(rate, prev ? prev[st.rateKey] : null, 'pct', st.goodUp);
-      deltaHtml = d.text ? `<span class="stage__delta ${d.cls}">${d.text}</span>` : '';
+      deltaHtml = `<span class="stage__deltas">${deltaTags(cur[st.rateKey], prev ? prev[st.rateKey] : null, baseF ? baseF[st.rateKey] : null, 'pct', st.goodUp, 'stage__delta')}</span>`;
     }
     const rateStr = st.rateKey ? fmtPct(cur[st.rateKey]) : '100%';
     return `
@@ -731,22 +779,22 @@ function renderTable() {
     return _sort.dir * (an - bn);
   });
 
-  const cellFor = (col, cur, prev) => {
+  const cellFor = (col, cur, prev, base) => {
     if (col.kind === 'src') return '';
     const v = cur[col.key];
     let valStr;
     if (col.kind === 'int') valStr = fmtInt(v);
     else if (col.kind === 'dur') valStr = fmtDur(v);
     else valStr = fmtPct(v, col.key === 'cvr' ? 2 : 1);
-    const d = delta(v, prev ? prev[col.key] : null, col.kind, col.goodUp);
-    return `<span class="cell-val">${valStr}</span><span class="cell-delta ${d.cls}">${d.text || '&nbsp;'}</span>`;
+    return `<span class="cell-val">${valStr}</span>` +
+      deltaTags(v, prev ? prev[col.key] : null, base ? base[col.key] : null, col.kind, col.goodUp, 'cell-delta');
   };
 
   const bodyRows = rows.map(r => {
     const active = r.source === _focus ? ' active' : '';
     const tds = COLS.map(c => c.kind === 'src'
       ? `<td class="col-src">${escapeHtml(r.source)}</td>`
-      : `<td>${cellFor(c, r.cur, r.prev)}</td>`).join('');
+      : `<td>${cellFor(c, r.cur, r.prev, r.base)}</td>`).join('');
     return `<tr class="src-row${active}" data-src="${escapeAttr(r.source)}">${tds}</tr>`;
   }).join('');
 
@@ -756,7 +804,7 @@ function renderTable() {
   const totActive = _focus === 'AGG' ? ' active' : '';
   const totTds = COLS.map(c => c.kind === 'src'
     ? `<td class="col-src">${totLabel}</td>`
-    : `<td>${agg.cur ? cellFor(c, agg.cur, agg.prev) : '—'}</td>`).join('');
+    : `<td>${agg.cur ? cellFor(c, agg.cur, agg.prev, agg.base) : '—'}</td>`).join('');
   const totalsRow = `<tr class="totals-row${totActive}" data-src="AGG">${totTds}</tr>`;
 
   document.getElementById('tbody').innerHTML = totalsRow + bodyRows;

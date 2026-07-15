@@ -1276,6 +1276,22 @@ app.get('/api/funnel-breakdown-data', async (req, res) => {
   SINCE ${cs} UNTIL ${ce}
   ORDER BY sessions DESC` : null;
 
+  // Second baseline: the trailing 30 days ending on the selected End date.
+  // Always computed (independent of the primary comparison) so each metric can
+  // also be read against a longer-run norm.
+  const shiftDays = (ymd, delta) => {
+    const d = new Date(ymd + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() + delta);
+    return d.toISOString().slice(0, 10);
+  };
+  const b30Start = shiftDays(end, -29);
+  const b30End = end;
+  const baseline30Query = `FROM sessions
+  SHOW ${SHOW}
+  GROUP BY utm_source WITH TOTALS
+  SINCE ${b30Start} UNTIL ${b30End}
+  ORDER BY sessions DESC`;
+
   const runQuery = async (q) => {
     const resp = await fetch(endpoint, {
       method: 'POST',
@@ -1321,8 +1337,11 @@ app.get('/api/funnel-breakdown-data', async (req, res) => {
   };
 
   try {
-    const main = await runQuery(mainQuery);
-    const compare = compareQuery ? await runQuery(compareQuery) : null;
+    const [main, compare, baseline30] = await Promise.all([
+      runQuery(mainQuery),
+      compareQuery ? runQuery(compareQuery) : Promise.resolve(null),
+      runQuery(baseline30Query),
+    ]);
 
     const mainCols = (main.columns || []).map(c => c.name);
     const mainRows = main.rows || [];
@@ -1377,11 +1396,30 @@ app.get('/api/funnel-breakdown-data', async (req, res) => {
       if (cmpRows[0]) totals.previous = extractCmp(cmpRows[0], (c) => `${c}__totals`);
     }
 
+    // Attach the trailing-30-day baseline to each source (keyed by label) and to
+    // the grand totals. Sources with no traffic in the 30d window get null.
+    {
+      const b30Cols = (baseline30.columns || []).map(c => c.name);
+      const b30Rows = baseline30.rows || [];
+      const extractB30 = makeExtractor(b30Cols);
+      const b30Label = (row) => {
+        const v = Array.isArray(row) ? row[b30Cols.indexOf('utm_source')] : row.utm_source;
+        const s = (v == null ? '' : String(v)).trim();
+        return s || '(direct / none)';
+      };
+      const b30Map = new Map();
+      for (const row of b30Rows) b30Map.set(b30Label(row), extractB30(row, (c) => c));
+      for (const s of sources) s.baseline = b30Map.get(s.source) || null;
+      totals.baseline = b30Rows[0] ? extractB30(b30Rows[0], (c) => `${c}__totals`) : null;
+    }
+
     res.json({
       start, end,
       compare: { mode: useCustomCompare ? 'custom' : 'previous_period', start: cs || null, end: ce || null },
+      baseline30: { start: b30Start, end: b30End },
       query: mainQuery,
       compare_query: compareQuery,
+      baseline30_query: baseline30Query,
       totals,
       sources,
     });
