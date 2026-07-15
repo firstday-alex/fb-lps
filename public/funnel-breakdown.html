@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Funnel Breakdown · Session → Purchase by Source</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --fb-blue: #1877f2;
+      --fb-blue-dark: #166fe5;
+      --bg: #f0f2f5;
+      --surface: #fff;
+      --text-primary: #1c1e21;
+      --text-secondary: #65676b;
+      --border: #dddfe2;
+      --positive: #1a7f37;
+      --positive-bg: #dcfce7;
+      --negative: #c0392b;
+      --negative-bg: #fee2e2;
+      --neutral-bg: #e4e6eb;
+      --shadow: 0 1px 3px rgba(0,0,0,0.12);
+      --radius: 8px;
+      --amber: #d97706;
+      --amber-bg: #fef3c7;
+      /* Funnel stage colors (sequential, dark → light) */
+      --s1: #0b3d91;
+      --s2: #1465c0;
+      --s3: #1877f2;
+      --s4: #4a95f5;
+      --s5: #96bf48;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text-primary);
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    /* Header */
+    header {
+      background: var(--fb-blue);
+      color: white;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .header__back {
+      color: rgba(255,255,255,0.85);
+      text-decoration: none;
+      font-size: 0.875rem;
+      border: 1px solid rgba(255,255,255,0.3);
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+    }
+    .header__back:hover { background: rgba(255,255,255,0.15); color: white; }
+    header h1 { font-size: 1.2rem; font-weight: 700; }
+    header p { font-size: 0.8rem; opacity: 0.75; }
+
+    .wrap { max-width: 1200px; margin: 0 auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 16px; }
+
+    /* Control bar */
+    .controls {
+      background: var(--surface);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 16px 20px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-end;
+      gap: 18px;
+    }
+    .date-group { display: flex; flex-direction: column; gap: 6px; }
+    .date-group > span {
+      font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--text-secondary);
+    }
+    .date-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .date-row label {
+      font-size: 0.82rem; font-weight: 600; color: var(--text-secondary);
+      display: flex; align-items: center; gap: 6px;
+    }
+    .date-row input[type="date"] {
+      padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
+      font-size: 0.85rem; font-family: inherit;
+    }
+    .date-row input[type="date"]:focus {
+      outline: none; border-color: var(--fb-blue); box-shadow: 0 0 0 2px rgba(24,119,242,0.15);
+    }
+    .btn-reset {
+      font-size: 0.82rem; padding: 6px 12px; border: 1px solid var(--border);
+      border-radius: 6px; background: var(--surface); cursor: pointer; color: var(--text-secondary);
+    }
+    .btn-reset:hover { background: var(--bg); }
+    .btn-primary {
+      padding: 10px 20px; background: #96bf48; color: #fff; border: none;
+      border-radius: var(--radius); font-size: 0.9rem; font-weight: 600; cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-primary:hover { background: #7ea93e; }
+    .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+    .min-sessions { display: flex; flex-direction: column; gap: 6px; }
+    .min-sessions > span {
+      font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--text-secondary);
+    }
+    .min-sessions input { width: 90px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem; }
+
+    .status { font-size: 0.84rem; color: var(--text-secondary); min-height: 1.2em; }
+    .status.error { color: var(--negative); }
+
+    .card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 18px 20px;
+    }
+    .card__head {
+      display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+    .card__head h2 { font-size: 1.02rem; font-weight: 700; }
+    .card__head .focus-tag {
+      font-size: 0.78rem; font-weight: 600; color: var(--fb-blue);
+      background: rgba(24,119,242,0.1); padding: 2px 10px; border-radius: 999px;
+    }
+    .card__head .sub { font-size: 0.8rem; color: var(--text-secondary); margin-left: auto; }
+
+    /* Stat cards */
+    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+    @media (max-width: 800px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+    .stat {
+      background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow);
+      padding: 14px 16px;
+    }
+    .stat__label {
+      font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--text-secondary); margin-bottom: 6px;
+    }
+    .stat__value { font-size: 1.7rem; font-weight: 700; line-height: 1.05; }
+    .stat__delta { font-size: 0.8rem; font-weight: 600; margin-top: 4px; }
+
+    /* Funnel */
+    .funnel { display: flex; flex-direction: column; gap: 10px; }
+    .stage { display: grid; grid-template-columns: 190px 1fr 170px; gap: 14px; align-items: center; }
+    @media (max-width: 700px) { .stage { grid-template-columns: 1fr; gap: 4px; } }
+    .stage__meta { text-align: right; }
+    @media (max-width: 700px) { .stage__meta { text-align: left; } }
+    .stage__name { font-size: 0.86rem; font-weight: 700; }
+    .stage__count { font-size: 0.76rem; color: var(--text-secondary); }
+    .stage__bar-wrap { position: relative; background: var(--bg); border-radius: 6px; height: 40px; overflow: hidden; }
+    .stage__bar {
+      height: 100%; border-radius: 6px; min-width: 2px;
+      transition: width 0.4s ease;
+    }
+    /* Rate + delta live in their own column in dark text — always readable
+       regardless of how narrow the bar is. */
+    .stage__vals { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+    .stage__rate { font-size: 1.15rem; font-weight: 700; }
+    .stage__rate-lbl { font-size: 0.72rem; color: var(--text-secondary); }
+    .stage__delta { font-size: 0.82rem; font-weight: 700; }
+    .delta-pos { color: var(--positive); }
+    .delta-neg { color: var(--negative); }
+    .delta-flat { color: var(--text-secondary); }
+    .funnel-note { font-size: 0.76rem; color: var(--text-secondary); margin-top: 12px; }
+    .funnel-note code { background: var(--bg); padding: 1px 5px; border-radius: 4px; font-size: 0.72rem; }
+
+    /* Table */
+    .table-scroll { overflow-x: auto; }
+    table.breakdown { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
+    table.breakdown th, table.breakdown td {
+      padding: 8px 10px; text-align: right; white-space: nowrap;
+      border-bottom: 1px solid var(--border);
+    }
+    table.breakdown th {
+      font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em;
+      color: var(--text-secondary); cursor: pointer; user-select: none; position: sticky; top: 0;
+      background: var(--surface);
+    }
+    table.breakdown th:hover { color: var(--fb-blue); }
+    table.breakdown th.sorted { color: var(--fb-blue); }
+    table.breakdown th.col-src, table.breakdown td.col-src { text-align: left; }
+    table.breakdown td.col-src { font-weight: 600; }
+    table.breakdown tbody tr { cursor: pointer; }
+    table.breakdown tbody tr:hover { background: #f6f8fb; }
+    table.breakdown tbody tr.active { background: rgba(24,119,242,0.09); }
+    table.breakdown tr.totals-row td { font-weight: 700; border-top: 2px solid var(--border); border-bottom: none; background: #f9fafc; }
+    .cell-val { display: block; }
+    .cell-delta { display: block; font-size: 0.72rem; font-weight: 600; }
+
+    .top-info { font-size: 0.82rem; color: var(--text-secondary); }
+    .top-info a { color: var(--fb-blue); }
+    .hidden { display: none; }
+
+    /* Info icon + tooltip */
+    .info {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 14px; height: 14px; margin-left: 5px; border-radius: 50%;
+      font-family: Georgia, 'Times New Roman', serif; font-style: italic;
+      font-size: 0.66rem; font-weight: 700; line-height: 1;
+      color: var(--text-secondary); border: 1px solid var(--border);
+      cursor: help; vertical-align: middle; user-select: none;
+      text-transform: none; letter-spacing: normal;
+    }
+    .info:hover, .info:focus { color: var(--fb-blue); border-color: var(--fb-blue); outline: none; }
+    .tooltip {
+      position: fixed; display: none; z-index: 1000; width: 275px; max-width: 82vw;
+      background: #1c1e21; color: #f5f6f7; padding: 10px 12px; border-radius: 6px;
+      font-size: 0.75rem; font-weight: 400; line-height: 1.5; text-align: left;
+      text-transform: none; letter-spacing: normal;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.32); pointer-events: none; opacity: 0;
+      transition: opacity 0.1s;
+    }
+    .tooltip.show { opacity: 1; }
+    .tooltip b { color: #9ecbff; font-weight: 700; }
+    .tooltip code { background: rgba(255,255,255,0.16); padding: 1px 4px; border-radius: 3px; font-size: 0.72rem; }
+    .tooltip::after {
+      content: ''; position: absolute; top: 100%; left: var(--arrow-x, 50%);
+      transform: translateX(-50%); border: 6px solid transparent; border-top-color: #1c1e21;
+    }
+    .tooltip.below::after { top: auto; bottom: 100%; border-top-color: transparent; border-bottom-color: #1c1e21; }
+
+    /* Source filter */
+    .source-filter {
+      background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow);
+      padding: 14px 18px;
+    }
+    .filter-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+    .filter-lbl {
+      font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--text-secondary);
+    }
+    .filter-actions .mini {
+      font-size: 0.75rem; padding: 3px 10px; border: 1px solid var(--border);
+      border-radius: 6px; background: var(--surface); cursor: pointer; color: var(--text-secondary);
+    }
+    .filter-actions .mini:hover { background: var(--bg); color: var(--text-primary); }
+    .filter-count { font-size: 0.76rem; color: var(--text-secondary); margin-left: auto; }
+    .chips { display: flex; flex-wrap: wrap; gap: 7px; }
+    .chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 0.8rem; padding: 4px 10px; border-radius: 999px;
+      border: 1px solid var(--border); background: var(--bg); color: var(--text-secondary);
+      cursor: pointer; transition: all 0.12s;
+    }
+    .chip:hover { border-color: var(--fb-blue); }
+    .chip.on { background: rgba(24,119,242,0.12); border-color: var(--fb-blue); color: var(--fb-blue-dark); font-weight: 600; }
+    .chip__n { font-size: 0.72rem; opacity: 0.75; font-variant-numeric: tabular-nums; }
+    .chip.on .chip__n { opacity: 0.9; }
+  </style>
+</head>
+<body>
+
+<header>
+  <a class="header__back" href="/">&#8592; Ads Viewer</a>
+  <div>
+    <h1>Funnel Breakdown</h1>
+    <p>Session &rarr; engaged &rarr; add-to-cart &rarr; checkout &rarr; purchase, by traffic source</p>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <!-- Controls -->
+  <div class="controls">
+    <div class="date-group">
+      <span>Date range</span>
+      <div class="date-row">
+        <label>Start <input type="date" id="date-start"></label>
+        <label>End <input type="date" id="date-end"></label>
+      </div>
+    </div>
+    <div class="date-group">
+      <span>Compare to</span>
+      <div class="date-row">
+        <label>Start <input type="date" id="compare-start"></label>
+        <label>End <input type="date" id="compare-end"></label>
+        <button type="button" class="btn-reset" id="compare-reset" title="Reset comparison to the period immediately preceding Start–End">&#8635; Auto</button>
+      </div>
+    </div>
+    <div class="min-sessions">
+      <span>Min sessions</span>
+      <input type="number" id="min-sessions" value="50" min="0" step="10" title="Hide sources below this session count from the table">
+    </div>
+    <button class="btn-primary" id="btn-load">Load funnel</button>
+  </div>
+
+  <div class="status" id="status"></div>
+
+  <!-- Results -->
+  <div id="results" class="hidden">
+    <div class="top-info" id="top-info"></div>
+
+    <div class="source-filter" id="source-filter"></div>
+
+    <div class="stats" id="stats"></div>
+
+    <div class="card">
+      <div class="card__head">
+        <h2>Funnel</h2>
+        <span class="focus-tag" id="focus-tag">All sources</span>
+        <span class="sub" id="funnel-sub"></span>
+      </div>
+      <div class="funnel" id="funnel"></div>
+      <div class="funnel-note">
+        Bar width = share of sessions reaching that stage. Bold % = step conversion rate:
+        <code>engaged = 1 − bounce</code> ·
+        <code>ATC = cart adds ÷ non-bouncers</code> ·
+        <code>checkout = reached-checkout ÷ cart adds</code> ·
+        <code>completion = purchases ÷ reached-checkout</code>.
+        Δ vs comparison period in percentage points.
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card__head">
+        <h2>By traffic source</h2>
+        <span class="sub">Click a row to focus the funnel above · click a column header to sort</span>
+      </div>
+      <div class="table-scroll">
+        <table class="breakdown">
+          <thead>
+            <tr id="thead-row"></tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="tooltip" class="tooltip"></div>
+
+<script>
+// ─────────────────────────────────────────────────────────────────────
+// STATE
+// ─────────────────────────────────────────────────────────────────────
+let _data = null;          // raw response
+let _rows = [];            // computed per-source rows (eligible ∩ selected)
+let _eligible = [];        // raw sources ≥ min-sessions, sorted by sessions desc
+let _selected = null;      // Set of selected source labels; null = all eligible
+let _focus = 'AGG';        // 'AGG' (selected aggregate) or a source label
+let _sort = { key: 'sessions', dir: -1 };
+let _compareManualOverride = false;
+
+// Per-metric documentation shown in the ⓘ hover tooltips. All funnel data comes
+// from Shopify ShopifyQL (FROM sessions), grouped by utm_source over the range.
+const SRC_PREFIX = 'Shopify ShopifyQL <code>FROM sessions</code>, grouped by <code>utm_source</code> over the selected date range.';
+const METRIC_INFO = {
+  sessions:       { src: `${SRC_PREFIX} Field <code>sessions</code>.`, formula: 'Count of sessions attributed to the source.' },
+  duration:       { src: `${SRC_PREFIX} Field <code>average_session_duration</code> (seconds).`, formula: 'Shopify average session length. Session-weighted when several sources are combined.' },
+  bounce:         { src: `${SRC_PREFIX} Field <code>bounce_rate</code>.`, formula: 'Bounced sessions ÷ sessions (single-interaction visits with no engagement).' },
+  engagedRate:    { src: `${SRC_PREFIX} Derived from <code>bounce_rate</code>.`, formula: '1 − bounce_rate. Non-bouncing sessions = sessions × (1 − bounce_rate).' },
+  atcRate:        { src: `${SRC_PREFIX} Field <code>sessions_with_cart_additions</code>.`, formula: 'cart-add sessions ÷ non-bouncers = sessions_with_cart_additions ÷ (sessions × (1 − bounce_rate)).' },
+  checkoutRate:   { src: `${SRC_PREFIX} Field <code>sessions_that_reached_checkout</code>.`, formula: 'reached-checkout ÷ cart-adds. Can exceed 100% — express / buy-now checkouts reach checkout with no recorded cart-add.' },
+  completionRate: { src: `${SRC_PREFIX} Field <code>sessions_that_reached_and_completed_checkout</code>.`, formula: 'completed-checkout ÷ reached-checkout.' },
+  cvr:            { src: `${SRC_PREFIX} Fields <code>sessions_that_reached_and_completed_checkout</code> and <code>sessions</code>.`, formula: 'completed-checkout sessions ÷ all sessions.' },
+  purchase:       { src: `${SRC_PREFIX} Field <code>sessions_that_reached_and_completed_checkout</code>.`, formula: 'Sessions that reached AND completed checkout (proxy for orders).' },
+};
+function infoIcon(key) {
+  const t = METRIC_INFO[key];
+  if (!t) return '';
+  const tip = `<b>Source:</b> ${t.src}<br><b>How it is crafted:</b> ${t.formula}`;
+  return `<span class="info" tabindex="0" role="img" aria-label="metric definition" data-tip="${tip.replace(/"/g, '&quot;')}">i</span>`;
+}
+
+// Column definitions for the breakdown table.
+// kind: how to format/compare — 'int' | 'dur' | 'pct'
+// goodUp: is an increase good (green)? bounce is the exception.
+const COLS = [
+  { key: 'source',        label: 'Source',         kind: 'src' },
+  { key: 'sessions',      label: 'Sessions',       kind: 'int', goodUp: true },
+  { key: 'duration',      label: 'Avg dur',        kind: 'dur', goodUp: true },
+  { key: 'bounce',        label: 'Bounce',         kind: 'pct', goodUp: false },
+  { key: 'atcRate',       label: 'ATC (non-bnc)',  kind: 'pct', goodUp: true },
+  { key: 'checkoutRate',  label: 'Checkout',       kind: 'pct', goodUp: true },
+  { key: 'completionRate',label: 'Completion',     kind: 'pct', goodUp: true },
+  { key: 'cvr',           label: 'CVR',            kind: 'pct', goodUp: true },
+];
+
+// Funnel stage definitions (top → bottom).
+const STAGES = [
+  { key: 'sessions', name: 'Sessions',          color: 'var(--s1)', rateKey: null,             rateLbl: 'of traffic',      infoKey: 'sessions' },
+  { key: 'engaged',  name: 'Engaged (no bounce)',color: 'var(--s2)', rateKey: 'engagedRate',    rateLbl: 'did not bounce', goodUp: true, infoKey: 'engagedRate' },
+  { key: 'atc',      name: 'Added to cart',      color: 'var(--s3)', rateKey: 'atcRate',        rateLbl: 'of non-bouncers', goodUp: true, infoKey: 'atcRate' },
+  { key: 'checkout', name: 'Reached checkout',   color: 'var(--s4)', rateKey: 'checkoutRate',   rateLbl: 'of cart adders',  goodUp: true, infoKey: 'checkoutRate' },
+  { key: 'purchase', name: 'Completed checkout', color: 'var(--s5)', rateKey: 'completionRate', rateLbl: 'of checkouts',    goodUp: true, infoKey: 'completionRate' },
+];
+
+// ─────────────────────────────────────────────────────────────────────
+// FUNNEL MATH — derive rates from raw session counts.
+// ─────────────────────────────────────────────────────────────────────
+function computeFunnel(m) {
+  if (!m) return null;
+  const sessions = m.sessions || 0;
+  const engaged = sessions * (1 - (m.bounce || 0));
+  const div = (a, b) => (b > 0 ? a / b : null);
+  return {
+    sessions,
+    duration: m.duration || 0,
+    bounce: m.bounce || 0,
+    engagedRate: 1 - (m.bounce || 0),
+    engaged,
+    atc: m.atc || 0,
+    checkout: m.checkout || 0,
+    purchase: m.purchase || 0,
+    atcRate: div(m.atc, engaged),
+    checkoutRate: div(m.checkout, m.atc),
+    completionRate: div(m.purchase, m.checkout),
+    cvr: div(m.purchase, sessions),
+    // stage counts for funnel bar widths
+    _counts: { sessions, engaged, atc: m.atc || 0, checkout: m.checkout || 0, purchase: m.purchase || 0 },
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// FORMATTERS
+// ─────────────────────────────────────────────────────────────────────
+const fmtInt = (n) => (n == null ? '—' : Math.round(n).toLocaleString());
+function fmtPct(frac, dp = 1) { return frac == null ? '—' : (frac * 100).toFixed(dp) + '%'; }
+function fmtDur(sec) {
+  if (sec == null) return '—';
+  const s = Math.round(sec);
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60), r = s % 60;
+  return `${m}m ${String(r).padStart(2, '0')}s`;
+}
+
+// Delta between current and previous, formatted + classed. Returns {text, cls}.
+function delta(cur, prev, kind, goodUp) {
+  if (cur == null || prev == null) return { text: '', cls: 'delta-flat' };
+  let raw, text;
+  if (kind === 'pct') {
+    raw = (cur - prev) * 100;                       // percentage points
+    text = (raw >= 0 ? '+' : '') + raw.toFixed(1) + 'pp';
+  } else if (kind === 'dur') {
+    raw = cur - prev;                               // seconds
+    text = (raw >= 0 ? '+' : '') + Math.round(raw) + 's';
+  } else {                                          // int → percent change
+    if (prev === 0) return { text: '', cls: 'delta-flat' };
+    raw = (cur - prev) / prev * 100;
+    text = (raw >= 0 ? '+' : '') + raw.toFixed(1) + '%';
+  }
+  let cls = 'delta-flat';
+  if (Math.abs(raw) >= 0.05) cls = ((raw > 0) === !!goodUp) ? 'delta-pos' : 'delta-neg';
+  return { text, cls };
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// DATE / COMPARE HELPERS (shared behavior with the other tabs)
+// ─────────────────────────────────────────────────────────────────────
+function autoComputeCompareRange() {
+  const startStr = document.getElementById('date-start').value;
+  const endStr   = document.getElementById('date-end').value;
+  if (!startStr || !endStr) return null;
+  const sd = new Date(startStr + 'T00:00:00Z');
+  const ed = new Date(endStr   + 'T00:00:00Z');
+  if (isNaN(sd.getTime()) || isNaN(ed.getTime()) || ed < sd) return null;
+  const days = Math.round((ed - sd) / 86400000) + 1;
+  const cEnd = new Date(sd);   cEnd.setUTCDate(cEnd.getUTCDate() - 1);
+  const cStart = new Date(cEnd); cStart.setUTCDate(cStart.getUTCDate() - (days - 1));
+  return { start: cStart.toISOString().slice(0, 10), end: cEnd.toISOString().slice(0, 10) };
+}
+function syncCompareInputs() {
+  if (_compareManualOverride) return;
+  const r = autoComputeCompareRange();
+  if (!r) return;
+  document.getElementById('compare-start').value = r.start;
+  document.getElementById('compare-end').value   = r.end;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// LOAD
+// ─────────────────────────────────────────────────────────────────────
+async function loadData() {
+  const btn = document.getElementById('btn-load');
+  const status = document.getElementById('status');
+  const startDate = document.getElementById('date-start').value;
+  const endDate   = document.getElementById('date-end').value;
+  const compareStart = document.getElementById('compare-start').value;
+  const compareEnd   = document.getElementById('compare-end').value;
+
+  if (!startDate || !endDate) {
+    status.className = 'status error';
+    status.textContent = 'Please select a start and end date.';
+    return;
+  }
+
+  const auto = autoComputeCompareRange();
+  const isAuto = !_compareManualOverride
+    || (auto && compareStart === auto.start && compareEnd === auto.end);
+  const useCustomCompare = !isAuto && compareStart && compareEnd;
+
+  btn.disabled = true;
+  status.className = 'status';
+  status.textContent = 'Querying Shopify…';
+
+  try {
+    const params = new URLSearchParams({ start: startDate, end: endDate });
+    if (useCustomCompare) {
+      params.set('compare_start', compareStart);
+      params.set('compare_end', compareEnd);
+    }
+    const resp = await fetch(`/api/funnel-breakdown-data?${params.toString()}`);
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${resp.status}`);
+    }
+    _data = await resp.json();
+    status.textContent = '';
+    _focus = 'AGG';
+    _selected = null;           // start with every source selected
+    _sort = { key: 'sessions', dir: -1 };
+    render();
+    document.getElementById('results').classList.remove('hidden');
+  } catch (err) {
+    status.className = 'status error';
+    status.textContent = err.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// RENDER
+// ─────────────────────────────────────────────────────────────────────
+function render() {
+  const minSessions = parseFloat(document.getElementById('min-sessions').value) || 0;
+
+  // Eligible sources = those clearing the min-sessions floor, sorted by sessions
+  // descending (top → bottom). This drives the filter chips, table and aggregate.
+  _eligible = _data.sources
+    .filter(s => (s.current?.sessions || 0) >= minSessions)
+    .slice()
+    .sort((a, b) => (b.current?.sessions || 0) - (a.current?.sessions || 0));
+
+  // If the focused single source dropped out of the eligible/selected set,
+  // fall back to the selected aggregate.
+  if (_focus !== 'AGG' && !(isSelected(_focus) && _eligible.some(s => s.source === _focus))) {
+    _focus = 'AGG';
+  }
+
+  // Table rows = eligible sources that are currently selected.
+  _rows = _eligible
+    .filter(s => isSelected(s.source))
+    .map(s => ({ source: s.source, cur: computeFunnel(s.current), prev: computeFunnel(s.previous) }));
+
+  renderTopInfo();
+  renderSourceFilter();
+  renderStats();
+  renderFunnel();
+  renderTable();
+}
+
+// ─── Source selection ────────────────────────────────────────────────
+const isSelected = (label) => (_selected === null ? true : _selected.has(label));
+const selectedSources = () => _eligible.filter(s => isSelected(s.source));
+
+function toggleSource(label) {
+  if (_selected === null) _selected = new Set(_eligible.map(s => s.source));
+  if (_selected.has(label)) _selected.delete(label); else _selected.add(label);
+  render();
+}
+function quickSelect(act) {
+  if (act === 'all')  _selected = null;
+  else if (act === 'none') _selected = new Set();
+  else if (act === 'top5')  _selected = new Set(_eligible.slice(0, 5).map(s => s.source));
+  else if (act === 'top10') _selected = new Set(_eligible.slice(0, 10).map(s => s.source));
+  render();
+}
+
+// Sum a set of raw source objects into one funnel-input metrics object.
+// Counts add; bounce & duration are session-weighted averages.
+function aggregateRaw(subset, which) {
+  let sessions = 0, atc = 0, checkout = 0, purchase = 0, bounceW = 0, durW = 0, wSum = 0, any = false;
+  for (const s of subset) {
+    const m = s[which];
+    if (!m) continue;
+    any = true;
+    const sess = m.sessions || 0;
+    sessions += sess; atc += m.atc || 0; checkout += m.checkout || 0; purchase += m.purchase || 0;
+    bounceW += (m.bounce || 0) * sess; durW += (m.duration || 0) * sess; wSum += sess;
+  }
+  if (!any) return null;
+  return { sessions, atc, checkout, purchase, bounce: wSum > 0 ? bounceW / wSum : 0, duration: wSum > 0 ? durW / wSum : 0 };
+}
+
+// Metrics for the selected aggregate. When every source is selected AND nothing
+// is filtered out, use Shopify's exact grand totals; otherwise recompute from
+// the selected subset (session-weighted for bounce/duration).
+function selectedAggregate() {
+  const sel = selectedSources();
+  const usingAll = sel.length === _data.sources.length;
+  if (usingAll) {
+    return { cur: computeFunnel(_data.totals.current), prev: computeFunnel(_data.totals.previous), count: sel.length, all: true };
+  }
+  return {
+    cur: computeFunnel(aggregateRaw(sel, 'current')),
+    prev: computeFunnel(aggregateRaw(sel, 'previous')),
+    count: sel.length, all: false,
+  };
+}
+
+function renderTopInfo() {
+  const c = _data.compare;
+  const compareLabel = c.mode === 'custom'
+    ? `${c.start} → ${c.end}`
+    : 'previous period (auto)';
+  const info = document.getElementById('top-info');
+  info.innerHTML =
+    `<strong>${_data.start} → ${_data.end}</strong> vs ${compareLabel}` +
+    ` &nbsp;·&nbsp; ${_data.sources.length} sources` +
+    ` &nbsp;·&nbsp; <a href="#" id="show-ql">show ShopifyQL</a>`;
+  document.getElementById('show-ql').addEventListener('click', (e) => {
+    e.preventDefault();
+    const parts = [`--- Main ---\n${_data.query}`];
+    if (_data.compare_query) parts.push(`--- Compare ---\n${_data.compare_query}`);
+    alert(parts.join('\n\n'));
+  });
+}
+
+function renderSourceFilter() {
+  const el = document.getElementById('source-filter');
+  const chips = _eligible.map(s =>
+    `<button class="chip${isSelected(s.source) ? ' on' : ''}" data-src="${escapeAttr(s.source)}">` +
+    `${escapeHtml(s.source)} <span class="chip__n">${fmtInt(s.current?.sessions || 0)}</span></button>`
+  ).join('');
+  el.innerHTML =
+    `<div class="filter-actions">
+       <span class="filter-lbl">Filter funnel to sources</span>
+       <button class="mini" data-act="all">All</button>
+       <button class="mini" data-act="none">None</button>
+       <button class="mini" data-act="top5">Top 5</button>
+       <button class="mini" data-act="top10">Top 10</button>
+       <span class="filter-count">${selectedSources().length} of ${_eligible.length} selected · sorted by sessions</span>
+     </div>
+     <div class="chips">${chips || '<span class="filter-count">No sources clear the min-sessions floor.</span>'}</div>`;
+  el.querySelectorAll('.chip').forEach(c => c.addEventListener('click', () => toggleSource(c.dataset.src)));
+  el.querySelectorAll('.mini').forEach(b => b.addEventListener('click', () => quickSelect(b.dataset.act)));
+}
+
+// The focused metrics object: 'AGG' = selected-source aggregate, else one source.
+function focusFunnels() {
+  if (_focus === 'AGG') {
+    const agg = selectedAggregate();
+    const label = agg.all ? 'All sources' : `${agg.count} selected source${agg.count === 1 ? '' : 's'}`;
+    return { label, cur: agg.cur, prev: agg.prev };
+  }
+  const s = _eligible.find(x => x.source === _focus);
+  return { label: _focus, cur: s ? computeFunnel(s.current) : null, prev: s ? computeFunnel(s.previous) : null };
+}
+
+function renderStats() {
+  const f = focusFunnels();
+  const cur = f.cur, prev = f.prev;
+  document.getElementById('funnel-sub').textContent = cur
+    ? `${fmtInt(cur.sessions)} sessions · ${fmtInt(cur.purchase)} completed checkouts`
+    : '';
+  const cards = [
+    { label: 'Sessions',            info: 'sessions', val: fmtInt(cur?.sessions), d: delta(cur?.sessions, prev?.sessions, 'int', true) },
+    { label: 'Avg session duration',info: 'duration', val: fmtDur(cur?.duration), d: delta(cur?.duration, prev?.duration, 'dur', true) },
+    { label: 'Overall CVR',         info: 'cvr',      val: fmtPct(cur?.cvr, 2),   d: delta(cur?.cvr, prev?.cvr, 'pct', true) },
+    { label: 'Completed checkouts', info: 'purchase', val: fmtInt(cur?.purchase), d: delta(cur?.purchase, prev?.purchase, 'int', true) },
+  ];
+  document.getElementById('stats').innerHTML = cards.map(c => `
+    <div class="stat">
+      <div class="stat__label">${c.label}${infoIcon(c.info)}</div>
+      <div class="stat__value">${c.val}</div>
+      <div class="stat__delta ${c.d.cls}">${c.d.text || '&nbsp;'}</div>
+    </div>`).join('');
+}
+
+function renderFunnel() {
+  const f = focusFunnels();
+  document.getElementById('focus-tag').textContent = f.label;
+  const cur = f.cur, prev = f.prev;
+  const el = document.getElementById('funnel');
+  if (!cur) { el.innerHTML = '<p style="color:var(--text-secondary)">No data for this source.</p>'; return; }
+
+  const base = cur._counts.sessions || 1;
+  el.innerHTML = STAGES.map(st => {
+    const count = cur._counts[st.key];
+    const widthPct = Math.max(1.5, Math.min(100, (count / base) * 100));
+    // Step conversion rate + delta, in a dedicated column so they stay readable
+    // no matter how narrow the bar gets.
+    let deltaHtml = '';
+    if (st.rateKey) {
+      const rate = cur[st.rateKey];
+      const d = delta(rate, prev ? prev[st.rateKey] : null, 'pct', st.goodUp);
+      deltaHtml = d.text ? `<span class="stage__delta ${d.cls}">${d.text}</span>` : '';
+    }
+    const rateStr = st.rateKey ? fmtPct(cur[st.rateKey]) : '100%';
+    return `
+      <div class="stage">
+        <div class="stage__meta">
+          <div class="stage__name">${st.name}${infoIcon(st.infoKey)}</div>
+          <div class="stage__count">${fmtInt(count)} sessions</div>
+        </div>
+        <div class="stage__bar-wrap">
+          <div class="stage__bar" style="width:${widthPct}%;background:${st.color}"></div>
+        </div>
+        <div class="stage__vals">
+          <span class="stage__rate">${rateStr}</span>
+          <span class="stage__rate-lbl">${st.rateLbl}</span>
+          ${deltaHtml}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function renderTable() {
+  // Header
+  const thead = document.getElementById('thead-row');
+  thead.innerHTML = COLS.map(c => {
+    const cls = [c.kind === 'src' ? 'col-src' : '', _sort.key === c.key ? 'sorted' : ''].filter(Boolean).join(' ');
+    const arrow = _sort.key === c.key ? (_sort.dir < 0 ? ' ▾' : ' ▴') : '';
+    return `<th class="${cls}" data-key="${c.key}">${c.label}${arrow}${c.kind === 'src' ? '' : infoIcon(c.key)}</th>`;
+  }).join('');
+  thead.querySelectorAll('th').forEach(th => {
+    th.addEventListener('click', (e) => {
+      if (e.target.closest('.info')) return;   // clicking the ⓘ shouldn't re-sort
+      const key = th.dataset.key;
+      if (_sort.key === key) _sort.dir *= -1;
+      else _sort = { key, dir: key === 'source' ? 1 : -1 };
+      renderTable();
+    });
+  });
+
+  // Sort rows
+  const rows = _rows.slice().sort((a, b) => {
+    if (_sort.key === 'source') return _sort.dir * a.source.localeCompare(b.source);
+    const av = a.cur[_sort.key], bv = b.cur[_sort.key];
+    const an = av == null ? -Infinity : av, bn = bv == null ? -Infinity : bv;
+    return _sort.dir * (an - bn);
+  });
+
+  const cellFor = (col, cur, prev) => {
+    if (col.kind === 'src') return '';
+    const v = cur[col.key];
+    let valStr;
+    if (col.kind === 'int') valStr = fmtInt(v);
+    else if (col.kind === 'dur') valStr = fmtDur(v);
+    else valStr = fmtPct(v, col.key === 'cvr' ? 2 : 1);
+    const d = delta(v, prev ? prev[col.key] : null, col.kind, col.goodUp);
+    return `<span class="cell-val">${valStr}</span><span class="cell-delta ${d.cls}">${d.text || '&nbsp;'}</span>`;
+  };
+
+  const bodyRows = rows.map(r => {
+    const active = r.source === _focus ? ' active' : '';
+    const tds = COLS.map(c => c.kind === 'src'
+      ? `<td class="col-src">${escapeHtml(r.source)}</td>`
+      : `<td>${cellFor(c, r.cur, r.prev)}</td>`).join('');
+    return `<tr class="src-row${active}" data-src="${escapeAttr(r.source)}">${tds}</tr>`;
+  }).join('');
+
+  // Totals row = the selected-source aggregate (matches the funnel above).
+  const agg = selectedAggregate();
+  const totLabel = agg.all ? 'All sources' : `Selected (${agg.count})`;
+  const totActive = _focus === 'AGG' ? ' active' : '';
+  const totTds = COLS.map(c => c.kind === 'src'
+    ? `<td class="col-src">${totLabel}</td>`
+    : `<td>${agg.cur ? cellFor(c, agg.cur, agg.prev) : '—'}</td>`).join('');
+  const totalsRow = `<tr class="totals-row${totActive}" data-src="AGG">${totTds}</tr>`;
+
+  document.getElementById('tbody').innerHTML = totalsRow + bodyRows;
+  document.querySelectorAll('#tbody tr').forEach(tr => {
+    tr.addEventListener('click', () => {
+      _focus = tr.dataset.src;
+      renderStats(); renderFunnel(); renderTable();
+    });
+  });
+}
+
+function escapeHtml(s) { return String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+function escapeAttr(s) { return escapeHtml(s).replace(/"/g, '&quot;'); }
+
+// ─────────────────────────────────────────────────────────────────────
+// TOOLTIPS — one floating element positioned on hover/focus of any .info.
+// Uses position:fixed + body-level element so it is never clipped by the
+// table's horizontal scroll container.
+// ─────────────────────────────────────────────────────────────────────
+function initTooltips() {
+  const tip = document.getElementById('tooltip');
+  const show = (el) => {
+    const html = el.getAttribute('data-tip');
+    if (!html) return;
+    tip.innerHTML = html;
+    tip.style.display = 'block';
+    tip.classList.remove('below');
+    const r = el.getBoundingClientRect();
+    const tr = tip.getBoundingClientRect();
+    let left = r.left + r.width / 2 - tr.width / 2;
+    left = Math.max(8, Math.min(left, window.innerWidth - tr.width - 8));
+    let top = r.top - tr.height - 9;
+    if (top < 8) { top = r.bottom + 9; tip.classList.add('below'); }
+    tip.style.left = left + 'px';
+    tip.style.top = top + 'px';
+    tip.style.setProperty('--arrow-x', (r.left + r.width / 2 - left) + 'px');
+    tip.classList.add('show');
+  };
+  const hide = () => { tip.classList.remove('show'); tip.style.display = 'none'; };
+  document.addEventListener('mouseover', e => { const el = e.target.closest && e.target.closest('.info'); if (el) show(el); });
+  document.addEventListener('mouseout',  e => { if (e.target.closest && e.target.closest('.info')) hide(); });
+  document.addEventListener('focusin',   e => { const el = e.target.closest && e.target.closest('.info'); if (el) show(el); });
+  document.addEventListener('focusout',  e => { if (e.target.closest && e.target.closest('.info')) hide(); });
+  window.addEventListener('scroll', hide, true);
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// WIRING
+// ─────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  // Default: last 7 complete days (yesterday back 6), auto compare = preceding 7.
+  const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
+  const start = new Date(yesterday); start.setDate(start.getDate() - 6);
+  const fmt = d => d.toISOString().slice(0, 10);
+  document.getElementById('date-end').value = fmt(yesterday);
+  document.getElementById('date-start').value = fmt(start);
+  syncCompareInputs();
+
+  document.getElementById('date-start').addEventListener('change', syncCompareInputs);
+  document.getElementById('date-end').addEventListener('change', syncCompareInputs);
+  ['compare-start', 'compare-end'].forEach(id => {
+    document.getElementById(id).addEventListener('change', () => { _compareManualOverride = true; });
+  });
+  document.getElementById('compare-reset').addEventListener('click', () => {
+    _compareManualOverride = false; syncCompareInputs();
+  });
+  document.getElementById('min-sessions').addEventListener('change', () => { if (_data) render(); });
+  document.getElementById('btn-load').addEventListener('click', loadData);
+
+  initTooltips();
+  loadData();
+});
+</script>
+</body>
+</html>

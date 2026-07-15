@@ -1225,6 +1225,172 @@ VISUALIZE conversion_rate TYPE table`;
   }
 });
 
+// --- Funnel Breakdown (ShopifyQL funnel stages by traffic source) ---
+// Returns the full session funnel — duration, bounce, add-to-cart, reached
+// checkout, completed checkout — grouped by utm_source, for the selected range
+// vs a comparison window. Rates are computed on the frontend from these raw
+// count/duration metrics so the denominators are explicit and auditable:
+//   bounce                = bounce_rate
+//   atc over non-bouncers = sessions_with_cart_additions / (sessions * (1 - bounce_rate))
+//   checkout rate         = sessions_that_reached_checkout / sessions_with_cart_additions
+//   completion rate       = sessions_that_reached_and_completed_checkout / sessions_that_reached_checkout
+// Default comparison is ShopifyQL's built-in previous_period; an explicit
+// compare_start/compare_end pair runs a second query for that window instead.
+app.get('/api/funnel-breakdown-data', async (req, res) => {
+  if (!SHOPIFY_URL || !SHOPIFY_TOKEN) {
+    return res.status(500).json({ error: 'Shopify credentials not configured' });
+  }
+
+  const { start, end } = req.query;
+  if (!start || !end || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+    return res.status(400).json({ error: 'start and end query params required (YYYY-MM-DD)' });
+  }
+
+  const cs = req.query.compare_start;
+  const ce = req.query.compare_end;
+  const useCustomCompare = cs && ce
+    && /^\d{4}-\d{2}-\d{2}$/.test(cs) && /^\d{4}-\d{2}-\d{2}$/.test(ce);
+
+  const endpoint = `https://${SHOPIFY_URL}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
+  const gqlQuery = `query RunShopifyQL($q: String!) {
+    shopifyqlQuery(query: $q) {
+      tableData { columns { name dataType } rows }
+      parseErrors
+    }
+  }`;
+
+  // Raw funnel metrics grouped by traffic source. sessions_with_cart_additions,
+  // sessions_that_reached_checkout and sessions_that_reached_and_completed_checkout
+  // are session counts (not rates) so the frontend can build a real funnel.
+  const SHOW = 'sessions, average_session_duration, bounce_rate, sessions_with_cart_additions, sessions_that_reached_checkout, sessions_that_reached_and_completed_checkout';
+
+  const mainQuery = `FROM sessions
+  SHOW ${SHOW}
+  GROUP BY utm_source WITH TOTALS${useCustomCompare ? '' : ', PERCENT_CHANGE'}
+  SINCE ${start} UNTIL ${end}${useCustomCompare ? '' : '\n  COMPARE TO previous_period'}
+  ORDER BY sessions DESC`;
+
+  const compareQuery = useCustomCompare ? `FROM sessions
+  SHOW ${SHOW}
+  GROUP BY utm_source WITH TOTALS
+  SINCE ${cs} UNTIL ${ce}
+  ORDER BY sessions DESC` : null;
+
+  const runQuery = async (q) => {
+    const resp = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
+      body: JSON.stringify({ query: gqlQuery, variables: { q } }),
+    });
+    const json = await resp.json();
+    const payload = json.data?.shopifyqlQuery;
+    if (payload?.parseErrors?.length) {
+      const err = new Error('ShopifyQL parse error: ' + JSON.stringify(payload.parseErrors));
+      err.details = payload.parseErrors;
+      throw err;
+    }
+    if (!payload?.tableData) throw new Error('No data returned from Shopify');
+    return payload.tableData;
+  };
+
+  // Pull the six funnel fields out of a row using a column-name transform so the
+  // same extractor serves current, previous_period and __totals column families.
+  const METRIC_KEYS = {
+    sessions: 'sessions',
+    duration: 'average_session_duration',
+    bounce: 'bounce_rate',
+    atc: 'sessions_with_cart_additions',
+    checkout: 'sessions_that_reached_checkout',
+    purchase: 'sessions_that_reached_and_completed_checkout',
+  };
+  const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
+
+  const makeExtractor = (columns) => {
+    const getVal = (row, name) => {
+      if (Array.isArray(row)) {
+        const i = columns.indexOf(name);
+        return i >= 0 ? row[i] : undefined;
+      }
+      return row ? row[name] : undefined;
+    };
+    return (row, colFor) => {
+      const o = {};
+      for (const [k, base] of Object.entries(METRIC_KEYS)) o[k] = num(getVal(row, colFor(base)));
+      return o;
+    };
+  };
+
+  try {
+    const main = await runQuery(mainQuery);
+    const compare = compareQuery ? await runQuery(compareQuery) : null;
+
+    const mainCols = (main.columns || []).map(c => c.name);
+    const mainRows = main.rows || [];
+    const extractMain = makeExtractor(mainCols);
+
+    const label = (row) => {
+      const v = Array.isArray(row)
+        ? row[mainCols.indexOf('utm_source')]
+        : row.utm_source;
+      const s = (v == null ? '' : String(v)).trim();
+      return s || '(direct / none)';
+    };
+
+    // Column transforms for the three families in the main (COMPARE TO) response.
+    const asCurrent  = (c) => c;
+    const asPrevious = (c) => `comparison_${c}__previous_period`;
+    const asTotals   = (c) => `${c}__totals`;
+    const asPrevTot  = (c) => `comparison_${c}__previous_period__totals`;
+
+    // Grand totals live in the __totals columns emitted on every row (WITH TOTALS).
+    const totalsSrcRow = mainRows[0] || null;
+    let totals = {
+      current: totalsSrcRow ? extractMain(totalsSrcRow, asTotals) : null,
+      previous: null,
+    };
+
+    // Per-source rows. Every data row is a real source bucket (a null utm_source
+    // is the "direct / none" bucket, not the grand total).
+    const sources = mainRows.map(row => ({
+      source: label(row),
+      current: extractMain(row, asCurrent),
+      previous: useCustomCompare ? null : extractMain(row, asPrevious),
+    }));
+
+    if (!useCustomCompare && totalsSrcRow) {
+      totals.previous = extractMain(totalsSrcRow, asPrevTot);
+    }
+
+    // Custom compare: pull previous values from the second query, keyed by source.
+    if (useCustomCompare && compare) {
+      const cmpCols = (compare.columns || []).map(c => c.name);
+      const cmpRows = compare.rows || [];
+      const extractCmp = makeExtractor(cmpCols);
+      const cmpLabel = (row) => {
+        const v = Array.isArray(row) ? row[cmpCols.indexOf('utm_source')] : row.utm_source;
+        const s = (v == null ? '' : String(v)).trim();
+        return s || '(direct / none)';
+      };
+      const cmpMap = new Map();
+      for (const row of cmpRows) cmpMap.set(cmpLabel(row), extractCmp(row, (c) => c));
+      for (const s of sources) s.previous = cmpMap.get(s.source) || null;
+      if (cmpRows[0]) totals.previous = extractCmp(cmpRows[0], (c) => `${c}__totals`);
+    }
+
+    res.json({
+      start, end,
+      compare: { mode: useCustomCompare ? 'custom' : 'previous_period', start: cs || null, end: ce || null },
+      query: mainQuery,
+      compare_query: compareQuery,
+      totals,
+      sources,
+    });
+  } catch (err) {
+    console.error('Funnel breakdown data error:', err);
+    res.status(500).json({ error: err.message, details: err.details });
+  }
+});
+
 // --- AOV Impact (Admin GraphQL orders, paginated, aggregated by source × LP) ---
 // ShopifyQL doesn't expose orders/sales on this store, so we hit the Admin
 // GraphQL Orders API directly and read customerJourneySummary.firstVisit for
