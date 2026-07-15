@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Top Landing Pages by Channel · Funnel Heatmap</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --fb-blue: #1877f2; --fb-blue-dark: #166fe5;
+      --bg: #f0f2f5; --surface: #fff;
+      --text-primary: #1c1e21; --text-secondary: #65676b;
+      --border: #dddfe2;
+      --positive: #1a7f37; --negative: #c0392b;
+      --shadow: 0 1px 3px rgba(0,0,0,0.12); --radius: 8px;
+    }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg); color: var(--text-primary); line-height: 1.5; min-height: 100vh; }
+    header { background: var(--fb-blue); color: white; padding: 16px 24px; display: flex; align-items: center; gap: 16px; }
+    .header__back { color: rgba(255,255,255,0.85); text-decoration: none; font-size: 0.875rem;
+      border: 1px solid rgba(255,255,255,0.3); padding: 4px 10px; border-radius: 6px; white-space: nowrap; }
+    .header__back:hover { background: rgba(255,255,255,0.15); color: white; }
+    header h1 { font-size: 1.2rem; font-weight: 700; }
+    header p { font-size: 0.8rem; opacity: 0.75; }
+
+    .wrap { max-width: 1280px; margin: 0 auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 16px; }
+
+    .controls { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow);
+      padding: 16px 20px; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px; }
+    .fld { display: flex; flex-direction: column; gap: 6px; }
+    .fld > span { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary); }
+    .fld input, .fld select { padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem; font-family: inherit; background: var(--surface); }
+    .fld input:focus, .fld select:focus { outline: none; border-color: var(--fb-blue); box-shadow: 0 0 0 2px rgba(24,119,242,0.15); }
+    .date-block { display: flex; flex-direction: column; gap: 2px; }
+    .date-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .date-row label { font-size: 0.82rem; font-weight: 600; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; }
+    .date-row input[type="date"] { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem; font-family: inherit; }
+    .btn-reset { font-size: 0.82rem; padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); cursor: pointer; color: var(--text-secondary); }
+    .btn-reset:hover { background: var(--bg); }
+    .btn-primary { padding: 10px 20px; background: #96bf48; color: #fff; border: none; border-radius: var(--radius); font-size: 0.9rem; font-weight: 600; cursor: pointer; }
+    .btn-primary:hover { background: #7ea93e; }
+    .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+
+    /* Segmented group-by toggle */
+    .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+    .seg button { border: none; background: var(--surface); color: var(--text-secondary); font-size: 0.82rem; font-weight: 600;
+      padding: 7px 12px; cursor: pointer; border-right: 1px solid var(--border); }
+    .seg button:last-child { border-right: none; }
+    .seg button.on { background: var(--fb-blue); color: #fff; }
+
+    .status { font-size: 0.84rem; color: var(--text-secondary); min-height: 1.2em; }
+    .status.error { color: var(--negative); }
+
+    .card { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px 20px; }
+    .top-info { font-size: 0.82rem; color: var(--text-secondary); }
+    .top-info a { color: var(--fb-blue); }
+    .top-info b { color: var(--text-primary); }
+
+    .legend { display: flex; align-items: center; gap: 14px; font-size: 0.76rem; color: var(--text-secondary); flex-wrap: wrap; margin-bottom: 10px; }
+    .legend .sw { display: inline-flex; align-items: center; gap: 6px; }
+    .legend .box { width: 26px; height: 14px; border-radius: 3px; border: 1px solid var(--border); }
+
+    .table-scroll { overflow-x: auto; }
+    table.heat { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
+    table.heat th, table.heat td { padding: 7px 9px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--border); }
+    table.heat th { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-secondary);
+      cursor: pointer; user-select: none; position: sticky; top: 0; background: var(--surface); z-index: 2; }
+    table.heat th:hover { color: var(--fb-blue); }
+    table.heat th.sorted { color: var(--fb-blue); }
+    th.col-label, td.col-label { text-align: left; }
+    td.col-label { font-weight: 600; max-width: 340px; overflow: hidden; text-overflow: ellipsis; }
+    tr.totals-row td { font-weight: 700; border-top: 2px solid var(--border); border-bottom: none; background: #f9fafc; }
+    .cell-val { display: block; }
+    .cell-delta { display: block; font-size: 0.7rem; font-weight: 600; }
+    .delta-pos { color: var(--positive); } .delta-neg { color: var(--negative); } .delta-flat { color: var(--text-secondary); }
+    .hidden { display: none; }
+
+    /* Info icon + tooltip (shared pattern) */
+    .info { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; margin-left: 5px;
+      border-radius: 50%; font-family: Georgia, serif; font-style: italic; font-size: 0.66rem; font-weight: 700; line-height: 1;
+      color: var(--text-secondary); border: 1px solid var(--border); cursor: help; vertical-align: middle; text-transform: none; letter-spacing: normal; }
+    .info:hover, .info:focus { color: var(--fb-blue); border-color: var(--fb-blue); outline: none; }
+    .tooltip { position: fixed; display: none; z-index: 1000; width: 275px; max-width: 82vw; background: #1c1e21; color: #f5f6f7;
+      padding: 10px 12px; border-radius: 6px; font-size: 0.75rem; font-weight: 400; line-height: 1.5; text-align: left; text-transform: none;
+      letter-spacing: normal; box-shadow: 0 6px 20px rgba(0,0,0,0.32); pointer-events: none; opacity: 0; transition: opacity 0.1s; }
+    .tooltip.show { opacity: 1; }
+    .tooltip b { color: #9ecbff; font-weight: 700; }
+    .tooltip code { background: rgba(255,255,255,0.16); padding: 1px 4px; border-radius: 3px; font-size: 0.72rem; }
+    .tooltip::after { content: ''; position: absolute; top: 100%; left: var(--arrow-x, 50%); transform: translateX(-50%); border: 6px solid transparent; border-top-color: #1c1e21; }
+    .tooltip.below::after { top: auto; bottom: 100%; border-top-color: transparent; border-bottom-color: #1c1e21; }
+  </style>
+</head>
+<body>
+
+<header>
+  <a class="header__back" href="/">&#8592; Ads Viewer</a>
+  <div>
+    <h1>Top Landing Pages by Channel</h1>
+    <p>Filter by channel, campaign &amp; ad — toggle grouping — color-coded funnel to spot breakdowns</p>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="controls">
+    <div class="date-block">
+      <div class="date-row">
+        <label>Start <input type="date" id="date-start"></label>
+        <label>End <input type="date" id="date-end"></label>
+      </div>
+      <div class="date-row" style="margin-top:4px">
+        <label>Compare Start <input type="date" id="compare-start"></label>
+        <label>Compare End <input type="date" id="compare-end"></label>
+        <button type="button" class="btn-reset" id="compare-reset" title="Reset comparison to the period immediately preceding Start–End">&#8635; Auto</button>
+      </div>
+    </div>
+    <div class="fld">
+      <span>Channel</span>
+      <select id="f-channel"><option value="">All channels</option></select>
+    </div>
+    <div class="fld">
+      <span>Campaign contains</span>
+      <input type="text" id="f-campaign" placeholder="e.g. Prospecting" size="16">
+    </div>
+    <div class="fld">
+      <span>Ad name contains</span>
+      <input type="text" id="f-ad" placeholder="e.g. Video" size="14">
+    </div>
+    <div class="fld">
+      <span>Show top</span>
+      <select id="f-limit">
+        <option value="25">25</option>
+        <option value="50" selected>50</option>
+        <option value="100">100</option>
+      </select>
+    </div>
+    <button class="btn-primary" id="btn-load">Load</button>
+  </div>
+
+  <div class="controls" style="align-items:center">
+    <div class="fld">
+      <span>Group by</span>
+      <div class="seg" id="group-seg">
+        <button data-group="lp" class="on">Landing Page</button>
+        <button data-group="ad">Ad Name</button>
+        <button data-group="campaign">Campaign</button>
+        <button data-group="adset">Ad Set</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="status" id="status"></div>
+
+  <div id="results" class="hidden">
+    <div class="top-info" id="top-info"></div>
+    <div class="card">
+      <div class="legend">
+        <span>Funnel cells shaded vs the filtered average:</span>
+        <span class="sw"><span class="box" style="background:rgba(26,127,55,0.5)"></span> better</span>
+        <span class="sw"><span class="box" style="background:rgba(192,57,43,0.5)"></span> worse (a funnel breakdown)</span>
+        <span>· fainter = fewer sessions (lower confidence)</span>
+      </div>
+      <div class="table-scroll">
+        <table class="heat">
+          <thead><tr id="thead-row"></tr></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="tooltip" class="tooltip"></div>
+
+<script>
+// ── State ──
+let _data = null;
+let _group = 'lp';
+let _sort = { key: 'sessions', dir: -1 };
+let _compareManualOverride = false;
+let _cmpTag = 'prev';
+
+const GROUP_LABEL = { lp: 'Landing page', ad: 'Ad name', campaign: 'Campaign', adset: 'Ad set' };
+
+// Columns. heat=true → funnel-rate cell gets the color-coded background.
+const COLS = [
+  { key: 'label',          label: '',              kind: 'label' },
+  { key: 'sessions',       label: 'Sessions',      kind: 'int', goodUp: true },
+  { key: 'duration',       label: 'Avg dur',       kind: 'dur', goodUp: true, info: 'duration' },
+  { key: 'bounce',         label: 'Bounce',        kind: 'pct', goodUp: false, heat: true, info: 'bounce' },
+  { key: 'atcRate',        label: 'ATC (non-bnc)', kind: 'pct', goodUp: true, heat: true, info: 'atcRate' },
+  { key: 'checkoutRate',   label: 'Checkout',      kind: 'pct', goodUp: true, heat: true, info: 'checkoutRate' },
+  { key: 'completionRate', label: 'Completion',    kind: 'pct', goodUp: true, heat: true, info: 'completionRate' },
+  { key: 'cvr',            label: 'CVR',           kind: 'pct', goodUp: true, heat: true, info: 'cvr' },
+];
+
+const METRIC_INFO = {
+  duration:       { src: 'ShopifyQL <code>average_session_duration</code> (seconds).', formula: 'Average session length for the group.' },
+  bounce:         { src: 'ShopifyQL <code>bounce_rate</code>.', formula: 'Bounced sessions ÷ sessions. Lower is better (shaded green when below the filtered average).' },
+  atcRate:        { src: 'ShopifyQL <code>sessions_with_cart_additions</code>.', formula: 'cart-add sessions ÷ non-bouncers = cart adds ÷ (sessions × (1 − bounce_rate)).' },
+  checkoutRate:   { src: 'ShopifyQL <code>sessions_that_reached_checkout</code>.', formula: 'reached-checkout ÷ cart-adds. Can exceed 100% — express/buy-now checkouts have no recorded cart-add.' },
+  completionRate: { src: 'ShopifyQL <code>sessions_that_reached_and_completed_checkout</code>.', formula: 'completed-checkout ÷ reached-checkout.' },
+  cvr:            { src: 'ShopifyQL <code>sessions_that_reached_and_completed_checkout</code> ÷ <code>sessions</code>.', formula: 'completed-checkout sessions ÷ all sessions.' },
+};
+function infoIcon(key) {
+  const t = METRIC_INFO[key];
+  if (!t) return '';
+  const tip = `<b>Source:</b> ${t.src}<br><b>How it is crafted:</b> ${t.formula}`;
+  return `<span class="info" tabindex="0" role="img" aria-label="metric definition" data-tip="${tip.replace(/"/g, '&quot;')}">i</span>`;
+}
+
+// ── Funnel math (rates from raw counts) ──
+function computeFunnel(m) {
+  if (!m) return null;
+  const sessions = m.sessions || 0;
+  const engaged = sessions * (1 - (m.bounce || 0));
+  const div = (a, b) => (b > 0 ? a / b : null);
+  return {
+    sessions, duration: m.duration || 0, bounce: m.bounce || 0,
+    atc: m.atc || 0, checkout: m.checkout || 0, purchase: m.purchase || 0,
+    atcRate: div(m.atc, engaged),
+    checkoutRate: div(m.checkout, m.atc),
+    completionRate: div(m.purchase, m.checkout),
+    cvr: div(m.purchase, sessions),
+  };
+}
+
+// ── Formatters ──
+const fmtInt = (n) => (n == null ? '—' : Math.round(n).toLocaleString());
+function fmtPct(f, dp = 1) { return f == null ? '—' : (f * 100).toFixed(dp) + '%'; }
+function fmtDur(s) { if (s == null) return '—'; s = Math.round(s); if (s < 60) return s + 's'; const m = Math.floor(s / 60); return `${m}m ${String(s % 60).padStart(2, '0')}s`; }
+
+function delta(cur, prev, kind, goodUp) {
+  if (cur == null || prev == null) return { text: '', cls: 'delta-flat' };
+  let raw, text;
+  if (kind === 'pct') { raw = (cur - prev) * 100; text = (raw >= 0 ? '+' : '') + raw.toFixed(1) + 'pp'; }
+  else if (kind === 'dur') { raw = cur - prev; text = (raw >= 0 ? '+' : '') + Math.round(raw) + 's'; }
+  else { if (prev === 0) return { text: '', cls: 'delta-flat' }; raw = (cur - prev) / prev * 100; text = (raw >= 0 ? '+' : '') + raw.toFixed(1) + '%'; }
+  let cls = 'delta-flat';
+  if (Math.abs(raw) >= 0.05) cls = ((raw > 0) === !!goodUp) ? 'delta-pos' : 'delta-neg';
+  return { text, cls };
+}
+
+// Color-code a funnel-rate cell vs the filtered-average (totals) value. Green =
+// better than average, red = worse; intensity scales with deviation, and fades
+// for low-session rows so high-traffic breakdowns stand out.
+function heatBg(v, agg, goodUp, sessions) {
+  if (v == null || agg == null || agg === 0) return '';
+  const g = goodUp ? (v - agg) / agg : (agg - v) / agg;
+  const conf = Math.max(0.15, Math.min(1, (sessions || 0) / 300));
+  const alpha = Math.min(0.6, Math.abs(g) * 1.1) * conf;
+  if (alpha < 0.03) return '';
+  const rgb = g >= 0 ? '26,127,55' : '192,57,43';
+  return `background: rgba(${rgb}, ${alpha.toFixed(3)});`;
+}
+
+// ── Date / compare helpers (shared mechanic) ──
+function autoComputeCompareRange() {
+  const s = document.getElementById('date-start').value, e = document.getElementById('date-end').value;
+  if (!s || !e) return null;
+  const sd = new Date(s + 'T00:00:00Z'), ed = new Date(e + 'T00:00:00Z');
+  if (isNaN(sd) || isNaN(ed) || ed < sd) return null;
+  const days = Math.round((ed - sd) / 86400000) + 1;
+  const cEnd = new Date(sd); cEnd.setUTCDate(cEnd.getUTCDate() - 1);
+  const cStart = new Date(cEnd); cStart.setUTCDate(cStart.getUTCDate() - (days - 1));
+  return { start: cStart.toISOString().slice(0, 10), end: cEnd.toISOString().slice(0, 10) };
+}
+function syncCompareInputs() {
+  if (_compareManualOverride) return;
+  const r = autoComputeCompareRange(); if (!r) return;
+  document.getElementById('compare-start').value = r.start;
+  document.getElementById('compare-end').value = r.end;
+}
+
+// ── Load ──
+async function loadData() {
+  const btn = document.getElementById('btn-load'), status = document.getElementById('status');
+  const start = document.getElementById('date-start').value, end = document.getElementById('date-end').value;
+  if (!start || !end) { status.className = 'status error'; status.textContent = 'Please select a start and end date.'; return; }
+
+  const cS = document.getElementById('compare-start').value, cE = document.getElementById('compare-end').value;
+  const auto = autoComputeCompareRange();
+  const isAuto = !_compareManualOverride || (auto && cS === auto.start && cE === auto.end);
+  const useCustom = !isAuto && cS && cE;
+
+  const params = new URLSearchParams({ start, end, group: _group,
+    channel: document.getElementById('f-channel').value,
+    campaign: document.getElementById('f-campaign').value.trim(),
+    ad: document.getElementById('f-ad').value.trim(),
+    limit: document.getElementById('f-limit').value });
+  if (useCustom) { params.set('compare_start', cS); params.set('compare_end', cE); }
+
+  btn.disabled = true; status.className = 'status'; status.textContent = 'Querying Shopify…';
+  try {
+    const resp = await fetch(`/api/lp-by-channel-data?${params.toString()}`);
+    if (!resp.ok) { const e = await resp.json().catch(() => ({})); throw new Error(e.error || `HTTP ${resp.status}`); }
+    _data = await resp.json();
+    status.textContent = '';
+    populateChannels();
+    render();
+    document.getElementById('results').classList.remove('hidden');
+  } catch (err) {
+    status.className = 'status error'; status.textContent = err.message;
+  } finally { btn.disabled = false; }
+}
+
+function populateChannels() {
+  const sel = document.getElementById('f-channel');
+  const want = _data.channel || '';
+  const opts = ['<option value="">All channels</option>']
+    .concat((_data.channels || []).map(c => `<option value="${escapeAttr(c.source)}">${escapeHtml(c.source)} (${fmtInt(c.sessions)})</option>`));
+  sel.innerHTML = opts.join('');
+  sel.value = want;
+}
+
+// ── Render ──
+function render() {
+  _cmpTag = _data.compare.mode === 'custom' ? 'cmp' : 'prev';
+  renderTopInfo();
+  renderTable();
+}
+
+function renderTopInfo() {
+  const c = _data.compare;
+  const compareLabel = c.mode === 'custom' ? `${c.start} → ${c.end}` : 'previous period (auto)';
+  const parts = [`<b>${_data.start} → ${_data.end}</b> vs ${compareLabel}`];
+  parts.push(`channel: <b>${escapeHtml(_data.channel || 'All')}</b>`);
+  if (_data.campaign) parts.push(`campaign ⊃ <b>${escapeHtml(_data.campaign)}</b>`);
+  if (_data.ad) parts.push(`ad ⊃ <b>${escapeHtml(_data.ad)}</b>`);
+  parts.push(`grouped by <b>${GROUP_LABEL[_data.group]}</b>`);
+  parts.push(`${_data.rows.length} rows`);
+  parts.push(`<a href="#" id="show-ql">show ShopifyQL</a>`);
+  const info = document.getElementById('top-info');
+  info.innerHTML = parts.join(' &nbsp;·&nbsp; ');
+  document.getElementById('show-ql').addEventListener('click', (e) => { e.preventDefault(); alert(_data.query); });
+}
+
+function renderTable() {
+  const agg = computeFunnel(_data.totals.current);        // filtered-average baseline for heat coloring
+  const aggPrev = computeFunnel(_data.totals.previous);
+
+  // Header
+  const thead = document.getElementById('thead-row');
+  thead.innerHTML = COLS.map(c => {
+    const label = c.kind === 'label' ? GROUP_LABEL[_data.group] : c.label;
+    const cls = [c.kind === 'label' ? 'col-label' : '', _sort.key === c.key ? 'sorted' : ''].filter(Boolean).join(' ');
+    const arrow = _sort.key === c.key ? (_sort.dir < 0 ? ' ▾' : ' ▴') : '';
+    return `<th class="${cls}" data-key="${c.key}">${label}${arrow}${c.info ? infoIcon(c.info) : ''}</th>`;
+  }).join('');
+  thead.querySelectorAll('th').forEach(th => th.addEventListener('click', (e) => {
+    if (e.target.closest('.info')) return;
+    const key = th.dataset.key;
+    if (_sort.key === key) _sort.dir *= -1; else _sort = { key, dir: key === 'label' ? 1 : -1 };
+    renderTable();
+  }));
+
+  // Rows
+  const rows = _data.rows.map(r => ({ label: r.label, cur: computeFunnel(r.current), prev: computeFunnel(r.previous) }));
+  rows.sort((a, b) => {
+    if (_sort.key === 'label') return _sort.dir * a.label.localeCompare(b.label);
+    const av = a.cur[_sort.key], bv = b.cur[_sort.key];
+    return _sort.dir * ((av == null ? -Infinity : av) - (bv == null ? -Infinity : bv));
+  });
+
+  const cell = (col, cur, prev, useHeat) => {
+    const v = cur[col.key];
+    let valStr;
+    if (col.kind === 'int') valStr = fmtInt(v);
+    else if (col.kind === 'dur') valStr = fmtDur(v);
+    else valStr = fmtPct(v, col.key === 'cvr' ? 2 : 1);
+    const d = delta(v, prev ? prev[col.key] : null, col.kind, col.goodUp);
+    const style = (useHeat && col.heat) ? heatBg(v, agg ? agg[col.key] : null, col.goodUp, cur.sessions) : '';
+    return `<td style="${style}"><span class="cell-val">${valStr}</span><span class="cell-delta ${d.cls}">${d.text || '&nbsp;'}</span></td>`;
+  };
+
+  const bodyRows = rows.map(r => {
+    const tds = COLS.map(c => c.kind === 'label'
+      ? `<td class="col-label" title="${escapeAttr(r.label)}">${escapeHtml(r.label)}</td>`
+      : cell(c, r.cur, r.prev, true)).join('');
+    return `<tr>${tds}</tr>`;
+  }).join('');
+
+  // Totals row (filtered aggregate; no heat — it IS the baseline)
+  const totTds = COLS.map(c => c.kind === 'label'
+    ? `<td class="col-label">All — filtered (${_data.rows.length})</td>`
+    : (agg ? cell(c, agg, aggPrev, false) : '<td>—</td>')).join('');
+
+  document.getElementById('tbody').innerHTML = `<tr class="totals-row">${totTds}</tr>` + bodyRows;
+}
+
+function escapeHtml(s) { return String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+function escapeAttr(s) { return escapeHtml(s).replace(/"/g, '&quot;'); }
+
+// ── Tooltips ──
+function initTooltips() {
+  const tip = document.getElementById('tooltip');
+  const show = (el) => {
+    const html = el.getAttribute('data-tip'); if (!html) return;
+    tip.innerHTML = html; tip.style.display = 'block'; tip.classList.remove('below');
+    const r = el.getBoundingClientRect(), tr = tip.getBoundingClientRect();
+    let left = r.left + r.width / 2 - tr.width / 2;
+    left = Math.max(8, Math.min(left, window.innerWidth - tr.width - 8));
+    let top = r.top - tr.height - 9;
+    if (top < 8) { top = r.bottom + 9; tip.classList.add('below'); }
+    tip.style.left = left + 'px'; tip.style.top = top + 'px';
+    tip.style.setProperty('--arrow-x', (r.left + r.width / 2 - left) + 'px');
+    tip.classList.add('show');
+  };
+  const hide = () => { tip.classList.remove('show'); tip.style.display = 'none'; };
+  document.addEventListener('mouseover', e => { const el = e.target.closest && e.target.closest('.info'); if (el) show(el); });
+  document.addEventListener('mouseout', e => { if (e.target.closest && e.target.closest('.info')) hide(); });
+  document.addEventListener('focusin', e => { const el = e.target.closest && e.target.closest('.info'); if (el) show(el); });
+  document.addEventListener('focusout', e => { if (e.target.closest && e.target.closest('.info')) hide(); });
+  window.addEventListener('scroll', hide, true);
+}
+
+// ── Wiring ──
+document.addEventListener('DOMContentLoaded', () => {
+  const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
+  const fmt = d => d.toISOString().slice(0, 10);
+  document.getElementById('date-start').value = fmt(yesterday);
+  document.getElementById('date-end').value = fmt(yesterday);
+  syncCompareInputs();
+
+  document.getElementById('date-start').addEventListener('change', syncCompareInputs);
+  document.getElementById('date-end').addEventListener('change', syncCompareInputs);
+  ['compare-start', 'compare-end'].forEach(id => document.getElementById(id).addEventListener('change', () => { _compareManualOverride = true; }));
+  document.getElementById('compare-reset').addEventListener('click', () => { _compareManualOverride = false; syncCompareInputs(); });
+
+  // Group-by toggle → reload
+  document.getElementById('group-seg').querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+    _group = b.dataset.group;
+    document.querySelectorAll('#group-seg button').forEach(x => x.classList.toggle('on', x === b));
+    if (_data) loadData();
+  }));
+
+  // Filters that reload immediately
+  ['f-channel', 'f-limit'].forEach(id => document.getElementById(id).addEventListener('change', () => { if (_data) loadData(); }));
+  // Text filters reload on Enter or blur
+  ['f-campaign', 'f-ad'].forEach(id => {
+    const el = document.getElementById(id);
+    el.addEventListener('keydown', e => { if (e.key === 'Enter') loadData(); });
+    el.addEventListener('blur', () => { if (_data) loadData(); });
+  });
+  document.getElementById('btn-load').addEventListener('click', loadData);
+
+  initTooltips();
+  loadData();
+});
+</script>
+</body>
+</html>

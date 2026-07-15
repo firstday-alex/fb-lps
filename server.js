@@ -1429,6 +1429,177 @@ app.get('/api/funnel-breakdown-data', async (req, res) => {
   }
 });
 
+// --- Top Landing Pages by Channel (ShopifyQL funnel, dimension-toggle) ---
+// Filter sessions by channel (utm_source) plus optional campaign / ad-name
+// substrings, then group the funnel by landing page, ad name, campaign or ad
+// set. Returns per-group funnel counts + previous-period comparison so the
+// frontend can color-code where the funnel breaks down. Also returns the list
+// of channels for the filter dropdown.
+app.get('/api/lp-by-channel-data', async (req, res) => {
+  if (!SHOPIFY_URL || !SHOPIFY_TOKEN) {
+    return res.status(500).json({ error: 'Shopify credentials not configured' });
+  }
+
+  const { start, end } = req.query;
+  if (!start || !end || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+    return res.status(400).json({ error: 'start and end query params required (YYYY-MM-DD)' });
+  }
+
+  // Group dimension: which UTM/LP field the rows break down by.
+  const DIM = { lp: 'landing_page_path', ad: 'utm_content', campaign: 'utm_campaign', adset: 'utm_term' };
+  const group = DIM[req.query.group] ? req.query.group : 'lp';
+  const dimCol = DIM[group];
+
+  const channel = (req.query.channel || '').trim();     // exact utm_source
+  const campaign = (req.query.campaign || '').trim();   // utm_campaign CONTAINS
+  const ad = (req.query.ad || '').trim();               // utm_content CONTAINS
+  let limit = parseInt(req.query.limit, 10);
+  if (!Number.isFinite(limit) || limit < 1) limit = 50;
+  limit = Math.min(limit, 200);
+
+  const cs = req.query.compare_start;
+  const ce = req.query.compare_end;
+  const useCustomCompare = cs && ce
+    && /^\d{4}-\d{2}-\d{2}$/.test(cs) && /^\d{4}-\d{2}-\d{2}$/.test(ce);
+
+  const endpoint = `https://${SHOPIFY_URL}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
+  const gqlQuery = `query RunShopifyQL($q: String!) {
+    shopifyqlQuery(query: $q) {
+      tableData { columns { name dataType } rows }
+      parseErrors
+    }
+  }`;
+  const SHOW = 'sessions, average_session_duration, bounce_rate, sessions_with_cart_additions, sessions_that_reached_checkout, sessions_that_reached_and_completed_checkout';
+
+  const esc = (v) => String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  const conds = [];
+  if (channel) conds.push(`utm_source = '${esc(channel)}'`);
+  if (campaign) conds.push(`utm_campaign CONTAINS '${esc(campaign)}'`);
+  if (ad) conds.push(`utm_content CONTAINS '${esc(ad)}'`);
+  const whereClause = conds.length ? `\n  WHERE ${conds.join(' AND ')}` : '';
+
+  const mainQuery = `FROM sessions
+  SHOW ${SHOW}${whereClause}
+  GROUP BY ONLY TOP ${limit} ${dimCol} WITH TOTALS${useCustomCompare ? '' : ', PERCENT_CHANGE'}
+  SINCE ${start} UNTIL ${end}${useCustomCompare ? '' : '\n  COMPARE TO previous_period'}
+  ORDER BY sessions DESC`;
+
+  const compareQuery = useCustomCompare ? `FROM sessions
+  SHOW ${SHOW}${whereClause}
+  GROUP BY ONLY TOP ${limit} ${dimCol} WITH TOTALS
+  SINCE ${cs} UNTIL ${ce}
+  ORDER BY sessions DESC` : null;
+
+  // Channel dropdown universe — top utm_source by sessions for the range.
+  const channelsQuery = `FROM sessions
+  SHOW sessions
+  GROUP BY ONLY TOP 60 utm_source
+  SINCE ${start} UNTIL ${end}
+  ORDER BY sessions DESC`;
+
+  const runQuery = async (q) => {
+    const resp = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
+      body: JSON.stringify({ query: gqlQuery, variables: { q } }),
+    });
+    const json = await resp.json();
+    const payload = json.data?.shopifyqlQuery;
+    if (payload?.parseErrors?.length) {
+      const err = new Error('ShopifyQL parse error: ' + JSON.stringify(payload.parseErrors));
+      err.details = payload.parseErrors;
+      throw err;
+    }
+    if (!payload?.tableData) throw new Error('No data returned from Shopify');
+    return payload.tableData;
+  };
+
+  const METRIC_KEYS = {
+    sessions: 'sessions',
+    duration: 'average_session_duration',
+    bounce: 'bounce_rate',
+    atc: 'sessions_with_cart_additions',
+    checkout: 'sessions_that_reached_checkout',
+    purchase: 'sessions_that_reached_and_completed_checkout',
+  };
+  const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
+  const makeExtractor = (columns) => {
+    const getVal = (row, name) => {
+      if (Array.isArray(row)) { const i = columns.indexOf(name); return i >= 0 ? row[i] : undefined; }
+      return row ? row[name] : undefined;
+    };
+    return (row, colFor) => {
+      const o = {};
+      for (const [k, base] of Object.entries(METRIC_KEYS)) o[k] = num(getVal(row, colFor(base)));
+      return o;
+    };
+  };
+
+  try {
+    const [main, compare, channelsTable] = await Promise.all([
+      runQuery(mainQuery),
+      compareQuery ? runQuery(compareQuery) : Promise.resolve(null),
+      runQuery(channelsQuery),
+    ]);
+
+    const mainCols = (main.columns || []).map(c => c.name);
+    const mainRows = main.rows || [];
+    const extractMain = makeExtractor(mainCols);
+    const labelOf = (row, cols, col) => {
+      const v = Array.isArray(row) ? row[cols.indexOf(col)] : row[col];
+      const s = (v == null ? '' : String(v)).trim();
+      return s || '(none)';
+    };
+
+    const asCurrent  = (c) => c;
+    const asPrevious = (c) => `comparison_${c}__previous_period`;
+    const asTotals   = (c) => `${c}__totals`;
+    const asPrevTot  = (c) => `comparison_${c}__previous_period__totals`;
+
+    const totalsSrcRow = mainRows[0] || null;
+    const totals = {
+      current: totalsSrcRow ? extractMain(totalsSrcRow, asTotals) : null,
+      previous: (!useCustomCompare && totalsSrcRow) ? extractMain(totalsSrcRow, asPrevTot) : null,
+    };
+
+    const rows = mainRows.map(row => ({
+      label: labelOf(row, mainCols, dimCol),
+      current: extractMain(row, asCurrent),
+      previous: useCustomCompare ? null : extractMain(row, asPrevious),
+    }));
+
+    if (useCustomCompare && compare) {
+      const cmpCols = (compare.columns || []).map(c => c.name);
+      const extractCmp = makeExtractor(cmpCols);
+      const cmpMap = new Map();
+      for (const r of (compare.rows || [])) cmpMap.set(labelOf(r, cmpCols, dimCol), extractCmp(r, (c) => c));
+      for (const r of rows) r.previous = cmpMap.get(r.label) || null;
+      if ((compare.rows || [])[0]) totals.previous = extractCmp(compare.rows[0], (c) => `${c}__totals`);
+    }
+
+    // Channel dropdown list
+    const chCols = (channelsTable.columns || []).map(c => c.name);
+    const channels = (channelsTable.rows || []).map(r => ({
+      source: labelOf(r, chCols, 'utm_source'),
+      sessions: num(Array.isArray(r) ? r[chCols.indexOf('sessions')] : r.sessions),
+    }));
+
+    res.json({
+      start, end, group,
+      channel, campaign, ad, limit,
+      compare: { mode: useCustomCompare ? 'custom' : 'previous_period', start: cs || null, end: ce || null },
+      query: mainQuery,
+      compare_query: compareQuery,
+      channels,
+      totals,
+      rows,
+    });
+  } catch (err) {
+    console.error('LP-by-channel data error:', err);
+    res.status(500).json({ error: err.message, details: err.details });
+  }
+});
+
 // --- AOV Impact (Admin GraphQL orders, paginated, aggregated by source × LP) ---
 // ShopifyQL doesn't expose orders/sales on this store, so we hit the Admin
 // GraphQL Orders API directly and read customerJourneySummary.firstVisit for
