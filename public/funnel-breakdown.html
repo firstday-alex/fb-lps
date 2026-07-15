@@ -75,11 +75,7 @@
       align-items: flex-end;
       gap: 18px;
     }
-    .date-group { display: flex; flex-direction: column; gap: 6px; }
-    .date-group > span {
-      font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
-      letter-spacing: 0.06em; color: var(--text-secondary);
-    }
+    .date-block { display: flex; flex-direction: column; gap: 2px; }
     .date-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
     .date-row label {
       font-size: 0.82rem; font-weight: 600; color: var(--text-secondary);
@@ -266,20 +262,16 @@
 
 <div class="wrap">
 
-  <!-- Controls -->
+  <!-- Controls — shared date-range mechanic (Start/End + Compare + ↻ Auto) -->
   <div class="controls">
-    <div class="date-group">
-      <span>Date range</span>
+    <div class="date-block">
       <div class="date-row">
         <label>Start <input type="date" id="date-start"></label>
         <label>End <input type="date" id="date-end"></label>
       </div>
-    </div>
-    <div class="date-group">
-      <span>Compare to</span>
-      <div class="date-row">
-        <label>Start <input type="date" id="compare-start"></label>
-        <label>End <input type="date" id="compare-end"></label>
+      <div class="date-row" style="margin-top:4px">
+        <label>Compare Start <input type="date" id="compare-start"></label>
+        <label>Compare End <input type="date" id="compare-end"></label>
         <button type="button" class="btn-reset" id="compare-reset" title="Reset comparison to the period immediately preceding Start–End">&#8635; Auto</button>
       </div>
     </div>
@@ -815,12 +807,11 @@ function initTooltips() {
 // WIRING
 // ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-  // Default: last 7 complete days (yesterday back 6), auto compare = preceding 7.
+  // Default: yesterday (single day); auto compare snaps to the previous day.
   const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
-  const start = new Date(yesterday); start.setDate(start.getDate() - 6);
   const fmt = d => d.toISOString().slice(0, 10);
+  document.getElementById('date-start').value = fmt(yesterday);
   document.getElementById('date-end').value = fmt(yesterday);
-  document.getElementById('date-start').value = fmt(start);
   syncCompareInputs();
 
   document.getElementById('date-start').addEventListener('change', syncCompareInputs);
