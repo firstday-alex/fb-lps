@@ -1149,16 +1149,16 @@
 <header>
   <a class="header__back" href="/">&#8592; Ads Viewer</a>
   <div>
-    <h1>Meta Paid Social &middot; Conversion Impact</h1>
-    <p>Campaign &amp; landing-page analysis filtered to utm_source / utm_medium</p>
+    <h1>Google &middot; Conversion Impact</h1>
+    <p>Campaign, source/medium &amp; landing-page CVR analysis for Google-family paid traffic</p>
   </div>
   <a class="header__report-link" id="shopify-report-link" href="#" target="_blank" rel="noopener">Open Shopify Report ↗</a>
 </header>
 
 <div id="upload-screen">
   <div class="upload-card">
-    <h2>Meta Paid Social Impact</h2>
-    <p>Load Shopify sessions filtered by <code>utm_source</code> &amp; <code>utm_medium</code>, grouped by campaign and landing page, compared to a configurable prior period.</p>
+    <h2>Google Conversion Impact</h2>
+    <p>Load Shopify sessions for Google-family paid traffic (<code>utm_source IN (google, youtube, demand-gen)</code>), grouped by campaign, source/medium and landing page, compared to a configurable prior period.</p>
     <div class="date-row">
       <label>Start <input type="date" id="date-start"></label>
       <label>End <input type="date" id="date-end"></label>
@@ -1169,8 +1169,7 @@
       <button type="button" id="compare-reset" class="btn-reset" style="font-size:0.75rem;padding:4px 10px" title="Reset comparison to the period immediately preceding Start–End">↻ Auto</button>
     </div>
     <div class="filter-row">
-      <label>utm_source <input type="text" id="filter-source" value="facebook"></label>
-      <label>utm_medium <input type="text" id="filter-medium" value="paid_social"></label>
+      <label>Sources (utm_source, comma-separated) <input type="text" id="filter-sources" value="google,youtube,demand-gen"></label>
     </div>
     <button class="shopify-load-btn" id="btn-shopify-load">Load from Shopify</button>
     <div class="shopify-status" id="shopify-status"></div>
@@ -1185,6 +1184,42 @@
       <div class="top-bar__info" id="top-bar-info"></div>
       <button class="btn-reset" id="btn-reset">&#8592; New query</button>
     </div>
+
+    <style>
+      .gcvr-controls { display:flex; flex-wrap:wrap; gap:16px 24px; align-items:center; margin:4px 0 18px; }
+      .gcvr-field { display:flex; flex-direction:column; gap:5px; }
+      .gcvr-field__label { font-size:0.7rem; font-weight:700; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-secondary); }
+      .gcvr-seg { display:inline-flex; background:#eef1f6; border-radius:8px; padding:3px; gap:2px; }
+      .gcvr-seg__btn { border:none; background:transparent; padding:6px 12px; font-size:0.82rem; font-weight:600; color:var(--text-secondary); border-radius:6px; cursor:pointer; white-space:nowrap; }
+      .gcvr-seg__btn:hover { color:var(--fb-blue); }
+      .gcvr-seg__btn.is-active { background:#fff; color:var(--fb-blue); box-shadow:0 1px 2px rgba(0,0,0,0.12); }
+      .gcvr-toggle { display:inline-flex; align-items:center; gap:7px; font-size:0.85rem; font-weight:600; color:var(--text-primary); cursor:pointer; margin-top:16px; }
+      .gcvr-toggle input { width:15px; height:15px; cursor:pointer; }
+    </style>
+    <div class="gcvr-controls" id="gcvr-controls" style="display:none">
+      <div class="gcvr-field">
+        <span class="gcvr-field__label">Source</span>
+        <div class="gcvr-seg" id="source-switcher" role="group" aria-label="Source">
+          <button class="gcvr-seg__btn is-active" data-source="ALL">All Google-family</button>
+          <button class="gcvr-seg__btn" data-source="google">google</button>
+          <button class="gcvr-seg__btn" data-source="youtube">youtube</button>
+          <button class="gcvr-seg__btn" data-source="demand-gen">demand-gen</button>
+        </div>
+      </div>
+      <div class="gcvr-field">
+        <span class="gcvr-field__label">Group by</span>
+        <div class="gcvr-seg" id="dim-switcher" role="group" aria-label="Primary grouping">
+          <button class="gcvr-seg__btn is-active" data-dim="campaign">Campaign</button>
+          <button class="gcvr-seg__btn" data-dim="sourcemedium">Source / Medium</button>
+        </div>
+      </div>
+      <label class="gcvr-toggle"><input type="checkbox" id="break-by-lp" checked> Break down by landing page</label>
+    </div>
+
+    <!-- Everything inside #gcvr-modules is fully rebuilt on every source /
+         grouping change (snapshot-restore of pristine HTML). The Ad×LP card is
+         deliberately OUTSIDE this wrapper so its once-bound handlers survive. -->
+    <div id="gcvr-modules">
 
     <div class="kpi-row" id="kpi-row"></div>
 
@@ -1217,7 +1252,7 @@
     <!-- Ranked contributors (by campaign) -->
     <div class="card breakdown-card">
       <h3>Top Contributors to Blended CVR Change</h3>
-      <p class="card__sub">Each row is one utm_campaign. <strong>CVR Impact</strong> = this campaign's contribution (in pp) to the total blended CVR change for this data pull. Decomposed into: (a) <strong>own CVR effect</strong> — <em>prevShare × ΔCvr</em> (the campaign's own CVR movement, weighted by its baseline traffic share); plus (b) <strong>share-shift effect</strong> — <em>ΔShare × (currCvr − blended avg)</em> (gaining/losing share at a CVR above or below the blended average). Sums across all campaigns to the overall blended ΔCvr. Negative = dragged blended CVR down. So a below-average campaign whose CVR drops <em>and</em> gains share compounds on both terms. <em>Click a column header to sort.</em></p>
+      <p class="card__sub">Each row is one group in the selected dimension (campaign, or source/medium). <strong>CVR Impact</strong> = this group's contribution (in pp) to the total blended CVR change for this data pull. Decomposed into: (a) <strong>own CVR effect</strong> — <em>prevShare × ΔCvr</em> (the campaign's own CVR movement, weighted by its baseline traffic share); plus (b) <strong>share-shift effect</strong> — <em>ΔShare × (currCvr − blended avg)</em> (gaining/losing share at a CVR above or below the blended average). Sums across all campaigns to the overall blended ΔCvr. Negative = dragged blended CVR down. So a below-average campaign whose CVR drops <em>and</em> gains share compounds on both terms. <em>Click a column header to sort.</em></p>
       <div class="contrib-header">
         <div class="sort-h" data-sort="campaign">Campaign</div>
         <div class="r sort-h" data-sort="sessions">Sessions</div>
@@ -1232,10 +1267,42 @@
       <div id="contributors-list"></div>
     </div>
 
-    <!-- Top Ad × Landing Page combinations -->
+    <!-- Primary breakdown table -->
+    <div class="card breakdown-card">
+      <h3>Breakdown Table</h3>
+      <div style="overflow-x:auto">
+        <table class="breakdown-table" id="breakdown-table">
+          <thead>
+            <tr>
+              <th>Campaign</th>
+              <th class="r">Prev Sess</th>
+              <th class="r">Curr Sess</th>
+              <th class="r">Δ Sess</th>
+              <th class="r">Prev CVR</th>
+              <th class="r">Curr CVR</th>
+              <th class="r">Δ CVR (pp)</th>
+              <th class="r">Prev Txns</th>
+              <th class="r">Curr Txns</th>
+              <th class="r">Δ Txn</th>
+              <th class="r">Sess Effect</th>
+              <th class="r">CVR Effect</th>
+              <th class="r">Interaction</th>
+            </tr>
+          </thead>
+          <tbody id="breakdown-tbody"></tbody>
+          <tfoot id="breakdown-tfoot"></tfoot>
+        </table>
+      </div>
+    </div>
+
+    </div><!-- /#gcvr-modules -->
+
+    <!-- Top Ad × Landing Page combinations — OUTSIDE #gcvr-modules so its
+         once-bound handlers survive source/grouping re-renders. Scoped to the
+         active source client-side by renderAdLp(). -->
     <div class="card breakdown-card" id="ad-lp-card">
       <h3>Top Ad × Landing Page Combinations</h3>
-      <p class="card__sub">Each row is one <code>utm_content</code> (ad name) paired with one <code>landing_page_path</code>. <em>Click an ad name to see all landing pages it sent traffic to; click a landing page to see all ads that sent traffic to it.</em> Use the filter row to slice by parsed ad-name variables (brand prefix, creator, URL slug, partnership flag, free-text token).</p>
+      <p class="card__sub">Each row is one <code>utm_content</code> (ad name) paired with one <code>landing_page_path</code>, within the selected source. <em>Click an ad name to see all landing pages it sent traffic to; click a landing page to see all ads that sent traffic to it.</em> Use the filter row to slice by parsed ad-name variables.</p>
       <div class="ad-lp-attr-filters" id="ad-lp-attr-filters">
         <div class="ad-lp-attr-vars" id="ad-lp-attr-vars">
           <span class="ad-lp-attr-empty">Filter dropdowns will populate from <code>key:value</code> tokens parsed out of <code>utm_content</code> once data loads.</span>
@@ -1275,34 +1342,6 @@
           </thead>
           <tbody id="ad-lp-tbody"></tbody>
           <tfoot id="ad-lp-tfoot"></tfoot>
-        </table>
-      </div>
-    </div>
-
-    <!-- Campaign breakdown table -->
-    <div class="card breakdown-card">
-      <h3>Campaign Breakdown</h3>
-      <div style="overflow-x:auto">
-        <table class="breakdown-table" id="breakdown-table">
-          <thead>
-            <tr>
-              <th>Campaign</th>
-              <th class="r">Prev Sess</th>
-              <th class="r">Curr Sess</th>
-              <th class="r">Δ Sess</th>
-              <th class="r">Prev CVR</th>
-              <th class="r">Curr CVR</th>
-              <th class="r">Δ CVR (pp)</th>
-              <th class="r">Prev Txns</th>
-              <th class="r">Curr Txns</th>
-              <th class="r">Δ Txn</th>
-              <th class="r">Sess Effect</th>
-              <th class="r">CVR Effect</th>
-              <th class="r">Interaction</th>
-            </tr>
-          </thead>
-          <tbody id="breakdown-tbody"></tbody>
-          <tfoot id="breakdown-tfoot"></tfoot>
         </table>
       </div>
     </div>
@@ -1431,21 +1470,66 @@ function aggregateBy(rows, keyFn) {
 // ─────────────────────────────────────────────
 // GLOBAL STATE
 // ─────────────────────────────────────────────
-let _shopifyTotals = null;
+let _shopifyTotals = null;      // grand totals (ALL scope) — fallback only
 let _rawRows = [];
+let _sourceTotals = {};         // { ALL:{...}, google:{...}, youtube:{...}, 'demand-gen':{...} }
+let _scopedRows = [];           // _rawRows filtered to the active source
+let _filename = '';
+let _activeSource = 'ALL';      // 'ALL' | 'google' | 'youtube' | 'demand-gen'
+let _primaryDim = 'campaign';   // 'campaign' | 'sourcemedium'
+let _breakByLp = true;
+let _primaryKeyFn = r => r.campaign;   // used by drilldowns; kept in sync with _primaryDim
+let _dimNoun = 'campaign';             // used by drilldown labels outside rerender()
+let _pristineModulesHTML = '';         // clean #gcvr-modules DOM, restored each rerender()
+
+// Primary-dimension config. keyFn MUST be identical to the one used for the
+// drilldown filter, or drilldown keys won't match.
+function dimConfig() {
+  if (_primaryDim === 'campaign') {
+    return { keyFn: r => r.campaign, noun: 'campaign', plural: 'campaigns', title: 'Campaign' };
+  }
+  return {
+    keyFn: r => `${r.source || '(none)'} / ${r.medium || '(none)'}`,
+    noun: 'source/medium', plural: 'source/medium pairs', title: 'Source / Medium',
+  };
+}
+function scopeLabel() { return _activeSource === 'ALL' ? 'Google-family' : _activeSource; }
+
+// Show/hide a module card. Returns `visible` so callers can gate the render
+// call itself (a hidden card keeps stale innerHTML otherwise).
+function showCard(id, visible) {
+  const el = document.getElementById(id);
+  if (el) el.style.display = visible ? '' : 'none';
+  return !!visible;
+}
+function cap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 
 // ─────────────────────────────────────────────
-// MAIN RENDER
+// MAIN RENDER — runs once per fetch, then defers to rerender()
 // ─────────────────────────────────────────────
 function render(rawRows, filename) {
   _rawRows = rawRows;
-  document.querySelectorAll('#results-screen .card').forEach(c => {
-    c.classList.remove('collapsible', 'collapsed');
-    delete c.dataset.collapsibleDone;
-  });
+  _filename = filename;
+  rerender();
+}
 
-  const campaignRows = aggregateBy(rawRows, r => r.campaign);
-  const lpRows       = aggregateBy(rawRows, r => r.lp);
+// Switchable core — re-run on every source / dimension / breakdown change with
+// NO refetch (all rows already live in _rawRows).
+function rerender() {
+  const filename = _filename;
+  // Restore pristine module DOM so makeCardsCollapsible (a one-shot transform
+  // that consumes each card's <h3>) and every module render start from a clean
+  // slate. The Ad×LP card lives outside #gcvr-modules and is untouched.
+  const modulesRoot = document.getElementById('gcvr-modules');
+  if (_pristineModulesHTML) modulesRoot.innerHTML = _pristineModulesHTML;
+
+  const dc = dimConfig();
+  _primaryKeyFn = dc.keyFn;
+  _dimNoun = dc.noun;
+
+  _scopedRows = _rawRows.filter(r => _activeSource === 'ALL' || r.source === _activeSource);
+  const campaignRows = aggregateBy(_scopedRows, dc.keyFn);   // "primary" rows
+  const lpRows       = aggregateBy(_scopedRows, r => r.lp);
 
   // Totals from aggregated campaign rows
   let tPrevS=0, tCurrS=0, tPrevConv=0, tCurrConv=0, tDelta=0;
@@ -1467,18 +1551,21 @@ function render(rawRows, filename) {
   const tPrevCvr = tPrevS > 0 ? tPrevWC / tPrevS : 0;
   const tCurrCvr = tCurrS > 0 ? tCurrWC / tCurrS : 0;
 
-  // Use Shopify grand totals when available (matches headline KPIs to Shopify report)
-  const kpiCurrS   = _shopifyTotals ? _shopifyTotals.currS   : tCurrS;
-  const kpiPrevS   = _shopifyTotals ? _shopifyTotals.prevS   : tPrevS;
-  const kpiCurrCvr = _shopifyTotals ? _shopifyTotals.currCvr : tCurrCvr;
-  const kpiPrevCvr = _shopifyTotals ? _shopifyTotals.prevCvr : tPrevCvr;
+  // Per-source-scope totals — authoritative curr/prev sessions + CVR for the
+  // active source (never truncated). Falls back to grand totals, then to the
+  // row-summed totals.
+  const scopeTotals = _sourceTotals[_activeSource] || (_activeSource === 'ALL' ? _shopifyTotals : null);
+  const kpiCurrS   = scopeTotals ? scopeTotals.currS   : tCurrS;
+  const kpiPrevS   = scopeTotals ? scopeTotals.prevS   : tPrevS;
+  const kpiCurrCvr = scopeTotals ? scopeTotals.currCvr : tCurrCvr;
+  const kpiPrevCvr = scopeTotals ? scopeTotals.prevCvr : tPrevCvr;
   const kpiCurrConv = kpiCurrS * kpiCurrCvr;
   const kpiPrevConv = kpiPrevS * kpiPrevCvr;
   const kpiTxnDelta = kpiCurrConv - kpiPrevConv;
 
-  const rowInfo = `${campaignRows.length} campaigns · ${lpRows.length} landing pages · ${rawRows.length} rows`;
-  const truncNote = _shopifyTotals && Math.abs(_shopifyTotals.currS - tCurrS) > 1
-    ? ` &nbsp;·&nbsp; <span title="Shopify caps response at 1000 rows; totals include truncated data">KPIs use Shopify grand totals</span>`
+  const rowInfo = `${scopeLabel()} · ${campaignRows.length} ${dc.plural} · ${lpRows.length} landing pages · ${_scopedRows.length} rows`;
+  const truncNote = scopeTotals && Math.abs(scopeTotals.currS - tCurrS) > 1
+    ? ` &nbsp;·&nbsp; <span title="Shopify caps the detail response at 1000 rows; KPI totals come from an un-truncated per-source query">KPIs use Shopify grand totals</span>`
     : '';
   document.getElementById('top-bar-info').innerHTML =
     `<strong>${esc(filename)}</strong> &nbsp;·&nbsp; ${rowInfo}${truncNote}`;
@@ -1583,45 +1670,57 @@ function render(rawRows, filename) {
   const topTxnDriver = topGroup && Math.abs(topGroup.txnDelta) > 0.5
     ? `${topGroup.campaign} (Txn Δ: ${fmtS(Math.round(topGroup.txnDelta))})`
     : '';
-  const topDesc = topTxnDriver ? `Largest transaction driver: ${topTxnDriver}.` : '';
+  const topDesc = topTxnDriver ? `Largest ${dc.noun} transaction driver: ${topTxnDriver}.` : '';
   headlineCard.innerHTML = `
-    <h3>Meta paid-social transactions ${direction} by ${fmtS(Math.round(tDelta))} (${fmtP(txnPct, 1)})</h3>
+    <h3>${esc(scopeLabel())} transactions ${direction} by ${fmtS(Math.round(tDelta))} (${fmtP(txnPct, 1)})</h3>
     <p>${esc(topDesc)}</p>
   `;
 
-  // Panels
+  // ── Primary-dimension modules (grouped by campaign OR source/medium) ──
   renderCvrMovement('cvr-movement-card', campaignRows, {
-    title: 'CVR Movement by Campaign',
-    sub: "Each row shows how a campaign's CVR changed. Sorted by transactions (highest first). Bar length = magnitude of CVR change. <strong>7d Avg</strong> = rolling CVR over the 7 days ending on the End date; <strong>vs 7d</strong> = current CVR minus that average (pp). <strong>Sessions</strong> = current-period sessions; <strong>Sess Δ</strong> / <strong>Txns Δ</strong> = change in sessions / transactions vs the previous period.",
-    labelName: 'Campaign',
+    title: `CVR Movement by ${dc.title}`,
+    sub: `Each row shows how a ${dc.noun}'s CVR changed. Sorted by transactions (highest first). Bar length = magnitude of CVR change. <strong>7d Avg</strong> = rolling CVR over the 7 days ending on the End date; <strong>vs 7d</strong> = current CVR minus that average (pp). <strong>Sessions</strong> = current-period sessions; <strong>Sess Δ</strong> / <strong>Txns Δ</strong> = change in sessions / transactions vs the previous period.`,
+    labelName: dc.title,
     color: CAMPAIGN_COLOR,
     minSess: 20,
-    drillBy: 'lp',
+    drillBy: _breakByLp ? 'lp' : null,
     show7d: true,
   });
-  renderCvrMovement('cvr-movement-lp-card', lpRows, {
-    title: 'CVR Movement by Landing Page',
-    sub: "Each row is a landing page path. Sorted by transactions (highest first). Bar length = magnitude of CVR change.",
-    labelName: 'Landing Page',
-    color: LP_COLOR,
-    minSess: 20,
-  });
   renderMixShift(campaignRows, tPrevS, tCurrS, tPrevCvr, tCurrCvr);
-  renderTestVsNonTest(campaignRows);
   renderSessionVolume('session-volume-card', campaignRows, {
-    title: 'Session Volume by Campaign',
-    sub: 'Campaigns ordered by current sessions (highest first). Gray = previous, colored = current.',
-    labelName: 'Campaign',
+    title: `Session Volume by ${dc.title}`,
+    sub: `${cap(dc.plural)} ordered by current sessions (highest first). Gray = previous, colored = current.`,
+    labelName: dc.title,
     color: CAMPAIGN_COLOR,
   });
-  renderSessionVolume('session-volume-lp-card', lpRows, {
-    title: 'Session Volume by Landing Page',
-    sub: 'Landing pages ordered by current sessions. Gray = previous, colored = current.',
-    labelName: 'Landing Page',
-    color: LP_COLOR,
-  });
   renderCvrBuckets(campaignRows);
-  renderCorrelation(lpRows);
+
+  // Test vs Non-Test — campaign-name semantics only; hide for source/medium.
+  if (showCard('test-vs-nontest-card', _primaryDim === 'campaign')) {
+    renderTestVsNonTest(campaignRows);
+  }
+
+  // ── Landing-page modules — gated by the "break down by landing page" toggle ──
+  if (showCard('cvr-movement-lp-card', _breakByLp)) {
+    renderCvrMovement('cvr-movement-lp-card', lpRows, {
+      title: 'CVR Movement by Landing Page',
+      sub: "Each row is a landing page path. Sorted by transactions (highest first). Bar length = magnitude of CVR change.",
+      labelName: 'Landing Page',
+      color: LP_COLOR,
+      minSess: 20,
+    });
+  }
+  if (showCard('session-volume-lp-card', _breakByLp)) {
+    renderSessionVolume('session-volume-lp-card', lpRows, {
+      title: 'Session Volume by Landing Page',
+      sub: 'Landing pages ordered by current sessions. Gray = previous, colored = current.',
+      labelName: 'Landing Page',
+      color: LP_COLOR,
+    });
+  }
+  if (showCard('correlation-card', _breakByLp)) {
+    renderCorrelation(lpRows);
+  }
 
   // Contributors list — supports clickable header sorting.
   const contribList = document.getElementById('contributors-list');
@@ -1719,6 +1818,10 @@ function render(rawRows, filename) {
     });
   };
 
+  // Relabel the primary-dimension header cell (Campaign ↔ Source / Medium).
+  const campHdr = document.querySelector('.contrib-header .sort-h[data-sort="campaign"]');
+  if (campHdr) campHdr.textContent = dc.title;
+
   // Clone header cells so any listeners bound by a previous render are dropped,
   // then attach fresh handlers closed over the current campaignGroups.
   document.querySelectorAll('.contrib-header .sort-h').forEach(oldH => {
@@ -1739,7 +1842,9 @@ function render(rawRows, filename) {
 
   renderContributorsList();
 
-  // Campaign breakdown table — sorted by |Δ Conv|
+  // Primary breakdown table — sorted by |Δ Conv|
+  const bdHdr = document.querySelector('#breakdown-table thead th');
+  if (bdHdr) bdHdr.textContent = dc.title;
   const tbody = document.getElementById('breakdown-tbody');
   tbody.innerHTML = '';
   const sortedCampaigns = [...campaignRows]
@@ -1790,6 +1895,7 @@ function render(rawRows, filename) {
 
   makeCardsCollapsible();
 
+  document.getElementById('gcvr-controls').style.display = 'flex';
   document.getElementById('upload-screen').style.display = 'none';
   document.getElementById('results-screen').style.display = 'block';
 }
@@ -1994,15 +2100,15 @@ function renderCvrMovement(cardId, rows, opts) {
   }
 }
 
-function buildLpDrilldownHtml(campaignKey) {
-  const campaign = campaignKey || '(empty)';
-  const filtered = _rawRows.filter(r => (r.campaign || '(empty)') === campaign);
+function buildLpDrilldownHtml(primaryKey) {
+  const key = primaryKey || '(empty)';
+  const filtered = _scopedRows.filter(r => (_primaryKeyFn(r) || '(empty)') === key);
   const lpRows = aggregateBy(filtered, r => r.lp)
     .filter(r => r.prevSess >= 5 || r.currS >= 5);
   const sorted = [...lpRows].sort((a, b) => (b.currS * b.currC) - (a.currS * a.currC));
 
   if (sorted.length === 0) {
-    return '<div class="cvr-drill-empty">No landing pages with ≥5 sessions in this campaign.</div>';
+    return `<div class="cvr-drill-empty">No landing pages with ≥5 sessions in this ${_dimNoun}.</div>`;
   }
 
   const maxAbsDelta = Math.max(...sorted.map(r => Math.abs(r.currC - r.prevCvr)), 0.001);
@@ -2036,7 +2142,7 @@ function buildLpDrilldownHtml(campaignKey) {
       </div>`;
   }).join('');
 
-  return `<div class="cvr-drill-heading">Landing pages within this campaign · ${sorted.length}</div>${rowsHtml}`;
+  return `<div class="cvr-drill-heading">Landing pages within this ${_dimNoun} · ${sorted.length}</div>${rowsHtml}`;
 }
 
 // ─────────────────────────────────────────────
@@ -2568,6 +2674,8 @@ function renderEffects(container, group, tCvrDelta, tDelta, tPrevConv) {
   `;
   container.appendChild(summary);
 
+  // Landing-page drilldown — only when "break down by landing page" is on.
+  if (!_breakByLp) return;
   const lpBtn = document.createElement('button');
   lpBtn.className = 'lp-btn';
   lpBtn.textContent = '↳ Break down by landing page (txn view)';
@@ -2585,8 +2693,8 @@ function renderEffects(container, group, tCvrDelta, tDelta, tPrevConv) {
   container.appendChild(drillDiv);
 }
 
-function renderDrillDown(container, campaign, tDelta, tPrevConv) {
-  const filtered = _rawRows.filter(r => (r.campaign || '(empty)') === campaign);
+function renderDrillDown(container, primaryKey, tDelta, tPrevConv) {
+  const filtered = _scopedRows.filter(r => (_primaryKeyFn(r) || '(empty)') === primaryKey);
   const lpRows = aggregateBy(filtered, r => r.lp);
   if (lpRows.length === 0) {
     container.innerHTML = '<p style="padding:10px 12px;font-size:0.8rem;color:var(--text-secondary)">No landing page data available.</p>';
@@ -2811,6 +2919,8 @@ function parseShopifyQL(data) {
   );
 
   const iCampaign = colNames.findIndex(s => s === 'utm_campaign');
+  const iSource   = colNames.findIndex(s => s === 'utm_source');
+  const iMedium   = colNames.findIndex(s => s === 'utm_medium');
   const iLp       = colNames.findIndex(s => s === 'landing_page_path');
   const iSess     = colNames.findIndex(s => s === 'sessions');
   const iCvr      = colNames.findIndex(s => s === 'conversion_rate');
@@ -2841,23 +2951,30 @@ function parseShopifyQL(data) {
     _shopifyTotals = null;
   }
 
-  // Optional trailing-7-day CVR per campaign+lp (window ends on the range End
-  // date). Present only on the Shopify API path, not CSV uploads. Keyed
-  // campaign||lp so it survives aggregation by campaign or by landing page.
+  // Per-source totals object built server-side: { ALL, google, youtube, ... }.
+  _sourceTotals = (data.sourceTotals && typeof data.sourceTotals === 'object') ? data.sourceTotals : {};
+  if (_shopifyTotals && !_sourceTotals.ALL) _sourceTotals.ALL = _shopifyTotals;
+
+  // Optional trailing-7-day CVR keyed campaign||source||medium||lp so it
+  // survives aggregation by campaign, source/medium, or landing page.
   const avg7Map = new Map();
   if (data.avg7d && Array.isArray(data.avg7d.rows) && Array.isArray(data.avg7d.columns)) {
     const a = data.avg7d;
     const aCols = a.columns.map(c => (c.name || '').toLowerCase());
     const aGet = (row, i) => i < 0 ? undefined : (Array.isArray(row) ? row[i] : row[a.columns[i].name]);
     const aiC   = aCols.findIndex(s => s === 'utm_campaign');
+    const aiSrc = aCols.findIndex(s => s === 'utm_source');
+    const aiMed = aCols.findIndex(s => s === 'utm_medium');
     const aiL   = aCols.findIndex(s => s === 'landing_page_path');
     const aiS   = aCols.findIndex(s => s === 'sessions');
     const aiCvr = aCols.findIndex(s => s === 'conversion_rate');
     for (const row of a.rows) {
       const c = String(aGet(row, aiC) ?? '').trim();
+      const src = String(aGet(row, aiSrc) ?? '').trim();
+      const med = String(aGet(row, aiMed) ?? '').trim();
       const l = String(aGet(row, aiL) ?? '').trim();
       if (!c && !l) continue;                       // skip totals row
-      avg7Map.set(c + '||' + l, {
+      avg7Map.set([c, src, med, l].join('||'), {
         s: Math.round(parseFloat(aGet(row, aiS)) || 0),
         c: normCvr(parseFloat(aGet(row, aiCvr)) || 0) ?? 0,
       });
@@ -2869,10 +2986,12 @@ function parseShopifyQL(data) {
     const rawC  = getVal(row, iCampaign);
     const rawLp = iLp >= 0 ? getVal(row, iLp) : '';
     const campaign = (rawC == null ? '' : String(rawC)).trim();
+    const source   = iSource >= 0 ? String(getVal(row, iSource) ?? '').trim() : '';
+    const medium   = iMedium >= 0 ? String(getVal(row, iMedium) ?? '').trim() : '';
     const lp       = (rawLp == null ? '' : String(rawLp)).trim();
 
-    // Skip totals row (both dimensions empty)
-    if (!campaign && !lp) continue;
+    // Skip totals row (all dimensions empty)
+    if (!campaign && !lp && !source && !medium) continue;
     // Skip post-conversion pages
     if (/^\/(checkout|checkouts|orders|payment-methods|gift_cards)(\/|$)/i.test(lp)) continue;
 
@@ -2882,9 +3001,11 @@ function parseShopifyQL(data) {
     const prevSRaw   = parseFloat(getVal(row, iPrevS)) || 0;
     const prevCvrRaw = parseFloat(getVal(row, iPrevCvr)) || 0;
 
-    const a7 = avg7Map.get(campaign + '||' + lp);
+    const a7 = avg7Map.get([campaign, source, medium, lp].join('||'));
     parsed.push({
       campaign,
+      source,
+      medium,
       lp,
       currS:    Math.round(sessRaw),
       currC:    normCvr(cvrRaw) ?? 0,
@@ -2950,6 +3071,7 @@ function parseAdLpQL(data) {
   );
 
   const iAd      = colNames.findIndex(s => s === 'utm_content');
+  const iSource  = colNames.findIndex(s => s === 'utm_source');
   const iLp      = colNames.findIndex(s => s === 'landing_page_path');
   const iSess    = colNames.findIndex(s => s === 'sessions');
   const iCvr     = colNames.findIndex(s => s === 'conversion_rate');
@@ -2960,6 +3082,7 @@ function parseAdLpQL(data) {
   const out = [];
   for (const row of rows) {
     const ad = String(getVal(row, iAd) ?? '').trim();
+    const source = iSource >= 0 ? String(getVal(row, iSource) ?? '').trim() : '';
     const lp = String(getVal(row, iLp) ?? '').trim();
     if (!ad && !lp) continue;
     if (/^\/(checkout|checkouts|orders|payment-methods|gift_cards)(\/|$)/i.test(lp)) continue;
@@ -2968,7 +3091,7 @@ function parseAdLpQL(data) {
     const currC    = normCvr(parseFloat(getVal(row, iCvr)) || 0) ?? 0;
     const prevSess = iPrevS   >= 0 ? Math.round(parseFloat(getVal(row, iPrevS))   || 0) : 0;
     const prevCvr  = iPrevCvr >= 0 ? (normCvr(parseFloat(getVal(row, iPrevCvr)) || 0) ?? 0) : 0;
-    out.push({ ad, lp, currS, currC, prevSess, prevCvr, parsed: parseAdTokens(ad) });
+    out.push({ ad, source, lp, currS, currC, prevSess, prevCvr, parsed: parseAdTokens(ad) });
   }
   return out;
 }
@@ -3061,14 +3184,14 @@ function syncAttrActiveStyles() {
   if (search) search.classList.toggle('ad-lp-attr-active', !!search.value);
 }
 
-async function loadAdLpData(start, end, source, medium) {
+async function loadAdLpData(start, end, sources) {
   const tbody = document.getElementById('ad-lp-tbody');
   const tfoot = document.getElementById('ad-lp-tfoot');
   tbody.innerHTML = `<tr><td colspan="7" class="ad-lp-empty">Loading top ad × landing-page combinations…</td></tr>`;
   tfoot.innerHTML = '';
   try {
-    const params = new URLSearchParams({ start, end, source, medium });
-    const resp = await fetch(`/api/meta-ad-lp-data?${params.toString()}`);
+    const params = new URLSearchParams({ start, end, sources });
+    const resp = await fetch(`/api/google-ad-lp-data?${params.toString()}`);
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
       throw new Error(err.error || `HTTP ${resp.status}`);
@@ -3103,8 +3226,9 @@ function renderAdLp() {
     pill.style.display = 'none';
   }
 
-  // Filter rows
-  let filtered = _adLpRows.filter(rowMatchesAttrFilters);
+  // Filter rows — scope to the active source first, then attribute filters.
+  let filtered = _adLpRows.filter(r => _activeSource === 'ALL' || r.source === _activeSource);
+  filtered = filtered.filter(rowMatchesAttrFilters);
   if (_adLpFilter) {
     if (_adLpFilter.type === 'ad') {
       filtered = filtered.filter(r => r.ad === _adLpFilter.value);
@@ -3313,8 +3437,7 @@ async function loadFromShopify() {
   const endDate   = document.getElementById('date-end').value;
   const compareStart = document.getElementById('compare-start').value;
   const compareEnd   = document.getElementById('compare-end').value;
-  const source    = document.getElementById('filter-source').value.trim() || 'facebook';
-  const medium    = document.getElementById('filter-medium').value.trim() || 'paid_social';
+  const sources   = (document.getElementById('filter-sources').value.trim() || 'google,youtube,demand-gen');
 
   if (!startDate || !endDate) {
     status.className = 'shopify-status error';
@@ -3336,12 +3459,12 @@ async function loadFromShopify() {
   errEl.className = 'upload-error';
 
   try {
-    const params = new URLSearchParams({ start: startDate, end: endDate, source, medium });
+    const params = new URLSearchParams({ start: startDate, end: endDate, sources });
     if (useCustomCompare) {
       params.set('compare_start', compareStart);
       params.set('compare_end',   compareEnd);
     }
-    const resp = await fetch(`/api/meta-cvr-impact-data?${params.toString()}`);
+    const resp = await fetch(`/api/google-cvr-impact-data?${params.toString()}`);
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
       throw new Error(err.error || `HTTP ${resp.status}`);
@@ -3354,7 +3477,7 @@ async function loadFromShopify() {
     const compareLabel = useCustomCompare
       ? `${compareStart} → ${compareEnd}`
       : (auto ? `${auto.start} → ${auto.end} (auto · prev period)` : 'previous period');
-    render(rows, `Shopify · ${source}/${medium} · ${startDate} → ${endDate} vs ${compareLabel}`);
+    render(rows, `Shopify · ${sources} · ${startDate} → ${endDate} vs ${compareLabel}`);
 
     const info = document.getElementById('top-bar-info');
     if (info) {
@@ -3376,7 +3499,7 @@ async function loadFromShopify() {
     }
 
     // Kick off ad × landing-page combo query (independent of main render)
-    loadAdLpData(startDate, endDate, source, medium);
+    loadAdLpData(startDate, endDate, sources);
   } catch (err) {
     status.className = 'shopify-status error';
     status.textContent = err.message;
@@ -3390,7 +3513,7 @@ async function loadFromShopify() {
 function setShopifyReportLink() {
   const ql = `FROM sessions
   SHOW sessions, conversion_rate
-  WHERE utm_source = 'facebook' AND utm_medium = 'paid_social'
+  WHERE utm_source IN ('google', 'youtube', 'demand-gen')
   GROUP BY ONLY TOP 20 utm_campaign, ONLY TOP 20 landing_page_path WITH
     GROUP_TOTALS, TOTALS, PERCENT_CHANGE
   SINCE startOfDay(-2d) UNTIL endOfDay(-1d)
@@ -3407,6 +3530,10 @@ VISUALIZE conversion_rate`;
 // ─────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   setShopifyReportLink();
+
+  // Snapshot the clean module DOM once, before any render populates it.
+  const modulesRoot = document.getElementById('gcvr-modules');
+  if (modulesRoot) _pristineModulesHTML = modulesRoot.innerHTML;
 
   document.getElementById('btn-reset').addEventListener('click', () => {
     document.getElementById('results-screen').style.display = 'none';
@@ -3442,6 +3569,31 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('btn-shopify-load').addEventListener('click', loadFromShopify);
   setupAdLpHandlers();
+
+  // ── Source switcher / grouping controls — re-render with NO refetch ──
+  document.querySelectorAll('#source-switcher .gcvr-seg__btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (btn.classList.contains('is-active')) return;
+      _activeSource = btn.dataset.source;
+      document.querySelectorAll('#source-switcher .gcvr-seg__btn')
+        .forEach(b => b.classList.toggle('is-active', b === btn));
+      rerender();
+      renderAdLp();            // ad×lp is scoped client-side too
+    });
+  });
+  document.querySelectorAll('#dim-switcher .gcvr-seg__btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (btn.classList.contains('is-active')) return;
+      _primaryDim = btn.dataset.dim;
+      document.querySelectorAll('#dim-switcher .gcvr-seg__btn')
+        .forEach(b => b.classList.toggle('is-active', b === btn));
+      rerender();
+    });
+  });
+  document.getElementById('break-by-lp').addEventListener('change', (e) => {
+    _breakByLp = e.target.checked;
+    rerender();
+  });
 });
 </script>
 </body>

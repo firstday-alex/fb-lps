@@ -2012,6 +2012,334 @@ VISUALIZE conversion_rate TYPE table`;
 });
 
 // ─────────────────────────────────────────────
+// GOOGLE CVR IMPACT — generalized multi-source version of meta-cvr-impact
+// ─────────────────────────────────────────────
+// Same session→CVR decomposition as /api/meta-cvr-impact-data, but:
+//  • filters to a SET of Google-family sources (utm_source IN (...)) instead of
+//    a single source/medium pair,
+//  • groups by utm_campaign, utm_source, utm_medium, landing_page_path so the
+//    frontend can pivot the primary dimension between campaign and source/medium,
+//  • returns a low-cardinality per-source totals block (never truncated) so the
+//    KPI row stays exact when the frontend scopes to a single source.
+app.get('/api/google-cvr-impact-data', async (req, res) => {
+  if (!SHOPIFY_URL || !SHOPIFY_TOKEN) {
+    return res.status(500).json({ error: 'Shopify credentials not configured' });
+  }
+
+  const { start, end } = req.query;
+  if (!start || !end || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+    return res.status(400).json({ error: 'start and end query params required (YYYY-MM-DD)' });
+  }
+
+  const escapeQL = (v) => String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
+  // Google-family source set. Overridable via ?sources=a,b,c
+  const sources = String(req.query.sources || 'google,youtube,demand-gen')
+    .split(',').map(s => s.trim()).filter(Boolean);
+  const inClause = sources.map(s => `'${escapeQL(s)}'`).join(', ');
+  const whereSources = `utm_source IN (${inClause})`;
+
+  // Optional custom comparison range — same mechanic as the meta endpoint.
+  const cs = req.query.compare_start;
+  const ce = req.query.compare_end;
+  const useCustomCompare = cs && ce
+    && /^\d{4}-\d{2}-\d{2}$/.test(cs) && /^\d{4}-\d{2}-\d{2}$/.test(ce);
+
+  const endpoint = `https://${SHOPIFY_URL}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
+  const gqlQuery = `query RunShopifyQL($q: String!) {
+    shopifyqlQuery(query: $q) {
+      tableData { columns { name dataType } rows }
+      parseErrors
+    }
+  }`;
+
+  const mainQuery = `FROM sessions
+  SHOW sessions, conversion_rate, average_session_duration, sessions_with_cart_additions, sessions_that_reached_checkout, sessions_that_reached_and_completed_checkout
+  WHERE ${whereSources}
+  GROUP BY utm_campaign, utm_source, utm_medium, landing_page_path WITH TOTALS, PERCENT_CHANGE
+  SINCE ${start} UNTIL ${end}
+  COMPARE TO previous_period
+  ORDER BY sessions DESC
+VISUALIZE conversion_rate TYPE table`;
+
+  const compareQuery = useCustomCompare ? `FROM sessions
+  SHOW sessions, conversion_rate
+  WHERE ${whereSources}
+  GROUP BY utm_campaign, utm_source, utm_medium, landing_page_path WITH TOTALS
+  SINCE ${cs} UNTIL ${ce}
+  ORDER BY sessions DESC` : null;
+
+  // Trailing 7-day window ending on the End date — powers "7d Avg CVR" / "vs 7d".
+  const sevenStart = (() => {
+    const d = new Date(end + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() - 6);
+    return d.toISOString().slice(0, 10);
+  })();
+  const avg7Query = `FROM sessions
+  SHOW sessions, conversion_rate
+  WHERE ${whereSources}
+  GROUP BY utm_campaign, utm_source, utm_medium, landing_page_path WITH TOTALS
+  SINCE ${sevenStart} UNTIL ${end}
+  ORDER BY sessions DESC`;
+
+  // Low-cardinality per-source totals (one row per source + a grand __totals
+  // row). Never truncated, so KPIs stay exact per source-scope even when the
+  // 4-dim main grid hits Shopify's row cap.
+  const sourceTotalsQuery = `FROM sessions
+  SHOW sessions, conversion_rate
+  WHERE ${whereSources}
+  GROUP BY utm_source WITH TOTALS
+  SINCE ${start} UNTIL ${end}
+  COMPARE TO previous_period
+  ORDER BY sessions DESC`;
+
+  console.log('\n[google-cvr-impact-data] Main query:\n' + mainQuery);
+  if (compareQuery) console.log('\n[google-cvr-impact-data] Compare query:\n' + compareQuery);
+
+  const runShopifyQL = async (q) => {
+    const resp = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
+      body: JSON.stringify({ query: gqlQuery, variables: { q } }),
+    });
+    const json = await resp.json();
+    const payload = json.data?.shopifyqlQuery;
+    if (payload?.parseErrors?.length) {
+      const err = new Error('ShopifyQL parse error: ' + JSON.stringify(payload.parseErrors));
+      err.parseErrors = payload.parseErrors;
+      throw err;
+    }
+    if (!payload?.tableData) throw new Error('No data returned from Shopify');
+    return payload.tableData;
+  };
+
+  // Build the per-source totals structure: { ALL:{...}, google:{...}, ... }.
+  // curr/prev sessions + CVR per source from the COMPARE TO previous_period
+  // columns; the ALL entry comes from the __totals columns on row[0].
+  const buildSourceTotals = (table) => {
+    if (!table || !Array.isArray(table.rows) || !Array.isArray(table.columns)) return null;
+    const names = table.columns.map(c => c.name);
+    const lc = names.map(n => (n || '').toLowerCase());
+    const idx = (n) => lc.findIndex(s => s === n);
+    const get = (row, i) => {
+      if (i < 0) return undefined;
+      return Array.isArray(row) ? row[i] : row[names[i]];
+    };
+    const norm = (v) => { const n = parseFloat(v); if (!isFinite(n)) return 0; return n > 1 ? n / 100 : n; };
+    const iSrc      = idx('utm_source');
+    const iSess     = idx('sessions');
+    const iCvr      = idx('conversion_rate');
+    const iPrevS    = lc.findIndex(s => s === 'comparison_sessions__previous_period' || s === 'comparison_sessions__yesterday');
+    const iPrevCvr  = lc.findIndex(s => s === 'comparison_conversion_rate__previous_period' || s === 'comparison_conversion_rate__yesterday');
+    const iTotS     = idx('sessions__totals');
+    const iTotCvr   = idx('conversion_rate__totals');
+    const iTotPrevS = lc.findIndex(s => s === 'comparison_sessions__previous_period__totals' || s === 'comparison_sessions__yesterday__totals');
+    const iTotPrevCvr = lc.findIndex(s => s === 'comparison_conversion_rate__previous_period__totals' || s === 'comparison_conversion_rate__yesterday__totals');
+
+    const out = {};
+    for (const row of table.rows) {
+      const src = String(get(row, iSrc) ?? '').trim();
+      if (!src) continue;                              // skip empty-dim totals row
+      out[src] = {
+        currS:   Math.round(parseFloat(get(row, iSess)) || 0),
+        currCvr: norm(get(row, iCvr)),
+        prevS:   Math.round(parseFloat(get(row, iPrevS)) || 0),
+        prevCvr: norm(get(row, iPrevCvr)),
+      };
+    }
+    if (table.rows[0] && iTotS >= 0) {
+      out.ALL = {
+        currS:   Math.round(parseFloat(get(table.rows[0], iTotS)) || 0),
+        currCvr: norm(get(table.rows[0], iTotCvr)),
+        prevS:   Math.round(parseFloat(get(table.rows[0], iTotPrevS)) || 0),
+        prevCvr: norm(get(table.rows[0], iTotPrevCvr)),
+      };
+    }
+    return out;
+  };
+
+  try {
+    const [main, compare, avg7, srcTot] = await Promise.all([
+      runShopifyQL(mainQuery),
+      compareQuery ? runShopifyQL(compareQuery) : Promise.resolve(null),
+      runShopifyQL(avg7Query).catch(e => {
+        console.warn('[google-cvr-impact-data] 7d-avg query failed:', e.message);
+        return null;
+      }),
+      runShopifyQL(sourceTotalsQuery).catch(e => {
+        console.warn('[google-cvr-impact-data] source-totals query failed:', e.message);
+        return null;
+      }),
+    ]);
+    const avg7d = avg7 ? { window: { start: sevenStart, end }, columns: avg7.columns, rows: avg7.rows } : null;
+    const sourceTotals = buildSourceTotals(srcTot);
+
+    // No custom compare → return main as-is.
+    if (!compare) {
+      return res.json({
+        query: mainQuery,
+        filter: { sources },
+        columns: main.columns,
+        rows: main.rows,
+        avg7d,
+        sourceTotals,
+      });
+    }
+
+    // Custom compare: overwrite previous_period cells keyed by
+    // campaign||source||medium||lp.
+    if (!main || !Array.isArray(main.rows) || !Array.isArray(main.columns)) {
+      throw new Error('Main Shopify response missing rows/columns array');
+    }
+    const mainColNames = main.columns.map(c => c.name);
+    const cmpColNames  = compare.columns.map(c => c.name);
+    const toArray = (row, names) => {
+      if (Array.isArray(row)) return row;
+      if (row && typeof row === 'object') return names.map(n => row[n]);
+      return [];
+    };
+    const cols = mainColNames.map(n => (n || '').toLowerCase());
+    const cmpCols = cmpColNames.map(n => (n || '').toLowerCase());
+    const idx = (arr, n) => arr.findIndex(s => s === n);
+
+    const iCampaign      = idx(cols, 'utm_campaign');
+    const iSource        = idx(cols, 'utm_source');
+    const iMedium        = idx(cols, 'utm_medium');
+    const iLp            = idx(cols, 'landing_page_path');
+    const iMainPrevS     = idx(cols, 'comparison_sessions__previous_period');
+    const iMainPrevCvr   = idx(cols, 'comparison_conversion_rate__previous_period');
+    const iMainPrevSTot  = idx(cols, 'comparison_sessions__previous_period__totals');
+    const iMainPrevCvrTot= idx(cols, 'comparison_conversion_rate__previous_period__totals');
+
+    const cmpICampaign   = idx(cmpCols, 'utm_campaign');
+    const cmpISource     = idx(cmpCols, 'utm_source');
+    const cmpIMedium     = idx(cmpCols, 'utm_medium');
+    const cmpILp         = idx(cmpCols, 'landing_page_path');
+    const cmpISess       = idx(cmpCols, 'sessions');
+    const cmpICvr        = idx(cmpCols, 'conversion_rate');
+    const cmpISessTot    = idx(cmpCols, 'sessions__totals');
+    const cmpICvrTot     = idx(cmpCols, 'conversion_rate__totals');
+
+    const keyOf = (arr, ic, isrc, imed, ilp) =>
+      String(arr[ic] ?? '').trim() + '||' + String(arr[isrc] ?? '').trim() +
+      '||' + String(arr[imed] ?? '').trim() + '||' + String(arr[ilp] ?? '').trim();
+
+    const cmpMap = new Map();
+    const cmpTotals = compare.rows.length > 0 ? toArray(compare.rows[0], cmpColNames) : null;
+    for (const row of compare.rows) {
+      const arr = toArray(row, cmpColNames);
+      const c = String(arr[cmpICampaign] ?? '').trim();
+      const l = String(arr[cmpILp] ?? '').trim();
+      if (!c && !l) continue;
+      cmpMap.set(keyOf(arr, cmpICampaign, cmpISource, cmpIMedium, cmpILp), arr);
+    }
+
+    let matched = 0, unmatched = 0;
+    const newRows = main.rows.map(row => {
+      const arr = toArray(row, mainColNames).slice();
+      const c = String(arr[iCampaign] ?? '').trim();
+      const l = String(arr[iLp] ?? '').trim();
+      const isTotalsRow = !c && !l;
+      const cmpRow = isTotalsRow ? cmpTotals
+        : cmpMap.get(keyOf(arr, iCampaign, iSource, iMedium, iLp));
+      if (cmpRow) matched++; else if (!isTotalsRow) unmatched++;
+
+      if (iMainPrevS >= 0)   arr[iMainPrevS]   = cmpRow != null && cmpISess >= 0 ? cmpRow[cmpISess] : null;
+      if (iMainPrevCvr >= 0) arr[iMainPrevCvr] = cmpRow != null && cmpICvr  >= 0 ? cmpRow[cmpICvr]  : null;
+      if (iMainPrevSTot >= 0)   arr[iMainPrevSTot]   = cmpTotals != null && cmpISessTot >= 0 ? cmpTotals[cmpISessTot] : null;
+      if (iMainPrevCvrTot >= 0) arr[iMainPrevCvrTot] = cmpTotals != null && cmpICvrTot  >= 0 ? cmpTotals[cmpICvrTot]  : null;
+      return arr;
+    });
+
+    const mergeStats = {
+      main_rows: main.rows.length,
+      compare_rows: compare.rows.length,
+      compare_keys_indexed: cmpMap.size,
+      matched_keys: matched,
+      unmatched_keys: unmatched,
+    };
+    console.log('[google-cvr-impact-data] custom-compare merge:', mergeStats);
+
+    res.json({
+      query: mainQuery,
+      compare_query: compareQuery,
+      filter: { sources },
+      compare_window: { start: cs, end: ce },
+      merge_stats: mergeStats,
+      columns: main.columns,
+      rows: newRows,
+      avg7d,
+      sourceTotals,
+    });
+  } catch (err) {
+    console.error('Google CVR impact data error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Google Ad (utm_content) × landing_page_path combos ---
+// Adds utm_source to the GROUP BY so the frontend can filter by the source
+// switcher (google / youtube / demand-gen / all).
+app.get('/api/google-ad-lp-data', async (req, res) => {
+  if (!SHOPIFY_URL || !SHOPIFY_TOKEN) {
+    return res.status(500).json({ error: 'Shopify credentials not configured' });
+  }
+
+  const { start, end } = req.query;
+  if (!start || !end || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+    return res.status(400).json({ error: 'start and end query params required (YYYY-MM-DD)' });
+  }
+
+  const escapeQL = (v) => String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  const sources = String(req.query.sources || 'google,youtube,demand-gen')
+    .split(',').map(s => s.trim()).filter(Boolean);
+  const inClause = sources.map(s => `'${escapeQL(s)}'`).join(', ');
+
+  const endpoint = `https://${SHOPIFY_URL}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
+  const gqlQuery = `query RunShopifyQL($q: String!) {
+    shopifyqlQuery(query: $q) {
+      tableData { columns { name dataType } rows }
+      parseErrors
+    }
+  }`;
+
+  const mainQuery = `FROM sessions
+  SHOW sessions, conversion_rate
+  WHERE utm_source IN (${inClause})
+  GROUP BY utm_content, utm_source, landing_page_path WITH PERCENT_CHANGE
+  SINCE ${start} UNTIL ${end}
+  COMPARE TO previous_period
+  ORDER BY sessions DESC
+VISUALIZE conversion_rate TYPE table`;
+
+  console.log('\n[google-ad-lp-data] Query:\n' + mainQuery);
+
+  try {
+    const resp = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
+      body: JSON.stringify({ query: gqlQuery, variables: { q: mainQuery } }),
+    });
+    const json = await resp.json();
+    const payload = json.data?.shopifyqlQuery;
+    if (payload?.parseErrors?.length) {
+      return res.status(500).json({ error: 'ShopifyQL parse error', details: payload.parseErrors });
+    }
+    if (!payload?.tableData) throw new Error('No data returned from Shopify');
+
+    res.json({
+      query: mainQuery,
+      filter: { sources },
+      columns: payload.tableData.columns,
+      rows: payload.tableData.rows,
+    });
+  } catch (err) {
+    console.error('Google ad-lp data error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────
 // DIAGNOSTIC DASHBOARD — bucketing-criteria persistence
 // ─────────────────────────────────────────────
 // Storage strategy:
