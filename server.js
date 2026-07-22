@@ -2476,6 +2476,222 @@ app.post('/api/diag-criteria', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────
+// DAILY BRIEF + DAILY REPORT
+// ─────────────────────────────────────────────
+// /api/daily-brief  — DETERMINISTIC. Runs a compact set of ShopifyQL queries
+//   for a single day vs the prior day and returns the key figures for every
+//   Shopify-backed tab. No interpretation — the numbers are computed by code so
+//   the narrative layer (a scheduled Claude agent) can cite them without any
+//   risk of hallucinated values.
+// /api/daily-report — the agent POSTs its grounded narrative here (token-gated);
+//   /daily-report.html renders the latest. Stored in Vercel KV (falls back to a
+//   JSON file locally), same mechanism as diag-criteria.
+
+const REPORT_TOKEN = process.env.DAILY_REPORT_TOKEN || '';
+const REPORT_KV_KEY = 'daily-report';
+const REPORT_FILE = process.env.DAILY_REPORT_FILE
+  || (process.env.VERCEL ? '/tmp/daily-report.json' : path.join(__dirname, 'data', 'daily-report.json'));
+
+async function readStoredReport() {
+  if (kvClient) { const v = await kvClient.get(REPORT_KV_KEY); return v && typeof v === 'object' ? v : null; }
+  try { return JSON.parse(await fsp.readFile(REPORT_FILE, 'utf8')); }
+  catch (err) { if (err.code === 'ENOENT') return null; throw err; }
+}
+async function writeStoredReport(data) {
+  if (kvClient) { await kvClient.set(REPORT_KV_KEY, data); return { label: 'Vercel KV' }; }
+  await fsp.mkdir(path.dirname(REPORT_FILE), { recursive: true });
+  await fsp.writeFile(REPORT_FILE, JSON.stringify(data, null, 2), 'utf8');
+  return { label: REPORT_FILE };
+}
+// When no token is configured, endpoints stay open (dev convenience) with a warning.
+function reportTokenOk(supplied) { return !REPORT_TOKEN || supplied === REPORT_TOKEN; }
+
+app.get('/api/daily-brief', async (req, res) => {
+  if (!SHOPIFY_URL || !SHOPIFY_TOKEN) {
+    return res.status(500).json({ error: 'Shopify credentials not configured' });
+  }
+
+  const escapeQL = (v) => String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  // Day to report on — default yesterday (server local date). Override ?date=YYYY-MM-DD.
+  let day = req.query.date;
+  if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+    const d = new Date(); d.setDate(d.getDate() - 1);
+    day = d.toISOString().slice(0, 10);
+  }
+  const googleIn = "utm_source IN ('google', 'youtube', 'demand-gen')";
+
+  const endpoint = `https://${SHOPIFY_URL}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
+  const gqlQuery = `query RunShopifyQL($q: String!) {
+    shopifyqlQuery(query: $q) { tableData { columns { name dataType } rows } parseErrors }
+  }`;
+  const runQL = async (q) => {
+    const resp = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
+      body: JSON.stringify({ query: gqlQuery, variables: { q } }),
+    });
+    const json = await resp.json();
+    const p = json.data?.shopifyqlQuery;
+    if (p?.parseErrors?.length) throw new Error('ShopifyQL: ' + JSON.stringify(p.parseErrors));
+    if (!p?.tableData) throw new Error('No data');
+    return p.tableData;
+  };
+  // Row accessor that tolerates array OR object rows.
+  const mkGet = (cols) => {
+    const names = cols.map(c => c.name);
+    const lc = names.map(n => (n || '').toLowerCase());
+    return {
+      idx: (n) => lc.findIndex(s => s === n),
+      prior: (m) => lc.findIndex(s => s === `comparison_${m}__previous_period` || s === `comparison_${m}__yesterday`),
+      get: (row, i) => i < 0 ? undefined : (Array.isArray(row) ? row[i] : row[names[i]]),
+    };
+  };
+  const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
+  const normCvr = (v) => { const n = num(v); return n > 1 ? n / 100 : n; };
+
+  const errors = [];
+  const brief = { date: day, compare: 'previous day (COMPARE TO previous_period)', generatedAt: new Date().toISOString() };
+
+  // 1) Overall totals + funnel steps (single totals row).
+  const overallQuery = `FROM sessions
+  SHOW sessions, conversion_rate, sessions_with_cart_additions, sessions_that_reached_checkout, sessions_that_reached_and_completed_checkout
+  SINCE ${day} UNTIL ${day}
+  COMPARE TO previous_period`;
+
+  // 2) By channel (utm_source), top 15.
+  const channelQuery = `FROM sessions
+  SHOW sessions, conversion_rate
+  GROUP BY utm_source
+  SINCE ${day} UNTIL ${day}
+  COMPARE TO previous_period
+  ORDER BY sessions DESC`;
+
+  const campaignQuery = (whereClause) => `FROM sessions
+  SHOW sessions, conversion_rate
+  WHERE ${whereClause}
+  GROUP BY utm_campaign
+  SINCE ${day} UNTIL ${day}
+  COMPARE TO previous_period
+  ORDER BY sessions DESC`;
+
+  const aovQuery = `FROM sales
+  SHOW average_order_value, total_sales, orders
+  SINCE ${day} UNTIL ${day}
+  COMPARE TO previous_period`;
+
+  const [overall, channels, google, meta, aov] = await Promise.all([
+    runQL(overallQuery).catch(e => { errors.push('overall: ' + e.message); return null; }),
+    runQL(channelQuery).catch(e => { errors.push('channels: ' + e.message); return null; }),
+    runQL(campaignQuery(googleIn)).catch(e => { errors.push('google: ' + e.message); return null; }),
+    runQL(campaignQuery("utm_source = 'facebook' AND utm_medium = 'paid_social'")).catch(e => { errors.push('meta: ' + e.message); return null; }),
+    runQL(aovQuery).catch(e => { errors.push('aov: ' + e.message); return null; }),
+  ]);
+
+  // Overall
+  if (overall && overall.rows[0]) {
+    const g = mkGet(overall.columns);
+    const r = overall.rows[0];
+    const iSess = g.idx('sessions'), iCvr = g.idx('conversion_rate');
+    const iCart = g.idx('sessions_with_cart_additions'), iCk = g.idx('sessions_that_reached_checkout'), iDone = g.idx('sessions_that_reached_and_completed_checkout');
+    const currSess = Math.round(num(g.get(r, iSess))), prevSess = Math.round(num(g.get(r, g.prior('sessions'))));
+    const currCvr = normCvr(g.get(r, iCvr)), prevCvr = normCvr(g.get(r, g.prior('conversion_rate')));
+    const cart = Math.round(num(g.get(r, iCart))), ck = Math.round(num(g.get(r, iCk))), done = Math.round(num(g.get(r, iDone)));
+    brief.overall = {
+      sessions: { curr: currSess, prev: prevSess },
+      cvr: { curr: currCvr, prev: prevCvr },
+      transactions: { curr: Math.round(currSess * currCvr), prev: Math.round(prevSess * prevCvr) },
+      funnel: {
+        addToCartRate: currSess > 0 ? cart / currSess : 0,
+        reachedCheckoutRate: currSess > 0 ? ck / currSess : 0,
+        completedCheckoutRate: currSess > 0 ? done / currSess : 0,
+      },
+    };
+  }
+
+  // By channel
+  if (channels) {
+    const g = mkGet(channels.columns);
+    const iSrc = g.idx('utm_source'), iSess = g.idx('sessions'), iCvr = g.idx('conversion_rate');
+    const iPS = g.prior('sessions'), iPC = g.prior('conversion_rate');
+    brief.channels = channels.rows.map(r => {
+      const src = String(g.get(r, iSrc) ?? '').trim();
+      if (!src) return null;
+      const cs = Math.round(num(g.get(r, iSess))), ps = Math.round(num(g.get(r, iPS)));
+      const cc = normCvr(g.get(r, iCvr)), pc = normCvr(g.get(r, iPC));
+      return { source: src, sessions: { curr: cs, prev: ps }, cvr: { curr: cc, prev: pc }, transactions: { curr: Math.round(cs * cc), prev: Math.round(ps * pc) } };
+    }).filter(Boolean).slice(0, 15);
+  }
+
+  // Campaign movers (google / meta) — top by |transaction change|, keep top 8.
+  const topCampaigns = (table) => {
+    if (!table) return [];
+    const g = mkGet(table.columns);
+    const iC = g.idx('utm_campaign'), iSess = g.idx('sessions'), iCvr = g.idx('conversion_rate');
+    const iPS = g.prior('sessions'), iPC = g.prior('conversion_rate');
+    return table.rows.map(r => {
+      const c = String(g.get(r, iC) ?? '').trim();
+      if (!c) return null;
+      const cs = Math.round(num(g.get(r, iSess))), ps = Math.round(num(g.get(r, iPS)));
+      const cc = normCvr(g.get(r, iCvr)), pc = normCvr(g.get(r, iPC));
+      return { campaign: c, sessions: { curr: cs, prev: ps }, cvr: { curr: cc, prev: pc }, transactions: { curr: Math.round(cs * cc), prev: Math.round(ps * pc) } };
+    }).filter(Boolean)
+      .sort((a, b) => Math.abs(b.transactions.curr - b.transactions.prev) - Math.abs(a.transactions.curr - a.transactions.prev))
+      .slice(0, 8);
+  };
+  brief.googleCampaigns = topCampaigns(google);
+  brief.metaCampaigns = topCampaigns(meta);
+
+  // AOV (overall only — sales dataset has no utm_source dimension).
+  if (aov && aov.rows[0]) {
+    const g = mkGet(aov.columns);
+    const r = aov.rows[0];
+    const iAov = g.idx('average_order_value'), iTs = g.idx('total_sales'), iOrd = g.idx('orders');
+    brief.aov = {
+      averageOrderValue: { curr: num(g.get(r, iAov)), prev: num(g.get(r, g.prior('average_order_value'))) },
+      totalSales: { curr: num(g.get(r, iTs)), prev: num(g.get(r, g.prior('total_sales'))) },
+      orders: { curr: Math.round(num(g.get(r, iOrd))), prev: Math.round(num(g.get(r, g.prior('orders')))) },
+    };
+  }
+
+  if (errors.length) brief.errors = errors;
+  res.json(brief);
+});
+
+app.get('/api/daily-report', async (req, res) => {
+  if (!reportTokenOk(req.query.key)) return res.status(401).json({ error: 'Invalid or missing key' });
+  try {
+    const stored = await readStoredReport();
+    if (!stored) return res.json({ report: null, message: 'No report generated yet.' });
+    res.json(stored);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/daily-report', async (req, res) => {
+  const supplied = req.get('x-report-token') || req.query.token;
+  if (!reportTokenOk(supplied)) return res.status(401).json({ error: 'Invalid or missing token' });
+  const body = req.body || {};
+  if (!body.markdown && !body.html) {
+    return res.status(400).json({ error: 'Provide `markdown` (preferred) or `html` in the body.' });
+  }
+  const record = {
+    date: typeof body.date === 'string' ? body.date.slice(0, 40) : null,
+    markdown: typeof body.markdown === 'string' ? body.markdown.slice(0, 60000) : null,
+    html: typeof body.html === 'string' ? body.html.slice(0, 120000) : null,
+    brief: body.brief && typeof body.brief === 'object' ? body.brief : null,
+    generatedAt: new Date().toISOString(),
+    generatedBy: typeof body.generatedBy === 'string' ? body.generatedBy.slice(0, 120) : 'scheduled-agent',
+  };
+  try {
+    const result = await writeStoredReport(record);
+    console.log(`[daily-report POST] wrote ${record.markdown ? record.markdown.length : (record.html || '').length} chars to ${result.label}`);
+    res.json({ saved: true, date: record.date, storage: result.label });
+  } catch (err) {
+    console.error('[daily-report POST] error:', err);
+    res.status(500).json({ error: 'Failed to save: ' + err.message });
+  }
+});
+
+// ─────────────────────────────────────────────
 // DIAGNOSTIC DASHBOARD — Meta ad-level insights with comparison window
 // ─────────────────────────────────────────────
 app.get('/api/diag-meta', requireAuth, async (req, res) => {

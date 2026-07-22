@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Daily Analysis · Firstday</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    :root { --fb-blue:#1877f2; --positive:#0a8a44; --negative:#c02b2b; --text-secondary:#5b6472; }
+    body { background:#f0f2f5; margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:#1c1e21; }
+    header { background:var(--fb-blue); color:#fff; padding:16px 24px; display:flex; align-items:center; gap:16px; }
+    header a.back { color:rgba(255,255,255,0.9); text-decoration:none; font-size:0.85rem; border:1px solid rgba(255,255,255,0.35); padding:5px 12px; border-radius:6px; }
+    header h1 { font-size:1.25rem; margin:0; }
+    header p { margin:2px 0 0; font-size:0.82rem; color:rgba(255,255,255,0.85); }
+    .wrap { max-width:900px; margin:0 auto; padding:24px 20px 80px; }
+    .meta-line { color:var(--text-secondary); font-size:0.85rem; margin-bottom:18px; }
+    .card { background:#fff; border-radius:12px; padding:24px 28px; box-shadow:0 1px 3px rgba(0,0,0,0.08); margin-bottom:20px; }
+    .narrative h1 { font-size:1.5rem; margin:0 0 12px; }
+    .narrative h2 { font-size:1.15rem; margin:22px 0 8px; padding-top:14px; border-top:1px solid #eceff3; }
+    .narrative h3 { font-size:1rem; margin:16px 0 6px; }
+    .narrative p { line-height:1.6; margin:8px 0; }
+    .narrative ul { margin:8px 0; padding-left:22px; line-height:1.6; }
+    .narrative li { margin:3px 0; }
+    .narrative strong { font-weight:700; }
+    .narrative code { background:#eef1f6; padding:1px 5px; border-radius:4px; font-size:0.9em; }
+    .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin:8px 0 4px; }
+    .kpi { background:#f7f9fc; border-radius:8px; padding:12px 14px; }
+    .kpi__label { font-size:0.7rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-secondary); font-weight:700; }
+    .kpi__value { font-size:1.5rem; font-weight:700; margin-top:2px; }
+    .kpi__sub { font-size:0.78rem; color:var(--text-secondary); }
+    .up { color:var(--positive); } .down { color:var(--negative); }
+    table.nums { width:100%; border-collapse:collapse; font-size:0.85rem; margin-top:8px; }
+    table.nums th, table.nums td { text-align:right; padding:6px 10px; border-bottom:1px solid #eceff3; }
+    table.nums th:first-child, table.nums td:first-child { text-align:left; }
+    table.nums th { color:var(--text-secondary); font-size:0.72rem; text-transform:uppercase; letter-spacing:0.03em; }
+    details > summary { cursor:pointer; font-weight:600; color:var(--fb-blue); font-size:0.85rem; padding:6px 0; }
+    .status { padding:40px; text-align:center; color:var(--text-secondary); }
+    .status.err { color:var(--negative); }
+  </style>
+</head>
+<body>
+<header>
+  <a class="back" href="/">&#8592; Ads Viewer</a>
+  <div>
+    <h1>Daily Conversion Analysis</h1>
+    <p>Auto-generated each weekday morning · grounded in Shopify session data</p>
+  </div>
+</header>
+<div class="wrap" id="wrap">
+  <div class="status" id="status">Loading…</div>
+</div>
+
+<script>
+const params = new URLSearchParams(location.search);
+const key = params.get('key') || '';
+const fmtN = n => (n==null||!isFinite(n)) ? '—' : Math.round(n).toLocaleString();
+const fmtPct = (n,d=1) => (n==null||!isFinite(n)) ? '—' : (n>0?'+':'')+n.toFixed(d)+'%';
+const fmtPP = n => (n==null||!isFinite(n)) ? '—' : (n>0?'+':'')+n.toFixed(2)+'pp';
+const fmtMoney = n => (n==null||!isFinite(n)) ? '—' : '$'+n.toLocaleString(undefined,{maximumFractionDigits:0});
+const cls = n => n>0?'up':(n<0?'down':'');
+const esc = s => String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+// Minimal, safe markdown → HTML (headings, bold, inline code, unordered lists,
+// paragraphs). Input is escaped first so no raw HTML from the report is injected.
+function mdToHtml(md){
+  if(!md) return '';
+  const lines = md.replace(/\r\n/g,'\n').split('\n');
+  let html='', inList=false;
+  const inline = t => esc(t)
+    .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
+    .replace(/`(.+?)`/g,'<code>$1</code>');
+  for(let raw of lines){
+    const line = raw.trimEnd();
+    const li = line.match(/^\s*[-*]\s+(.*)$/);
+    if(li){ if(!inList){html+='<ul>';inList=true;} html+='<li>'+inline(li[1])+'</li>'; continue; }
+    if(inList){ html+='</ul>'; inList=false; }
+    if(/^###\s+/.test(line)) html+='<h3>'+inline(line.replace(/^###\s+/,''))+'</h3>';
+    else if(/^##\s+/.test(line)) html+='<h2>'+inline(line.replace(/^##\s+/,''))+'</h2>';
+    else if(/^#\s+/.test(line)) html+='<h1>'+inline(line.replace(/^#\s+/,''))+'</h1>';
+    else if(line==='') { /* blank */ }
+    else html+='<p>'+inline(line)+'</p>';
+  }
+  if(inList) html+='</ul>';
+  return html;
+}
+
+function deltaPct(curr, prev){ return prev>0 ? (curr-prev)/prev*100 : null; }
+
+function renderBrief(b){
+  if(!b) return '';
+  let h = '';
+  const o = b.overall;
+  if(o && o.sessions){
+    const sess=o.sessions||{}, cvr=o.cvr||{}, txn=o.transactions||{};
+    const sPct=deltaPct(sess.curr,sess.prev);
+    const cvrPP=(cvr.curr!=null&&cvr.prev!=null)?(cvr.curr-cvr.prev)*100:null;
+    const tPct=deltaPct(txn.curr,txn.prev);
+    h += `<div class="kpis">
+      <div class="kpi"><div class="kpi__label">Sessions</div><div class="kpi__value">${fmtN(sess.curr)}</div><div class="kpi__sub ${cls(sPct)}">${fmtPct(sPct)} vs prior day</div></div>
+      <div class="kpi"><div class="kpi__label">Conversion Rate</div><div class="kpi__value">${cvr.curr!=null?(cvr.curr*100).toFixed(2)+'%':'—'}</div><div class="kpi__sub ${cls(cvrPP)}">${fmtPP(cvrPP)}</div></div>
+      <div class="kpi"><div class="kpi__label">Transactions</div><div class="kpi__value">${fmtN(txn.curr)}</div><div class="kpi__sub ${cls(tPct)}">${fmtPct(tPct)}</div></div>`;
+    if(b.aov && b.aov.averageOrderValue){
+      const a=b.aov.averageOrderValue; const aPct=deltaPct(a.curr,a.prev);
+      h += `<div class="kpi"><div class="kpi__label">Avg Order Value</div><div class="kpi__value">${fmtMoney(a.curr)}</div><div class="kpi__sub ${cls(aPct)}">${fmtPct(aPct)}</div></div>`;
+    }
+    h += `</div>`;
+    if(o.funnel){
+      const f=o.funnel;
+      h += `<p style="font-size:0.82rem;color:var(--text-secondary);margin-top:10px">Funnel: add-to-cart ${((f.addToCartRate||0)*100).toFixed(1)}% · reached checkout ${((f.reachedCheckoutRate||0)*100).toFixed(1)}% · completed ${((f.completedCheckoutRate||0)*100).toFixed(1)}%</p>`;
+    }
+  }
+  const chanTable = (rows, title) => {
+    if(!rows || !rows.length) return '';
+    let t = `<h3>${esc(title)}</h3><table class="nums"><thead><tr><th>${title.includes('Campaign')?'Campaign':'Channel'}</th><th>Sessions</th><th>Δ Sess</th><th>CVR</th><th>Δ CVR</th><th>Txns</th></tr></thead><tbody>`;
+    rows.forEach(r=>{
+      const sd=deltaPct(r.sessions.curr,r.sessions.prev);
+      const cvrpp=(r.cvr.curr-r.cvr.prev)*100;
+      const name = r.source || r.campaign || '(none)';
+      t += `<tr><td title="${esc(name)}">${esc(name.length>40?name.slice(0,38)+'…':name)}</td><td>${fmtN(r.sessions.curr)}</td><td class="${cls(sd)}">${fmtPct(sd)}</td><td>${(r.cvr.curr*100).toFixed(2)}%</td><td class="${cls(cvrpp)}">${fmtPP(cvrpp)}</td><td>${fmtN(r.transactions.curr)}</td></tr>`;
+    });
+    return t+'</tbody></table>';
+  };
+  h += chanTable(b.channels,'By Channel (utm_source)');
+  h += chanTable(b.googleCampaigns,'Top Google Campaigns');
+  h += chanTable(b.metaCampaigns,'Top Meta Campaigns');
+  if(b.errors && b.errors.length) h += `<p style="font-size:0.78rem;color:var(--negative);margin-top:10px">Data notes: ${esc(b.errors.join('; '))}</p>`;
+  return h;
+}
+
+(async () => {
+  const status = document.getElementById('status');
+  const wrap = document.getElementById('wrap');
+  try {
+    const resp = await fetch(`/api/daily-report?key=${encodeURIComponent(key)}`);
+    if(resp.status===401){ status.className='status err'; status.textContent='Access denied — append ?key=<token> to the URL.'; return; }
+    const data = await resp.json();
+    if(!data || data.report===null){ status.textContent = data && data.message ? data.message : 'No report generated yet. The first one arrives after the next scheduled run.'; return; }
+    const genLine = `Report for ${esc(data.date||'—')} · generated ${data.generatedAt?new Date(data.generatedAt).toLocaleString():'—'}`;
+    wrap.innerHTML = `
+      <div class="meta-line">${genLine}</div>
+      <div class="card"><div class="kpis-wrap" id="brief"></div></div>
+      <div class="card"><div class="narrative" id="narrative"></div></div>
+    `;
+    // Render brief and narrative independently — a failure in one must not blank the other.
+    try { document.getElementById('brief').innerHTML = renderBrief(data.brief); }
+    catch(e){ document.getElementById('brief').innerHTML = '<p style="color:var(--negative);font-size:0.8rem">Could not render numbers: '+esc(e.message)+'</p>'; }
+    try {
+      document.getElementById('narrative').innerHTML = data.markdown
+        ? mdToHtml(data.markdown)
+        : '<p style="color:var(--text-secondary)">No narrative provided.</p>';
+    } catch(e){ document.getElementById('narrative').innerHTML = '<p style="color:var(--negative)">Could not render narrative: '+esc(e.message)+'</p>'; }
+    // Note: markdown is escaped before conversion; raw `html` field is intentionally
+    // not injected (avoids unsafe HTML from the stored report).
+  } catch (err) {
+    status.className='status err'; status.textContent = 'Error loading report: ' + err.message;
+  }
+})();
+</script>
+</body>
+</html>
