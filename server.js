@@ -2506,14 +2506,10 @@ async function writeStoredReport(data) {
 // When no token is configured, endpoints stay open (dev convenience) with a warning.
 function reportTokenOk(supplied) { return !REPORT_TOKEN || supplied === REPORT_TOKEN; }
 
-app.get('/api/daily-brief', async (req, res) => {
-  if (!SHOPIFY_URL || !SHOPIFY_TOKEN) {
-    return res.status(500).json({ error: 'Shopify credentials not configured' });
-  }
-
-  const escapeQL = (v) => String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-  // Day to report on — default yesterday (server local date). Override ?date=YYYY-MM-DD.
-  let day = req.query.date;
+// Compute the deterministic daily brief for a given day (YYYY-MM-DD; default
+// yesterday). Shared by GET /api/daily-brief and the cron generate endpoint.
+async function buildDailyBrief(day) {
+  if (!SHOPIFY_URL || !SHOPIFY_TOKEN) throw new Error('Shopify credentials not configured');
   if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) {
     const d = new Date(); d.setDate(d.getDate() - 1);
     day = d.toISOString().slice(0, 10);
@@ -2654,7 +2650,90 @@ app.get('/api/daily-brief', async (req, res) => {
   }
 
   if (errors.length) brief.errors = errors;
-  res.json(brief);
+  return brief;
+}
+
+app.get('/api/daily-brief', async (req, res) => {
+  try {
+    const brief = await buildDailyBrief(req.query.date);
+    res.json(brief);
+  } catch (err) {
+    console.error('[daily-brief] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Server-side narrative generation (driven by Vercel Cron) ──
+// Computes the deterministic brief, then calls the Claude Messages API to write
+// a grounded markdown analysis from ONLY those numbers, and stores it in KV.
+// Auth: Vercel Cron sends `Authorization: Bearer $CRON_SECRET`; manual runs may
+// pass ?token=$DAILY_REPORT_TOKEN.
+async function callClaudeForNarrative(brief) {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error('ANTHROPIC_API_KEY not configured');
+  const model = process.env.DAILY_REPORT_MODEL || 'claude-opus-4-8';
+  const prompt = `You write Firstday's daily conversion analysis for a busy operator (graspable in ~60 seconds).
+
+CRITICAL RULE: use ONLY numbers present in the BRIEF JSON below. Never invent, estimate, or extrapolate any figure. Cite the actual values (round sensibly). If a section has no data, say so rather than guessing.
+
+Write markdown with these sections:
+# Daily Analysis — ${brief.date}
+## Headline — what moved in sessions / CVR / transactions vs the prior day and why it matters (2-3 sentences).
+## Channels — biggest session and CVR movers among channels[]; name the drags and the bright spots.
+## Paid campaigns — notable movers in googleCampaigns[] and metaCampaigns[].
+## AOV & funnel — AOV change and any funnel-step signal.
+## What to check — 2-4 concrete follow-ups, referencing the relevant dashboard tab (Google CVR Impact, Meta CVR Impact, Funnel Breakdown, AOV Impact).
+Prefer short bullets over prose. Output ONLY the markdown, no preamble.
+
+BRIEF:
+${JSON.stringify(brief)}`;
+
+  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: 4000,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  });
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(`Claude API ${resp.status}: ${JSON.stringify(data).slice(0, 300)}`);
+  if (data.stop_reason === 'refusal') throw new Error('Claude refused to generate the report');
+  const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+  if (!text) throw new Error('Empty narrative from Claude');
+  return text;
+}
+
+app.get('/api/generate-daily-report', async (req, res) => {
+  const auth = req.get('authorization') || '';
+  const cronOk = process.env.CRON_SECRET && auth === `Bearer ${process.env.CRON_SECRET}`;
+  const tokenOk = REPORT_TOKEN && req.query.token === REPORT_TOKEN;
+  // If neither secret is configured, allow (dev convenience) with a warning.
+  const gated = !!(process.env.CRON_SECRET || REPORT_TOKEN);
+  if (gated && !cronOk && !tokenOk) return res.status(401).json({ error: 'Unauthorized' });
+
+  try {
+    const brief = await buildDailyBrief(req.query.date);
+    const markdown = await callClaudeForNarrative(brief);
+    const record = {
+      date: brief.date,
+      markdown,
+      brief,
+      generatedAt: new Date().toISOString(),
+      generatedBy: cronOk ? 'vercel-cron' : 'manual',
+    };
+    const result = await writeStoredReport(record);
+    console.log(`[generate-daily-report] ${brief.date} · ${markdown.length} chars → ${result.label}`);
+    res.json({ ok: true, date: brief.date, chars: markdown.length, generatedBy: record.generatedBy });
+  } catch (err) {
+    console.error('[generate-daily-report] error:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get('/api/daily-report', async (req, res) => {
