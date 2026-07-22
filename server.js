@@ -2511,7 +2511,15 @@ function reportTokenOk(supplied) { return !REPORT_TOKEN || supplied === REPORT_T
 async function buildDailyBrief(day) {
   if (!SHOPIFY_URL || !SHOPIFY_TOKEN) throw new Error('Shopify credentials not configured');
   if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) {
-    const d = new Date(); d.setDate(d.getDate() - 1);
+    // Yesterday in the business timezone (not server UTC) so it's always the
+    // last COMPLETE day. Vercel runs in UTC (7h ahead of PT), so a UTC-based
+    // "yesterday" can land on the store's partial current day.
+    const tz = process.env.DAILY_REPORT_TZ || 'America/Los_Angeles';
+    const todayLocal = new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date());                       // "YYYY-MM-DD" in the business tz
+    const d = new Date(todayLocal + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() - 1);            // step back one full local day
     day = d.toISOString().slice(0, 10);
   }
   const googleIn = "utm_source IN ('google', 'youtube', 'demand-gen')";
