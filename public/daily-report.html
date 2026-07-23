@@ -94,14 +94,17 @@ function renderBrief(b){
     const sess=o.sessions||{}, cvr=o.cvr||{}, txn=o.transactions||{};
     const sPct=deltaPct(sess.curr,sess.prev);
     const cvrPP=(cvr.curr!=null&&cvr.prev!=null)?(cvr.curr-cvr.prev)*100:null;
+    const cvrRel=deltaPct(cvr.curr,cvr.prev);
     const tPct=deltaPct(txn.curr,txn.prev);
     h += `<div class="kpis">
       <div class="kpi"><div class="kpi__label">Sessions</div><div class="kpi__value">${fmtN(sess.curr)}</div><div class="kpi__sub ${cls(sPct)}">${fmtPct(sPct)} vs prior day</div></div>
-      <div class="kpi"><div class="kpi__label">Conversion Rate</div><div class="kpi__value">${cvr.curr!=null?(cvr.curr*100).toFixed(2)+'%':'—'}</div><div class="kpi__sub ${cls(cvrPP)}">${fmtPP(cvrPP)}</div></div>
+      <div class="kpi"><div class="kpi__label">Conversion Rate</div><div class="kpi__value">${cvr.curr!=null?(cvr.curr*100).toFixed(2)+'%':'—'}</div><div class="kpi__sub ${cls(cvrPP)}">${fmtPP(cvrPP)} (${fmtPct(cvrRel)})</div></div>
       <div class="kpi"><div class="kpi__label">Transactions</div><div class="kpi__value">${fmtN(txn.curr)}</div><div class="kpi__sub ${cls(tPct)}">${fmtPct(tPct)}</div></div>`;
     if(b.aov && b.aov.averageOrderValue){
       const a=b.aov.averageOrderValue; const aPct=deltaPct(a.curr,a.prev);
-      h += `<div class="kpi"><div class="kpi__label">Avg Order Value</div><div class="kpi__value">${fmtMoney(a.curr)}</div><div class="kpi__sub ${cls(aPct)}">${fmtPct(aPct)}</div></div>`;
+      const scope = b.aov.scope || 'Online Store channel';
+      const tip = `AOV = Shopify average_order_value for the ${scope}. Excludes subscription (Stay Ai), POS, and other sales channels so it reflects web store orders. ShopifyQL can't split new vs returning customers, so all customers are included.`;
+      h += `<div class="kpi" title="${esc(tip)}"><div class="kpi__label">Avg Order Value <span style="cursor:help;color:var(--fb-blue,#1877f2)">ⓘ</span></div><div class="kpi__value">${fmtMoney(a.curr)}</div><div class="kpi__sub ${cls(aPct)}">${fmtPct(aPct)}</div><div class="kpi__sub" style="font-size:0.68rem">${esc(scope)}</div></div>`;
     }
     h += `</div>`;
     if(o.funnel){

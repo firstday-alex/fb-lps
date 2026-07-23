@@ -1394,6 +1394,7 @@ function render(rawRows, filename) {
   const sessDelta = kpiCurrS - kpiPrevS;
   const sessPct = kpiPrevS > 0 ? sessDelta / kpiPrevS * 100 : 0;
   const cvrDelta = kpiCurrCvr - kpiPrevCvr;
+  const cvrPct = kpiPrevCvr > 0 ? cvrDelta / kpiPrevCvr * 100 : 0;
   const txnPct = kpiPrevConv > 0 ? kpiTxnDelta / kpiPrevConv * 100 : 0;
 
   document.getElementById('kpi-row').innerHTML = `
@@ -1407,7 +1408,7 @@ function render(rawRows, filename) {
       <div class="kpi__label">Conversion Rate</div>
       <div class="kpi__value">${(kpiCurrCvr*100).toFixed(2)}%</div>
       <div class="kpi__sub">was ${(kpiPrevCvr*100).toFixed(2)}%</div>
-      <div class="kpi__badge ${bcls(cvrDelta)}">${fmtPP(cvrDelta*100)}</div>
+      <div class="kpi__badge ${bcls(cvrDelta)}">${fmtPP(cvrDelta*100)} (${fmtP(cvrPct,1)})</div>
     </div>
     <div class="kpi">
       <div class="kpi__label">Transactions</div>

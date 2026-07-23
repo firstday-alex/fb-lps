@@ -2012,6 +2012,72 @@ VISUALIZE conversion_rate TYPE table`;
 });
 
 // ─────────────────────────────────────────────
+// META ACCOUNT INSIGHTS — blended CPM / CPC / CTR for the Meta CVR page
+// ─────────────────────────────────────────────
+// Account-level aggregate spend/impressions/clicks (+ FB-computed cpm/cpc/ctr)
+// for a date range and the immediately-preceding equal-length range, so the
+// Meta CVR page can show blended spend efficiency alongside the CVR metrics.
+// Requires Facebook auth (cookie token). Uses the first ad account unless
+// ?account_id=act_... is given.
+app.get('/api/meta-account-insights', requireAuth, async (req, res) => {
+  const { start, end } = req.query;
+  if (!start || !end || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+    return res.status(400).json({ error: 'start and end query params required (YYYY-MM-DD)' });
+  }
+  // Previous period = equal-length window ending the day before `start`.
+  const prevWindow = (() => {
+    const s = new Date(start + 'T00:00:00Z'), e = new Date(end + 'T00:00:00Z');
+    const days = Math.round((e - s) / 86400000) + 1;
+    const pe = new Date(s); pe.setUTCDate(pe.getUTCDate() - 1);
+    const ps = new Date(pe); ps.setUTCDate(ps.getUTCDate() - (days - 1));
+    return { since: ps.toISOString().slice(0, 10), until: pe.toISOString().slice(0, 10) };
+  })();
+
+  try {
+    let accountId = req.query.account_id;
+    let accountName = null;
+    if (!accountId) {
+      const accResp = await fetch(`${META_BASE_URL}/me/adaccounts?fields=id,name&limit=1&${metaParams(req.accessToken)}`);
+      const accData = await accResp.json();
+      const first = accData.data && accData.data[0];
+      if (!first) return res.status(404).json({ error: 'No ad accounts available for this Facebook user' });
+      accountId = first.id;
+      accountName = first.name;
+    }
+
+    const fetchInsights = async (since, until) => {
+      const url = `${META_BASE_URL}/${accountId}/insights`
+        + `?fields=spend,impressions,clicks,cpm,cpc,ctr,inline_link_clicks`
+        + `&time_range=${encodeURIComponent(JSON.stringify({ since, until }))}`
+        + `&${metaParams(req.accessToken)}`;
+      const j = await (await fetch(url)).json();
+      if (j.error) throw new Error(j.error.message || 'Meta insights error');
+      const row = (j.data || [])[0];
+      if (!row) return null;
+      const spend = parseFloat(row.spend) || 0;
+      const impressions = parseFloat(row.impressions) || 0;
+      const clicks = parseFloat(row.clicks) || 0;
+      return {
+        spend, impressions, clicks,
+        cpm: row.cpm != null ? parseFloat(row.cpm) : (impressions > 0 ? spend / impressions * 1000 : 0),
+        cpc: row.cpc != null ? parseFloat(row.cpc) : (clicks > 0 ? spend / clicks : 0),
+        ctr: row.ctr != null ? parseFloat(row.ctr) : (impressions > 0 ? clicks / impressions * 100 : 0),
+      };
+    };
+
+    const [current, previous] = await Promise.all([
+      fetchInsights(start, end),
+      fetchInsights(prevWindow.since, prevWindow.until).catch(() => null),
+    ]);
+
+    res.json({ account_id: accountId, account_name: accountName, range: { start, end }, compare: prevWindow, current, previous });
+  } catch (err) {
+    console.error('[meta-account-insights] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────
 // GOOGLE CVR IMPACT — generalized multi-source version of meta-cvr-impact
 // ─────────────────────────────────────────────
 // Same session→CVR decomposition as /api/meta-cvr-impact-data, but:
@@ -2578,8 +2644,13 @@ async function buildDailyBrief(day) {
   COMPARE TO previous_period
   ORDER BY sessions DESC`;
 
+  // AOV scoped to the Online Store (web) sales channel — excludes subscription
+  // (Stay Ai), POS, Shop, and other channels that distort a blended figure.
+  // (ShopifyQL has no new-vs-returning customer dimension, so customer-type
+  // filtering isn't available here.)
   const aovQuery = `FROM sales
   SHOW average_order_value, total_sales, orders
+  WHERE sales_channel = 'Online Store'
   SINCE ${day} UNTIL ${day}
   COMPARE TO previous_period`;
 
@@ -2645,12 +2716,13 @@ async function buildDailyBrief(day) {
   brief.googleCampaigns = topCampaigns(google);
   brief.metaCampaigns = topCampaigns(meta);
 
-  // AOV (overall only — sales dataset has no utm_source dimension).
+  // AOV scoped to the Online Store channel (see aovQuery).
   if (aov && aov.rows[0]) {
     const g = mkGet(aov.columns);
     const r = aov.rows[0];
     const iAov = g.idx('average_order_value'), iTs = g.idx('total_sales'), iOrd = g.idx('orders');
     brief.aov = {
+      scope: 'Online Store channel · all customers',
       averageOrderValue: { curr: num(g.get(r, iAov)), prev: num(g.get(r, g.prior('average_order_value'))) },
       totalSales: { curr: num(g.get(r, iTs)), prev: num(g.get(r, g.prior('total_sales'))) },
       orders: { curr: Math.round(num(g.get(r, iOrd))), prev: Math.round(num(g.get(r, g.prior('orders')))) },

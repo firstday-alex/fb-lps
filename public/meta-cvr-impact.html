@@ -573,7 +573,7 @@
     }
     .cvr-chart-row {
       display: grid;
-      grid-template-columns: 200px 60px 1fr 60px 60px;
+      grid-template-columns: 280px 60px 1fr 60px 60px;
       align-items: center;
       gap: 8px;
       padding: 6px 0;
@@ -592,11 +592,13 @@
        header and data rows share the grid + min-width, so they scroll together. */
     .cvr-chart--7d { overflow-x: auto; }
     .cvr-chart--7d .cvr-chart-row {
-      grid-template-columns: 158px 48px 1fr 48px 54px 1fr 58px 62px 46px 62px;
-      min-width: 860px;
+      grid-template-columns: 260px 48px 1fr 48px 54px 1fr 58px 62px 46px 62px;
+      min-width: 960px;
     }
-    .cvr-src-label { font-weight: 600; display: flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; }
-    .cvr-src-label .ch-dot { flex-shrink: 0; }
+    /* Campaign / LP label: wrap to full text instead of truncating so the team
+       can read the whole name. Dot stays pinned to the first line. */
+    .cvr-src-label { font-weight: 600; display: flex; align-items: flex-start; gap: 6px; min-width: 0; white-space: normal; overflow-wrap: anywhere; word-break: break-word; line-height: 1.25; }
+    .cvr-src-label .ch-dot { flex-shrink: 0; margin-top: 4px; }
     .cvr-bar-cell { position: relative; height: 22px; }
     .cvr-bar-track {
       position: absolute; top: 0; bottom: 0;
@@ -1187,6 +1189,10 @@
     </div>
 
     <div class="kpi-row" id="kpi-row"></div>
+
+    <!-- Meta ad-spend efficiency (CPM / CPC / CTR) — populated from the Facebook
+         API when the viewer is FB-authenticated; hidden otherwise. -->
+    <div class="kpi-row" id="spend-kpi-row" style="display:none"></div>
 
     <div class="card headline-card" id="headline-card"></div>
 
@@ -1884,7 +1890,7 @@ function renderCvrMovement(cardId, rows, opts) {
 
   sorted.forEach((r, idx) => {
     const label = r.key || '(empty)';
-    const shortLabel = label.length > 28 ? label.slice(0, 26) + '…' : label;
+    const shortLabel = label;           // wrap full name (CSS handles wrapping); no truncation
     const delta = r.currC - r.prevCvr;
     const deltaPP = delta * 100;
     const barWidthPct = Math.round(Math.abs(delta) / maxAbsDelta * 45);
@@ -3061,6 +3067,45 @@ function syncAttrActiveStyles() {
   if (search) search.classList.toggle('ad-lp-attr-active', !!search.value);
 }
 
+// Meta ad-spend efficiency (CPM / CPC / CTR) from the Facebook API. FB-auth
+// gated: on 401 / no account / error, the row stays hidden (the page is fully
+// usable without FB login). CPM & CPC: lower is better (green when down); CTR:
+// higher is better.
+async function loadMetaSpend(start, end) {
+  const row = document.getElementById('spend-kpi-row');
+  if (!row) return;
+  try {
+    const resp = await fetch(`/api/meta-account-insights?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`);
+    if (!resp.ok) { row.style.display = 'none'; return; }
+    const data = await resp.json();
+    const c = data.current;
+    if (!c) { row.style.display = 'none'; return; }
+    const p = data.previous || {};
+    const money = n => (n == null || !isFinite(n)) ? '—' : '$' + Number(n).toFixed(2);
+    const pctv  = n => (n == null || !isFinite(n)) ? '—' : Number(n).toFixed(2) + '%';
+    const cell = (label, curV, prevV, fmt, goodWhenDown) => {
+      const d = (prevV > 0) ? (curV - prevV) / prevV * 100 : null;
+      let badge = '';
+      if (d != null && isFinite(d)) {
+        const good = goodWhenDown ? d < 0 : d > 0;
+        const bc = Math.abs(d) < 0.05 ? 'badge-neu' : (good ? 'badge-pos' : 'badge-neg');
+        badge = `<div class="kpi__badge ${bc}">${(d > 0 ? '+' : '') + d.toFixed(1)}%</div>`;
+      }
+      return `<div class="kpi"><div class="kpi__label">${label}</div><div class="kpi__value">${fmt(curV)}</div><div class="kpi__sub">was ${fmt(prevV)}</div>${badge}</div>`;
+    };
+    row.title = data.account_name
+      ? `Meta account: ${data.account_name} · account-level blended over the range vs the prior equal period`
+      : 'Account-level blended over the range vs the prior equal period';
+    row.innerHTML =
+      cell('CPM', c.cpm, p.cpm, money, true) +
+      cell('CPC', c.cpc, p.cpc, money, true) +
+      cell('CTR', c.ctr, p.ctr, pctv, false);
+    row.style.display = '';
+  } catch (e) {
+    row.style.display = 'none';
+  }
+}
+
 async function loadAdLpData(start, end, source, medium) {
   const tbody = document.getElementById('ad-lp-tbody');
   const tfoot = document.getElementById('ad-lp-tfoot');
@@ -3377,6 +3422,8 @@ async function loadFromShopify() {
 
     // Kick off ad × landing-page combo query (independent of main render)
     loadAdLpData(startDate, endDate, source, medium);
+    // Meta ad-spend efficiency (CPM/CPC/CTR) — independent, FB-auth-gated
+    loadMetaSpend(startDate, endDate);
   } catch (err) {
     status.className = 'shopify-status error';
     status.textContent = err.message;
