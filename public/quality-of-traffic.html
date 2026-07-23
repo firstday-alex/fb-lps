@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Traffic Quality</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    :root { --fb-blue:#1877f2; --positive:#0a8a44; --positive-bg:#e7f5ec; --negative:#c02b2b; --negative-bg:#fbeaea; --neutral-bg:#eef1f6; --text-secondary:#5b6472; --border:#e3e6ea; }
+    body { background:#f0f2f5; margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:#1c1e21; }
+    header { background:var(--fb-blue); color:#fff; padding:16px 24px; display:flex; align-items:center; gap:16px; }
+    header a.back { color:rgba(255,255,255,0.9); text-decoration:none; font-size:0.85rem; border:1px solid rgba(255,255,255,0.35); padding:5px 12px; border-radius:6px; white-space:nowrap; }
+    header h1 { font-size:1.25rem; margin:0; }
+    header p { margin:2px 0 0; font-size:0.82rem; color:rgba(255,255,255,0.85); }
+    .wrap { max-width:1100px; margin:0 auto; padding:20px; }
+    .controls { display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:16px; }
+    .controls label { font-size:0.82rem; font-weight:600; color:var(--text-secondary); display:flex; gap:6px; align-items:center; }
+    .controls input[type=date] { padding:5px 8px; border:1px solid var(--border); border-radius:6px; font-size:0.85rem; }
+    .meta-line { color:var(--text-secondary); font-size:0.82rem; margin-bottom:14px; }
+    .card { background:#fff; border-radius:12px; padding:20px 22px; box-shadow:0 1px 3px rgba(0,0,0,0.08); margin-bottom:18px; }
+    .card h3 { margin:0 0 4px; font-size:1.05rem; }
+    .card__sub { color:var(--text-secondary); font-size:0.8rem; margin:0 0 12px; }
+    table.tq { width:100%; border-collapse:collapse; font-size:0.85rem; }
+    table.tq th, table.tq td { padding:7px 10px; text-align:right; border-bottom:1px solid var(--border); white-space:nowrap; }
+    table.tq th:first-child, table.tq td:first-child { text-align:left; }
+    table.tq th { font-size:0.68rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-secondary); font-weight:700; }
+    table.tq tbody tr { cursor:pointer; }
+    table.tq tbody tr:hover { background:#f4f7fb; }
+    table.tq tbody tr.tq-active { background:#eaf1fe; }
+    .ch { font-weight:600; }
+    .ch small { color:var(--text-secondary); font-weight:400; }
+    .up { color:var(--positive); } .down { color:var(--negative); } .neu { color:var(--text-secondary); }
+    .status { padding:36px; text-align:center; color:var(--text-secondary); }
+    .status.err { color:var(--negative); }
+    /* chart */
+    .chart-toggles { display:flex; gap:8px; flex-wrap:wrap; margin:6px 0 12px; }
+    .toggle { border:1px solid var(--border); background:#fff; border-radius:16px; padding:4px 12px; font-size:0.78rem; font-weight:600; cursor:pointer; color:var(--text-secondary); display:inline-flex; align-items:center; gap:6px; }
+    .toggle .dot { width:9px; height:9px; border-radius:50%; }
+    .toggle.on { border-color:currentColor; }
+    .chart-svg { width:100%; height:280px; }
+    .chart-legend { display:flex; gap:18px; flex-wrap:wrap; font-size:0.8rem; margin-top:8px; }
+    .chart-legend span b { font-weight:700; }
+    .hint { font-size:0.72rem; color:var(--text-secondary); }
+  </style>
+</head>
+<body>
+<header>
+  <a class="back" href="/">&#8592; Ads Viewer</a>
+  <div>
+    <h1>Traffic Quality</h1>
+    <p>Engagement quality by channel · bounce rate, add-to-cart rate &amp; session duration · yesterday vs prior day, 7d &amp; 30d averages</p>
+  </div>
+</header>
+<div class="wrap">
+  <div class="controls">
+    <label>Day <input type="date" id="day-input"></label>
+    <span class="hint">Compared against the prior day, the trailing 7-day average, and the trailing 30-day average.</span>
+  </div>
+  <div class="meta-line" id="meta-line"></div>
+
+  <div id="channel-detail"></div>
+
+  <div id="tables"><div class="status" id="status">Loading…</div></div>
+</div>
+
+<script>
+const METRICS = [
+  { key:'bounce', label:'Bounce Rate',        kind:'rate', goodWhenUp:false, color:'#c02b2b' },
+  { key:'atc',    label:'Add-to-Cart Rate',   kind:'rate', goodWhenUp:true,  color:'#0a8a44' },
+  { key:'dur',    label:'Avg Session Duration',kind:'dur', goodWhenUp:true,  color:'#1877f2' },
+];
+const esc = s => String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmtRate = v => (v==null||!isFinite(v)) ? '—' : (v*100).toFixed(1)+'%';
+const fmtDur  = v => (v==null||!isFinite(v)) ? '—' : (v>=60 ? Math.floor(v/60)+'m '+Math.round(v%60)+'s' : Math.round(v)+'s');
+const fmtVal  = (m,v) => m.kind==='rate' ? fmtRate(v) : fmtDur(v);
+// delta of current vs a baseline, formatted + colored by good direction
+function deltaCell(m, cur, base){
+  if(base==null||!isFinite(base)||cur==null||!isFinite(cur)) return '<td class="neu">—</td>';
+  const d = cur - base;
+  let txt;
+  if(m.kind==='rate'){ txt = (d>=0?'+':'')+(d*100).toFixed(2)+'pp'; }
+  else { txt = (d>=0?'+':'')+Math.round(d)+'s'; }
+  const good = m.goodWhenUp ? d>0 : d<0;
+  const cls = Math.abs(d) < (m.kind==='rate'?0.0005:0.5) ? 'neu' : (good?'up':'down');
+  return `<td class="${cls}">${txt}</td>`;
+}
+const chLabel = c => `${c.source||'(none)'} / ${c.medium||'(none)'}`;
+const chKey = c => `${c.source||''}||${c.medium||''}`;
+
+let _data = null;
+let _seriesCache = {};
+let _selected = null;                 // chKey of expanded channel
+let _enabled = { bounce:false, atc:false, dur:true };   // start with session duration
+
+function ptYesterday(){
+  const f = new Intl.DateTimeFormat('en-CA',{timeZone:'America/Los_Angeles',year:'numeric',month:'2-digit',day:'2-digit'});
+  const today = f.format(new Date());
+  const d = new Date(today+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()-1);
+  return d.toISOString().slice(0,10);
+}
+
+async function load(day){
+  const tables = document.getElementById('tables');
+  tables.innerHTML = '<div class="status">Loading…</div>';
+  document.getElementById('channel-detail').innerHTML = '';
+  _selected = null; _seriesCache = {};
+  try {
+    const resp = await fetch(`/api/traffic-quality-data?date=${encodeURIComponent(day)}`);
+    const data = await resp.json();
+    if(!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+    _data = data;
+    document.getElementById('meta-line').innerHTML =
+      `Day <strong>${data.date}</strong> vs prior day <strong>${data.compare.prevDay}</strong> · 7d avg ${data.compare.avg7.start}→${data.compare.avg7.end} · 30d avg ${data.compare.avg30.start}→${data.compare.avg30.end} · ${data.channels.length} channels`;
+    renderTables();
+  } catch(err){
+    tables.innerHTML = `<div class="status err">Error: ${esc(err.message)}</div>`;
+  }
+}
+
+function renderTables(){
+  const minSess = 20;   // hide long-tail noise
+  const rows = _data.channels.filter(c => c.sessions >= minSess);
+  let html = '';
+  for(const m of METRICS){
+    html += `<div class="card"><h3>${m.label}</h3>`
+      + `<p class="card__sub">By <code>utm_source / utm_medium</code>. ${m.goodWhenUp?'Higher is better.':'Lower is better.'} Click a channel to chart its last 30 days.</p>`
+      + `<div style="overflow-x:auto"><table class="tq"><thead><tr>`
+      + `<th>Channel</th><th>${m.kind==='dur'?'Duration':'Rate'}</th><th>Δ vs prior day</th><th>Δ vs 7d avg</th><th>Δ vs 30d avg</th><th>Sessions</th>`
+      + `</tr></thead><tbody>`;
+    for(const c of rows){
+      const cur = c.current[m.key];
+      const active = chKey(c)===_selected ? ' tq-active' : '';
+      html += `<tr class="tq-row${active}" data-key="${esc(chKey(c))}">`
+        + `<td class="ch">${esc(chLabel(c))}</td>`
+        + `<td><strong>${fmtVal(m,cur)}</strong></td>`
+        + deltaCell(m, cur, c.prev[m.key])
+        + deltaCell(m, cur, c.avg7 ? c.avg7[m.key] : null)
+        + deltaCell(m, cur, c.avg30 ? c.avg30[m.key] : null)
+        + `<td>${c.sessions.toLocaleString()}</td>`
+        + `</tr>`;
+    }
+    html += `</tbody></table></div></div>`;
+  }
+  const tables = document.getElementById('tables');
+  tables.innerHTML = html;
+  tables.querySelectorAll('.tq-row').forEach(tr => {
+    tr.addEventListener('click', () => selectChannel(tr.dataset.key));
+  });
+}
+
+async function selectChannel(key){
+  _selected = key;
+  renderTables();  // refresh active-row highlight
+  const c = _data.channels.find(x => chKey(x)===key);
+  if(!c) return;
+  const detail = document.getElementById('channel-detail');
+  detail.innerHTML = `<div class="card"><h3>${esc(chLabel(c))} <small style="font-weight:400;color:var(--text-secondary);font-size:0.8rem">· last 30 days</small></h3>`
+    + `<div class="chart-toggles" id="chart-toggles"></div>`
+    + `<div id="chart-area"><div class="status">Loading series…</div></div>`
+    + `<div class="hint">Lines are normalized to each metric's own 30-day min–max so they share one axis. Legend shows the latest actual value.</div></div>`;
+  detail.scrollIntoView({ behavior:'smooth', block:'nearest' });
+  renderToggles();
+  try {
+    if(!_seriesCache[key]){
+      const params = new URLSearchParams({ source: c.source||'', medium: c.medium||'', end: _data.date });
+      const resp = await fetch(`/api/traffic-quality-series?${params}`);
+      const data = await resp.json();
+      if(!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+      _seriesCache[key] = data.series;
+    }
+    renderChart(key);
+  } catch(err){
+    document.getElementById('chart-area').innerHTML = `<div class="status err">Error: ${esc(err.message)}</div>`;
+  }
+}
+
+function renderToggles(){
+  const wrap = document.getElementById('chart-toggles');
+  if(!wrap) return;
+  wrap.innerHTML = METRICS.map(m =>
+    `<button class="toggle ${_enabled[m.key]?'on':''}" data-metric="${m.key}" style="${_enabled[m.key]?`color:${m.color}`:''}">`
+    + `<span class="dot" style="background:${m.color}"></span>${m.label}</button>`
+  ).join('');
+  wrap.querySelectorAll('.toggle').forEach(b => b.addEventListener('click', () => {
+    _enabled[b.dataset.metric] = !_enabled[b.dataset.metric];
+    renderToggles();
+    if(_selected) renderChart(_selected);
+  }));
+}
+
+function renderChart(key){
+  const series = _seriesCache[key] || [];
+  const area = document.getElementById('chart-area');
+  if(!area) return;
+  if(!series.length){ area.innerHTML = '<div class="status">No data.</div>'; return; }
+  const W=1000, H=260, PADL=44, PADR=16, PADT=14, PADB=30;
+  const n = series.length;
+  const x = i => PADL + (n<=1?0:(i/(n-1))*(W-PADL-PADR));
+  const enabledMetrics = METRICS.filter(m => _enabled[m.key]);
+  let lines = '', legend = '';
+  for(const m of enabledMetrics){
+    const vals = series.map(p => p[m.key]);
+    const mn = Math.min(...vals), mx = Math.max(...vals);
+    const norm = v => (mx===mn) ? 0.5 : (v-mn)/(mx-mn);
+    const y = v => PADT + (1-norm(v))*(H-PADT-PADB);
+    const pts = series.map((p,i)=>`${x(i).toFixed(1)},${y(p[m.key]).toFixed(1)}`).join(' ');
+    lines += `<polyline fill="none" stroke="${m.color}" stroke-width="2" points="${pts}"/>`;
+    const last = vals[vals.length-1];
+    legend += `<span style="color:${m.color}"><b>${m.label}:</b> ${fmtVal(m,last)}</span>`;
+  }
+  if(!enabledMetrics.length){ area.innerHTML = '<div class="status">Toggle a metric above to chart it.</div>'; return; }
+  // x-axis date ticks (~6)
+  let ticks='';
+  const step = Math.max(1, Math.floor(n/6));
+  for(let i=0;i<n;i+=step){ ticks += `<text x="${x(i).toFixed(1)}" y="${H-8}" font-size="10" fill="#8a929c" text-anchor="middle">${series[i].day.slice(5)}</text>`; }
+  area.innerHTML = `<svg class="chart-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">`
+    + `<line x1="${PADL}" y1="${H-PADB}" x2="${W-PADR}" y2="${H-PADB}" stroke="#e3e6ea"/>`
+    + `<text x="8" y="${PADT+6}" font-size="10" fill="#8a929c">high</text>`
+    + `<text x="8" y="${H-PADB}" font-size="10" fill="#8a929c">low</text>`
+    + lines + ticks + `</svg>`
+    + `<div class="chart-legend">${legend}</div>`;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const inp = document.getElementById('day-input');
+  inp.value = ptYesterday();
+  inp.addEventListener('change', () => { if(inp.value) load(inp.value); });
+  load(inp.value);
+});
+</script>
+</body>
+</html>

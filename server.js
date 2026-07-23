@@ -2851,6 +2851,141 @@ app.post('/api/daily-report', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────
+// TRAFFIC QUALITY — bounce / ATC / session-duration by utm_source/utm_medium
+// ─────────────────────────────────────────────
+// Shared helpers: PT-anchored day + a resilient ShopifyQL runner.
+function ptYesterdayDate(dateOverride) {
+  if (dateOverride && /^\d{4}-\d{2}-\d{2}$/.test(dateOverride)) return dateOverride;
+  const tz = process.env.DAILY_REPORT_TZ || 'America/Los_Angeles';
+  const todayLocal = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date());
+  const d = new Date(todayLocal + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+function shiftDate(day, deltaDays) {
+  const d = new Date(day + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + deltaDays);
+  return d.toISOString().slice(0, 10);
+}
+async function runShopifyQLTable(q) {
+  const endpoint = `https://${SHOPIFY_URL}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
+  const gqlQuery = `query R($q: String!) { shopifyqlQuery(query: $q) { tableData { columns { name dataType } rows } parseErrors } }`;
+  const resp = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
+    body: JSON.stringify({ query: gqlQuery, variables: { q } }),
+  });
+  const json = await resp.json();
+  const p = json.data?.shopifyqlQuery;
+  if (p?.parseErrors?.length) throw new Error('ShopifyQL: ' + JSON.stringify(p.parseErrors));
+  if (!p?.tableData) throw new Error('No data returned');
+  return p.tableData;
+}
+// Accessor tolerant of array OR object rows.
+function qlAccessor(cols) {
+  const names = cols.map(c => c.name);
+  const lc = names.map(n => (n || '').toLowerCase());
+  return {
+    idx: (n) => lc.findIndex(s => s === n),
+    prior: (m) => lc.findIndex(s => s === `comparison_${m}__previous_period` || s === `comparison_${m}__yesterday`),
+    get: (row, i) => i < 0 ? undefined : (Array.isArray(row) ? row[i] : row[names[i]]),
+  };
+}
+const QL_NUM = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
+
+// Breakout: bounce / ATC / duration per utm_source·utm_medium, with current-day
+// (vs prior day), trailing-7-day-avg and trailing-30-day-avg values.
+app.get('/api/traffic-quality-data', async (req, res) => {
+  if (!SHOPIFY_URL || !SHOPIFY_TOKEN) return res.status(500).json({ error: 'Shopify credentials not configured' });
+  const day = ptYesterdayDate(req.query.date);
+  const METRICS = ['bounce_rate', 'added_to_cart_rate', 'average_session_duration'];
+  const showCols = `sessions, ${METRICS.join(', ')}`;
+  const grp = 'GROUP BY utm_source, utm_medium';
+  const dayQuery   = `FROM sessions SHOW ${showCols} ${grp} SINCE ${day} UNTIL ${day} COMPARE TO previous_period ORDER BY sessions DESC`;
+  const avg7Query  = `FROM sessions SHOW ${showCols} ${grp} SINCE ${shiftDate(day, -6)} UNTIL ${day} ORDER BY sessions DESC`;
+  const avg30Query = `FROM sessions SHOW ${showCols} ${grp} SINCE ${shiftDate(day, -29)} UNTIL ${day} ORDER BY sessions DESC`;
+
+  try {
+    const [dayT, avg7T, avg30T] = await Promise.all([
+      runShopifyQLTable(dayQuery),
+      runShopifyQLTable(avg7Query).catch(() => null),
+      runShopifyQLTable(avg30Query).catch(() => null),
+    ]);
+    // Index a metrics table by source||medium.
+    const indexTable = (t) => {
+      const map = new Map();
+      if (!t) return map;
+      const g = qlAccessor(t.columns);
+      const iSrc = g.idx('utm_source'), iMed = g.idx('utm_medium'), iSess = g.idx('sessions');
+      for (const row of t.rows) {
+        const src = String(g.get(row, iSrc) ?? '').trim();
+        const med = String(g.get(row, iMed) ?? '').trim();
+        map.set(src + '||' + med, {
+          source: src, medium: med, sessions: Math.round(QL_NUM(g.get(row, iSess))),
+          bounce: QL_NUM(g.get(row, g.idx('bounce_rate'))),
+          atc: QL_NUM(g.get(row, g.idx('added_to_cart_rate'))),
+          dur: QL_NUM(g.get(row, g.idx('average_session_duration'))),
+          // previous-period (only present on the day query)
+          prevBounce: QL_NUM(g.get(row, g.prior('bounce_rate'))),
+          prevAtc: QL_NUM(g.get(row, g.prior('added_to_cart_rate'))),
+          prevDur: QL_NUM(g.get(row, g.prior('average_session_duration'))),
+        });
+      }
+      return map;
+    };
+    const dayMap = indexTable(dayT), avg7Map = indexTable(avg7T), avg30Map = indexTable(avg30T);
+
+    const channels = [];
+    for (const [key, d] of dayMap) {
+      const a7 = avg7Map.get(key), a30 = avg30Map.get(key);
+      channels.push({
+        source: d.source, medium: d.medium, sessions: d.sessions,
+        current: { bounce: d.bounce, atc: d.atc, dur: d.dur },
+        prev:    { bounce: d.prevBounce, atc: d.prevAtc, dur: d.prevDur },
+        avg7:    a7 ? { bounce: a7.bounce, atc: a7.atc, dur: a7.dur } : null,
+        avg30:   a30 ? { bounce: a30.bounce, atc: a30.atc, dur: a30.dur, sessions: a30.sessions } : null,
+      });
+    }
+    channels.sort((a, b) => b.sessions - a.sessions);
+    res.json({ date: day, compare: { prevDay: shiftDate(day, -1), avg7: { start: shiftDate(day, -6), end: day }, avg30: { start: shiftDate(day, -29), end: day } }, channels });
+  } catch (err) {
+    console.error('[traffic-quality-data] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 30-day daily series for one channel (drill-in chart).
+app.get('/api/traffic-quality-series', async (req, res) => {
+  if (!SHOPIFY_URL || !SHOPIFY_TOKEN) return res.status(500).json({ error: 'Shopify credentials not configured' });
+  const end = ptYesterdayDate(req.query.end);
+  const start = shiftDate(end, -29);
+  const esc = (v) => String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  const src = req.query.source, med = req.query.medium;
+  const isNullish = (v) => v == null || v === '' || v === 'null';
+  const srcCond = isNullish(src) ? 'utm_source IS NULL' : `utm_source = '${esc(src)}'`;
+  const medCond = isNullish(med) ? 'utm_medium IS NULL' : `utm_medium = '${esc(med)}'`;
+  const q = `FROM sessions SHOW sessions, bounce_rate, added_to_cart_rate, average_session_duration WHERE ${srcCond} AND ${medCond} GROUP BY day SINCE ${start} UNTIL ${end} ORDER BY day ASC`;
+  try {
+    const t = await runShopifyQLTable(q);
+    const g = qlAccessor(t.columns);
+    const iDay = g.idx('day'), iS = g.idx('sessions');
+    const series = t.rows.map(row => ({
+      day: String(g.get(row, iDay) ?? '').slice(0, 10),
+      sessions: Math.round(QL_NUM(g.get(row, iS))),
+      bounce: QL_NUM(g.get(row, g.idx('bounce_rate'))),
+      atc: QL_NUM(g.get(row, g.idx('added_to_cart_rate'))),
+      dur: QL_NUM(g.get(row, g.idx('average_session_duration'))),
+    })).filter(r => r.day);
+    res.json({ source: src || null, medium: med || null, window: { start, end }, series });
+  } catch (err) {
+    console.error('[traffic-quality-series] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────
 // DIAGNOSTIC DASHBOARD — Meta ad-level insights with comparison window
 // ─────────────────────────────────────────────
 app.get('/api/diag-meta', requireAuth, async (req, res) => {
