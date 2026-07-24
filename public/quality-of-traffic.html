@@ -32,6 +32,15 @@
     .up { color:var(--positive); } .down { color:var(--negative); } .neu { color:var(--text-secondary); }
     .status { padding:36px; text-align:center; color:var(--text-secondary); }
     .status.err { color:var(--negative); }
+    /* quality / mix-shift card */
+    .qcard { background:#fff; border-radius:12px; padding:20px 22px; box-shadow:0 1px 3px rgba(0,0,0,0.08); margin-bottom:18px; border-left:4px solid var(--fb-blue); }
+    .qcard h3 { margin:0 0 2px; font-size:1.05rem; }
+    .qhero { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; margin:10px 0 4px; }
+    .qhero__val { font-size:2rem; font-weight:800; line-height:1; }
+    .qhero__txn { font-size:1rem; font-weight:700; }
+    .qhero__ctx { color:var(--text-secondary); font-size:0.85rem; }
+    .qnote { font-size:0.78rem; color:var(--text-secondary); margin:8px 0 0; }
+    .qnote code { background:var(--neutral-bg); padding:1px 5px; border-radius:4px; }
     /* chart */
     .chart-toggles { display:flex; gap:8px; flex-wrap:wrap; margin:6px 0 12px; }
     .toggle { border:1px solid var(--border); background:#fff; border-radius:16px; padding:4px 12px; font-size:0.78rem; font-weight:600; cursor:pointer; color:var(--text-secondary); display:inline-flex; align-items:center; gap:6px; }
@@ -57,6 +66,8 @@
     <span class="hint">Compared against the prior day, the trailing 7-day average, and the trailing 30-day average.</span>
   </div>
   <div class="meta-line" id="meta-line"></div>
+
+  <div id="quality-card"></div>
 
   <div id="channel-detail"></div>
 
@@ -103,6 +114,7 @@ async function load(day){
   const tables = document.getElementById('tables');
   tables.innerHTML = '<div class="status">Loading…</div>';
   document.getElementById('channel-detail').innerHTML = '';
+  document.getElementById('quality-card').innerHTML = '';
   _selected = null; _seriesCache = {};
   try {
     const resp = await fetch(`/api/traffic-quality-data?date=${encodeURIComponent(day)}`);
@@ -111,10 +123,54 @@ async function load(day){
     _data = data;
     document.getElementById('meta-line').innerHTML =
       `Day <strong>${data.date}</strong> vs prior day <strong>${data.compare.prevDay}</strong> · 7d avg ${data.compare.avg7.start}→${data.compare.avg7.end} · 30d avg ${data.compare.avg30.start}→${data.compare.avg30.end} · ${data.channels.length} channels`;
+    renderQualityCard();
     renderTables();
   } catch(err){
     tables.innerHTML = `<div class="status err">Error: ${esc(err.message)}</div>`;
   }
+}
+
+function renderQualityCard(){
+  const el = document.getElementById('quality-card');
+  const q = _data.quality, m = _data.mixShift;
+  if(!q || !m || !m.scoredChannels){ el.innerHTML=''; return; }
+  const dq = m.deltaQuality*100;                 // percentage points
+  const dir = dq>0 ? 'higher' : (dq<0 ? 'lower' : 'unchanged');
+  const cls = dq>0?'up':(dq<0?'down':'neu');
+  const txn = m.estTransactionImpact;
+  const model = q.model || {};
+  const lbl = { bounce_rate:'bounce rate', added_to_cart_rate:'add-to-cart rate', average_session_duration:'session duration' };
+  let modelNote;
+  if(model.type==='ols'){
+    const rank = Object.entries(model.coef_per_sd||{}).sort((a,b)=>Math.abs(b[1])-Math.abs(a[1]));
+    modelNote = `Quality = each channel's 30-day conversion rate predicted from bounce rate, add-to-cart rate &amp; session duration (session-weighted ridge regression, R²&nbsp;${model.r2!=null?model.r2.toFixed(2):'—'}). Most predictive signal: <strong>${rank.length?lbl[rank[0][0]]:'—'}</strong>.`;
+  } else {
+    modelNote = `Quality = each channel's own 30-day conversion rate. ${esc(model.note||'')}`;
+  }
+  let rows='';
+  for(const c of m.contributions){
+    const contribPP = c.contribution*100;
+    const ccls = contribPP>0?'up':(contribPP<0?'down':'neu');
+    const dsPP = c.deltaShare*100;
+    rows += `<tr><td class="ch">${esc((c.source||'(none)')+' / '+(c.medium||'(none)'))}</td>`
+      + `<td>${c.index} <small style="color:var(--text-secondary)">${(c.quality*100).toFixed(2)}%</small></td>`
+      + `<td>${(c.sharePrev*100).toFixed(1)}% → ${(c.shareDay*100).toFixed(1)}%</td>`
+      + `<td class="${dsPP>0?'up':dsPP<0?'down':'neu'}">${(dsPP>=0?'+':'')+dsPP.toFixed(2)}pp</td>`
+      + `<td class="${ccls}"><strong>${(contribPP>=0?'+':'')+contribPP.toFixed(3)}pp</strong></td></tr>`;
+  }
+  el.innerHTML = `<div class="qcard">
+    <h3>Traffic Quality &amp; Mix-Shift Value</h3>
+    <p class="card__sub" style="margin:0">How much day-over-day traffic-mix changes moved overall intent-to-buy — each channel's quality held at its 30-day baseline, so this isolates the mix effect.</p>
+    <div class="qhero">
+      <span class="qhero__val ${cls}">${(dq>=0?'+':'')+dq.toFixed(2)}pp</span>
+      <span class="qhero__txn ${cls}">${txn>=0?'+':''}${Math.round(txn).toLocaleString()} expected txns</span>
+      <span class="qhero__ctx">blended intent-to-buy ${(m.blendedQualityPrev*100).toFixed(2)}% → ${(m.blendedQualityDay*100).toFixed(2)}% · mix shifted toward <strong>${dir}</strong>-intent channels</span>
+    </div>
+    <p class="qnote">${modelNote}<br>Mix-shift value = Σ (Δ session-share × channel quality). Positive means traffic moved toward higher-converting channels. Based on ${m.scoredChannels} scored channels.</p>
+    <div style="overflow-x:auto;margin-top:10px"><table class="tq"><thead><tr>
+      <th>Channel</th><th>Quality (0–100)</th><th>Session share prev→day</th><th>Δ share</th><th>Mix-shift contribution</th>
+    </tr></thead><tbody>${rows}</tbody></table></div>
+  </div>`;
 }
 
 function renderTables(){

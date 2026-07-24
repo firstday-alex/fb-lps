@@ -2895,13 +2895,112 @@ function qlAccessor(cols) {
 }
 const QL_NUM = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
 
+// Solve M·b = V for a small square system (Gaussian elimination, partial pivot).
+// Returns the solution vector, or null if the matrix is singular.
+function solveLinear(M, V) {
+  const n = V.length;
+  const A = M.map((row, i) => [...row, V[i]]);
+  for (let col = 0; col < n; col++) {
+    let piv = col;
+    for (let r = col + 1; r < n; r++) if (Math.abs(A[r][col]) > Math.abs(A[piv][col])) piv = r;
+    if (Math.abs(A[piv][col]) < 1e-12) return null;
+    [A[col], A[piv]] = [A[piv], A[col]];
+    for (let r = 0; r < n; r++) {
+      if (r === col) continue;
+      const f = A[r][col] / A[col][col];
+      for (let k = col; k <= n; k++) A[r][k] -= f * A[col][k];
+    }
+  }
+  return A.map((row, i) => row[n] / row[i]);   // row[i] is the diagonal A[i][i]
+}
+
+// Conversion-anchored quality score + day-over-day traffic-mix-shift value.
+// Fits a session-weighted OLS of 30-day conversion_rate on the 3 engagement
+// metrics across channels → per-channel predicted "intent-to-buy" quality (in
+// CVR units, frozen at the 30-day baseline). Then decomposes the DoD change in
+// BLENDED quality into the part driven purely by traffic mix shifting
+// (channels gaining/losing session share × their baseline quality).
+function computeTrafficQuality(channels) {
+  const MIN_FIT_SESSIONS = 200;
+  const fit = channels.filter(c => c.avg30 && c.avg30.sessions >= MIN_FIT_SESSIONS && isFinite(c.avg30.cvr));
+  const predictors = c => [c.avg30.bounce, c.avg30.atc, c.avg30.dur];
+
+  let model = null, predict = null;
+  if (fit.length >= 5) {
+    const W = fit.reduce((s, c) => s + c.avg30.sessions, 0);
+    const means = [0, 0, 0], stds = [0, 0, 0];
+    for (let j = 0; j < 3; j++) {
+      let m = 0; for (const c of fit) m += c.avg30.sessions * predictors(c)[j]; m /= W;
+      let v = 0; for (const c of fit) v += c.avg30.sessions * (predictors(c)[j] - m) ** 2; v /= W;
+      means[j] = m; stds[j] = Math.sqrt(v) || 1;
+    }
+    const z = c => predictors(c).map((x, j) => (x - means[j]) / stds[j]);
+    const M = Array.from({ length: 4 }, () => [0, 0, 0, 0]); const V = [0, 0, 0, 0];
+    for (const c of fit) {
+      const a = [1, ...z(c)], w = c.avg30.sessions, y = c.avg30.cvr;
+      for (let i = 0; i < 4; i++) { V[i] += w * a[i] * y; for (let k = 0; k < 4; k++) M[i][k] += w * a[i] * a[k]; }
+    }
+    // Ridge regularization on the standardized predictors (not the intercept) —
+    // the 3 engagement metrics are collinear (bounce ↔ duration), which makes a
+    // plain OLS singular/unstable. Predictors are z-scored so Σw·z²≈W; a λ·W
+    // ridge is a gentle, scale-appropriate shrink that guarantees invertibility.
+    const ridge = 0.1 * W;
+    for (let i = 1; i < 4; i++) M[i][i] += ridge;
+    const b = solveLinear(M, V);
+    if (b && b.every(Number.isFinite)) {
+      predict = c => { const a = [1, ...z(c)]; let p = 0; for (let i = 0; i < 4; i++) p += b[i] * a[i]; return Math.max(0, p); };
+      let ybar = 0; for (const c of fit) ybar += c.avg30.sessions * c.avg30.cvr; ybar /= W;
+      let ssRes = 0, ssTot = 0;
+      for (const c of fit) { const w = c.avg30.sessions, y = c.avg30.cvr, p = predict(c); ssRes += w * (y - p) ** 2; ssTot += w * (y - ybar) ** 2; }
+      model = {
+        type: 'ols', r2: ssTot > 0 ? 1 - ssRes / ssTot : null, fit_channels: fit.length, min_fit_sessions: MIN_FIT_SESSIONS,
+        // standardized coefficients — expected CVR change per +1 SD of each metric
+        coef_per_sd: { bounce_rate: b[1], added_to_cart_rate: b[2], average_session_duration: b[3] },
+      };
+    }
+  }
+  if (!predict) {
+    predict = c => (c.avg30 && isFinite(c.avg30.cvr)) ? c.avg30.cvr : null;
+    model = { type: 'fallback_cvr', note: "Too few channels to fit a model; quality = each channel's own 30-day conversion rate." };
+  }
+
+  const scored = channels.filter(c => c.avg30)
+    .map(c => ({ source: c.source, medium: c.medium, quality: predict(c), sessions: c.sessions, sessionsPrev: c.sessionsPrev }))
+    .filter(c => c.quality != null && isFinite(c.quality));
+  const qs = scored.map(c => c.quality);
+  const qMin = qs.length ? Math.min(...qs) : 0, qMax = qs.length ? Math.max(...qs) : 0;
+  scored.forEach(c => { c.index = (qMax > qMin) ? Math.round((c.quality - qMin) / (qMax - qMin) * 100) : 50; });
+
+  const totalDay = scored.reduce((s, c) => s + c.sessions, 0);
+  const totalPrev = scored.reduce((s, c) => s + c.sessionsPrev, 0);
+  let blendedDay = 0, blendedPrev = 0;
+  const contributions = scored.map(c => {
+    const shareDay = totalDay > 0 ? c.sessions / totalDay : 0;
+    const sharePrev = totalPrev > 0 ? c.sessionsPrev / totalPrev : 0;
+    blendedDay += shareDay * c.quality; blendedPrev += sharePrev * c.quality;
+    return { source: c.source, medium: c.medium, quality: c.quality, index: c.index, shareDay, sharePrev, deltaShare: shareDay - sharePrev, contribution: (shareDay - sharePrev) * c.quality };
+  }).sort((a, b) => Math.abs(b.contribution) - Math.abs(a.contribution));
+  const deltaQuality = blendedDay - blendedPrev;
+
+  return {
+    quality: { model, channels: scored.map(c => ({ source: c.source, medium: c.medium, quality: c.quality, index: c.index })) },
+    mixShift: {
+      blendedQualityDay: blendedDay, blendedQualityPrev: blendedPrev, deltaQuality,
+      estTransactionImpact: deltaQuality * totalDay,
+      totalSessionsDay: totalDay, totalSessionsPrev: totalPrev, scoredChannels: scored.length,
+      contributions: contributions.slice(0, 12),
+    },
+  };
+}
+
 // Breakout: bounce / ATC / duration per utm_source·utm_medium, with current-day
 // (vs prior day), trailing-7-day-avg and trailing-30-day-avg values.
 app.get('/api/traffic-quality-data', async (req, res) => {
   if (!SHOPIFY_URL || !SHOPIFY_TOKEN) return res.status(500).json({ error: 'Shopify credentials not configured' });
   const day = ptYesterdayDate(req.query.date);
   const METRICS = ['bounce_rate', 'added_to_cart_rate', 'average_session_duration'];
-  const showCols = `sessions, ${METRICS.join(', ')}`;
+  // conversion_rate anchors the quality score; the 3 engagement metrics predict it.
+  const showCols = `sessions, conversion_rate, ${METRICS.join(', ')}`;
   const grp = 'GROUP BY utm_source, utm_medium';
   const dayQuery   = `FROM sessions SHOW ${showCols} ${grp} SINCE ${day} UNTIL ${day} COMPARE TO previous_period ORDER BY sessions DESC`;
   const avg7Query  = `FROM sessions SHOW ${showCols} ${grp} SINCE ${shiftDate(day, -6)} UNTIL ${day} ORDER BY sessions DESC`;
@@ -2924,10 +3023,12 @@ app.get('/api/traffic-quality-data', async (req, res) => {
         const med = String(g.get(row, iMed) ?? '').trim();
         map.set(src + '||' + med, {
           source: src, medium: med, sessions: Math.round(QL_NUM(g.get(row, iSess))),
+          cvr: QL_NUM(g.get(row, g.idx('conversion_rate'))),
           bounce: QL_NUM(g.get(row, g.idx('bounce_rate'))),
           atc: QL_NUM(g.get(row, g.idx('added_to_cart_rate'))),
           dur: QL_NUM(g.get(row, g.idx('average_session_duration'))),
           // previous-period (only present on the day query)
+          prevSessions: Math.round(QL_NUM(g.get(row, g.prior('sessions')))),
           prevBounce: QL_NUM(g.get(row, g.prior('bounce_rate'))),
           prevAtc: QL_NUM(g.get(row, g.prior('added_to_cart_rate'))),
           prevDur: QL_NUM(g.get(row, g.prior('average_session_duration'))),
@@ -2941,15 +3042,16 @@ app.get('/api/traffic-quality-data', async (req, res) => {
     for (const [key, d] of dayMap) {
       const a7 = avg7Map.get(key), a30 = avg30Map.get(key);
       channels.push({
-        source: d.source, medium: d.medium, sessions: d.sessions,
+        source: d.source, medium: d.medium, sessions: d.sessions, sessionsPrev: d.prevSessions,
         current: { bounce: d.bounce, atc: d.atc, dur: d.dur },
         prev:    { bounce: d.prevBounce, atc: d.prevAtc, dur: d.prevDur },
         avg7:    a7 ? { bounce: a7.bounce, atc: a7.atc, dur: a7.dur } : null,
-        avg30:   a30 ? { bounce: a30.bounce, atc: a30.atc, dur: a30.dur, sessions: a30.sessions } : null,
+        avg30:   a30 ? { bounce: a30.bounce, atc: a30.atc, dur: a30.dur, sessions: a30.sessions, cvr: a30.cvr } : null,
       });
     }
     channels.sort((a, b) => b.sessions - a.sessions);
-    res.json({ date: day, compare: { prevDay: shiftDate(day, -1), avg7: { start: shiftDate(day, -6), end: day }, avg30: { start: shiftDate(day, -29), end: day } }, channels });
+    const { quality, mixShift } = computeTrafficQuality(channels);
+    res.json({ date: day, compare: { prevDay: shiftDate(day, -1), avg7: { start: shiftDate(day, -6), end: day }, avg30: { start: shiftDate(day, -29), end: day } }, channels, quality, mixShift });
   } catch (err) {
     console.error('[traffic-quality-data] error:', err);
     res.status(500).json({ error: err.message });
