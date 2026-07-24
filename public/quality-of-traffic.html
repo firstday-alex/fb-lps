@@ -95,7 +95,8 @@ function deltaCell(m, cur, base){
   const cls = Math.abs(d) < (m.kind==='rate'?0.0005:0.5) ? 'neu' : (good?'up':'down');
   return `<td class="${cls}">${txt}</td>`;
 }
-const chLabel = c => `${c.source||'(none)'} / ${c.medium||'(none)'}`;
+const prettyMedium = m => (m||'(none)').replace(/,/g,' + ');   // "paid_social,paid" → "paid_social + paid"
+const chLabel = c => `${c.source||'(none)'} / ${prettyMedium(c.medium)}`;
 const chKey = c => `${c.source||''}||${c.medium||''}`;
 
 let _data = null;
@@ -122,7 +123,9 @@ async function load(day){
     if(!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
     _data = data;
     document.getElementById('meta-line').innerHTML =
-      `Day <strong>${data.date}</strong> vs prior day <strong>${data.compare.prevDay}</strong> · 7d avg ${data.compare.avg7.start}→${data.compare.avg7.end} · 30d avg ${data.compare.avg30.start}→${data.compare.avg30.end} · ${data.channels.length} channels`;
+      `Day <strong>${data.date}</strong> vs prior day <strong>${data.compare.prevDay}</strong> · 7d avg ${data.compare.avg7.start}→${data.compare.avg7.end} · 30d avg ${data.compare.avg30.start}→${data.compare.avg30.end} · ${data.channels.length} channels`
+      + (data.minSessions ? ` with &gt;${data.minSessions} sessions` : '')
+      + ` · facebook paid_social + paid combined`;
     renderQualityCard();
     renderTables();
   } catch(err){
@@ -152,7 +155,7 @@ function renderQualityCard(){
     const contribPP = c.contribution*100;
     const ccls = contribPP>0?'up':(contribPP<0?'down':'neu');
     const dsPP = c.deltaShare*100;
-    rows += `<tr><td class="ch">${esc((c.source||'(none)')+' / '+(c.medium||'(none)'))}</td>`
+    rows += `<tr><td class="ch">${esc((c.source||'(none)')+' / '+prettyMedium(c.medium))}</td>`
       + `<td>${c.index} <small style="color:var(--text-secondary)">${(c.quality*100).toFixed(2)}%</small></td>`
       + `<td>${(c.sharePrev*100).toFixed(1)}% → ${(c.shareDay*100).toFixed(1)}%</td>`
       + `<td class="${dsPP>0?'up':dsPP<0?'down':'neu'}">${(dsPP>=0?'+':'')+dsPP.toFixed(2)}pp</td>`

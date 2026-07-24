@@ -2920,9 +2920,11 @@ function solveLinear(M, V) {
 // CVR units, frozen at the 30-day baseline). Then decomposes the DoD change in
 // BLENDED quality into the part driven purely by traffic mix shifting
 // (channels gaining/losing session share × their baseline quality).
-function computeTrafficQuality(channels) {
+// fitChannels = pool used to TRAIN the model (broad, for robustness);
+// scoreChannels = channels to score + include in the mix-shift (the displayed set).
+function computeTrafficQuality(fitChannels, scoreChannels = fitChannels) {
   const MIN_FIT_SESSIONS = 200;
-  const fit = channels.filter(c => c.avg30 && c.avg30.sessions >= MIN_FIT_SESSIONS && isFinite(c.avg30.cvr));
+  const fit = fitChannels.filter(c => c.avg30 && c.avg30.sessions >= MIN_FIT_SESSIONS && isFinite(c.avg30.cvr));
   const predictors = c => [c.avg30.bounce, c.avg30.atc, c.avg30.dur];
 
   let model = null, predict = null;
@@ -2964,7 +2966,7 @@ function computeTrafficQuality(channels) {
     model = { type: 'fallback_cvr', note: "Too few channels to fit a model; quality = each channel's own 30-day conversion rate." };
   }
 
-  const scored = channels.filter(c => c.avg30)
+  const scored = scoreChannels.filter(c => c.avg30)
     .map(c => ({ source: c.source, medium: c.medium, quality: predict(c), sessions: c.sessions, sessionsPrev: c.sessionsPrev }))
     .filter(c => c.quality != null && isFinite(c.quality));
   const qs = scored.map(c => c.quality);
@@ -3038,6 +3040,28 @@ app.get('/api/traffic-quality-data', async (req, res) => {
     };
     const dayMap = indexTable(dayT), avg7Map = indexTable(avg7T), avg30Map = indexTable(avg30T);
 
+    // Merge facebook/paid_social + facebook/paid into a single combined channel
+    // (session-weighted metrics) so paid Meta is analyzed as one line everywhere.
+    const collapse = (map) => {
+      const keys = ['facebook||paid_social', 'facebook||paid'];
+      const members = keys.map(k => map.get(k)).filter(Boolean);
+      if (!members.length) return;
+      const wavg = (field, weightField) => {
+        let num = 0, w = 0;
+        for (const m of members) { const ww = m[weightField] || 0; num += ww * (m[field] || 0); w += ww; }
+        return w > 0 ? num / w : 0;
+      };
+      keys.forEach(k => map.delete(k));
+      map.set('facebook||paid_social,paid', {
+        source: 'facebook', medium: 'paid_social,paid',
+        sessions: members.reduce((s, m) => s + (m.sessions || 0), 0),
+        prevSessions: members.reduce((s, m) => s + (m.prevSessions || 0), 0),
+        cvr: wavg('cvr', 'sessions'), bounce: wavg('bounce', 'sessions'), atc: wavg('atc', 'sessions'), dur: wavg('dur', 'sessions'),
+        prevBounce: wavg('prevBounce', 'prevSessions'), prevAtc: wavg('prevAtc', 'prevSessions'), prevDur: wavg('prevDur', 'prevSessions'),
+      });
+    };
+    collapse(dayMap); collapse(avg7Map); collapse(avg30Map);
+
     const channels = [];
     for (const [key, d] of dayMap) {
       const a7 = avg7Map.get(key), a30 = avg30Map.get(key);
@@ -3049,9 +3073,12 @@ app.get('/api/traffic-quality-data', async (req, res) => {
         avg30:   a30 ? { bounce: a30.bounce, atc: a30.atc, dur: a30.dur, sessions: a30.sessions, cvr: a30.cvr } : null,
       });
     }
-    channels.sort((a, b) => b.sessions - a.sessions);
-    const { quality, mixShift } = computeTrafficQuality(channels);
-    res.json({ date: day, compare: { prevDay: shiftDate(day, -1), avg7: { start: shiftDate(day, -6), end: day }, avg30: { start: shiftDate(day, -29), end: day } }, channels, quality, mixShift });
+    // Only consider channels with >200 sessions in the period (drop small-channel noise).
+    const MIN_SESSIONS = 200;
+    const considered = channels.filter(c => c.sessions > MIN_SESSIONS).sort((a, b) => b.sessions - a.sessions);
+    // Train the quality model on the broad channel pool (robust); score + mix-shift on the >200 set.
+    const { quality, mixShift } = computeTrafficQuality(channels, considered);
+    res.json({ date: day, minSessions: MIN_SESSIONS, compare: { prevDay: shiftDate(day, -1), avg7: { start: shiftDate(day, -6), end: day }, avg30: { start: shiftDate(day, -29), end: day } }, channels: considered, quality, mixShift });
   } catch (err) {
     console.error('[traffic-quality-data] error:', err);
     res.status(500).json({ error: err.message });
@@ -3067,7 +3094,11 @@ app.get('/api/traffic-quality-series', async (req, res) => {
   const src = req.query.source, med = req.query.medium;
   const isNullish = (v) => v == null || v === '' || v === 'null';
   const srcCond = isNullish(src) ? 'utm_source IS NULL' : `utm_source = '${esc(src)}'`;
-  const medCond = isNullish(med) ? 'utm_medium IS NULL' : `utm_medium = '${esc(med)}'`;
+  // Combined channels arrive as a comma-separated medium (e.g. "paid_social,paid") → IN (...).
+  const medList = isNullish(med) ? [] : String(med).split(',').map(s => s.trim()).filter(Boolean);
+  const medCond = isNullish(med) ? 'utm_medium IS NULL'
+    : medList.length > 1 ? `utm_medium IN (${medList.map(m => `'${esc(m)}'`).join(', ')})`
+    : `utm_medium = '${esc(med)}'`;
   const q = `FROM sessions SHOW sessions, bounce_rate, added_to_cart_rate, average_session_duration WHERE ${srcCond} AND ${medCond} GROUP BY day SINCE ${start} UNTIL ${end} ORDER BY day ASC`;
   try {
     const t = await runShopifyQLTable(q);
