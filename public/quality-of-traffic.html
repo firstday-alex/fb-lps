@@ -152,8 +152,14 @@ function renderQualityCard(){
     const contribPP = c.contribution*100;
     const ccls = contribPP>0?'up':(contribPP<0?'down':'neu');
     const dsPP = c.deltaShare*100;
+    // Δ CVR vs prior day for this channel (higher is better)
+    const ch = _data.channels.find(x => (x.source||'')===(c.source||'') && (x.medium||'')===(c.medium||''));
+    const dcvr = (ch && ch.current && ch.prev && isFinite(ch.prev.cvr)) ? (ch.current.cvr - ch.prev.cvr)*100 : null;
+    const dcvrTxt = dcvr==null ? '—' : (dcvr>=0?'+':'')+dcvr.toFixed(2)+'%';
+    const dcvrCls = dcvr==null ? 'neu' : (dcvr>0?'up':dcvr<0?'down':'neu');
     rows += `<tr><td class="ch">${esc((c.source||'(none)')+' / '+prettyMedium(c.medium))}</td>`
       + `<td><strong>${(c.quality*100).toFixed(1)}%</strong></td>`
+      + `<td class="${dcvrCls}">${dcvrTxt}</td>`
       + `<td>${(c.sharePrev*100).toFixed(1)}% → ${(c.shareDay*100).toFixed(1)}%</td>`
       + `<td class="${dsPP>0?'up':dsPP<0?'down':'neu'}">${(dsPP>=0?'+':'')+dsPP.toFixed(1)}%</td>`
       + `<td class="${ccls}"><strong>${(contribPP>=0?'+':'')+contribPP.toFixed(2)}%</strong></td></tr>`;
@@ -168,7 +174,7 @@ function renderQualityCard(){
     </div>
     <p class="qnote">${modelNote}<br>Mix-shift value = Σ (Δ session-share × [channel CVR − blended CVR]). A below-average channel gaining share is negative (drags blended CVR down); contributions sum to the total. Based on ${m.scoredChannels} channels.</p>
     <div style="overflow-x:auto;margin-top:10px"><table class="tq"><thead><tr>
-      <th>Channel</th><th>Conversion Rate</th><th>Session share prev→day</th><th>Δ share</th><th>Mix-shift Δ (CVR) <span class="tip" data-tip="Δ share × (this channel's CVR − blended CVR). Positive = its share change helped blended CVR (a high-converting channel gained share, or a low one lost it); negative = it hurt. All channels add up to the total.">ⓘ</span></th>
+      <th>Channel</th><th>Conversion Rate</th><th>Δ CVR</th><th>Session share prev→day</th><th>Δ share</th><th>Mix-shift Δ (CVR) <span class="tip" data-tip="Δ share × (this channel's CVR − blended CVR). Positive = its share change helped blended CVR (a high-converting channel gained share, or a low one lost it); negative = it hurt. All channels add up to the total.">ⓘ</span></th>
     </tr></thead><tbody>${rows}</tbody></table></div>
   </div>`;
 }
