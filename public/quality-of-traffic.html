@@ -150,7 +150,7 @@ function renderQualityCard(){
     const ccls = contribPP>0?'up':(contribPP<0?'down':'neu');
     const dsPP = c.deltaShare*100;
     rows += `<tr><td class="ch">${esc((c.source||'(none)')+' / '+prettyMedium(c.medium))}</td>`
-      + `<td><strong>${(c.quality*100).toFixed(2)}%</strong> <small style="color:var(--text-secondary)">idx ${c.index}</small></td>`
+      + `<td><strong>${(c.quality*100).toFixed(1)}%</strong></td>`
       + `<td>${(c.sharePrev*100).toFixed(1)}% → ${(c.shareDay*100).toFixed(1)}%</td>`
       + `<td class="${dsPP>0?'up':dsPP<0?'down':'neu'}">${(dsPP>=0?'+':'')+dsPP.toFixed(2)}pp</td>`
       + `<td class="${ccls}"><strong>${(contribPP>=0?'+':'')+contribPP.toFixed(3)}pp</strong></td></tr>`;
@@ -161,7 +161,7 @@ function renderQualityCard(){
     <div class="qhero">
       <span class="qhero__val ${cls}">${(dq>=0?'+':'')+dq.toFixed(2)}pp</span>
       <span class="qhero__txn ${cls}">${txn>=0?'+':''}${Math.round(txn).toLocaleString()} expected txns</span>
-      <span class="qhero__ctx">blended CVR ${(m.blendedQualityPrev*100).toFixed(2)}% → ${(m.blendedQualityDay*100).toFixed(2)}% · mix shifted toward <strong>${dir}</strong>-converting channels</span>
+      <span class="qhero__ctx">blended CVR ${(m.blendedQualityPrev*100).toFixed(1)}% → ${(m.blendedQualityDay*100).toFixed(1)}% · mix shifted toward <strong>${dir}</strong>-converting channels</span>
     </div>
     <p class="qnote">${modelNote}<br>Mix-shift value = Σ (Δ session-share × [channel CVR − blended CVR]). A below-average channel gaining share is negative (drags blended CVR down); contributions sum to the total. Based on ${m.scoredChannels} channels.</p>
     <div style="overflow-x:auto;margin-top:10px"><table class="tq"><thead><tr>
