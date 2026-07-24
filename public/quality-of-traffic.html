@@ -57,7 +57,7 @@
   <a class="back" href="/">&#8592; Ads Viewer</a>
   <div>
     <h1>Traffic Quality</h1>
-    <p>Engagement quality by channel · bounce rate, add-to-cart rate &amp; session duration · yesterday vs prior day, 7d &amp; 30d averages</p>
+    <p>Quality by channel · conversion rate, bounce rate, add-to-cart rate &amp; session duration · yesterday vs prior day, 7d &amp; 30d averages</p>
   </div>
 </header>
 <div class="wrap">
@@ -76,9 +76,10 @@
 
 <script>
 const METRICS = [
-  { key:'bounce', label:'Bounce Rate',        kind:'rate', goodWhenUp:false, color:'#c02b2b' },
-  { key:'atc',    label:'Add-to-Cart Rate',   kind:'rate', goodWhenUp:true,  color:'#0a8a44' },
-  { key:'dur',    label:'Avg Session Duration',kind:'dur', goodWhenUp:true,  color:'#1877f2' },
+  { key:'cvr',    label:'Conversion Rate',     kind:'rate', goodWhenUp:true,  color:'#7c3aed' },
+  { key:'bounce', label:'Bounce Rate',         kind:'rate', goodWhenUp:false, color:'#c02b2b' },
+  { key:'atc',    label:'Add-to-Cart Rate',    kind:'rate', goodWhenUp:true,  color:'#0a8a44' },
+  { key:'dur',    label:'Avg Session Duration',kind:'dur',  goodWhenUp:true,  color:'#1877f2' },
 ];
 const esc = s => String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const fmtRate = v => (v==null||!isFinite(v)) ? '—' : (v*100).toFixed(1)+'%';
@@ -102,7 +103,7 @@ const chKey = c => `${c.source||''}||${c.medium||''}`;
 let _data = null;
 let _seriesCache = {};
 let _selected = null;                 // chKey of expanded channel
-let _enabled = { bounce:false, atc:false, dur:true };   // start with session duration
+let _enabled = { cvr:false, bounce:false, atc:false, dur:true };   // start with session duration
 
 function ptYesterday(){
   const f = new Intl.DateTimeFormat('en-CA',{timeZone:'America/Los_Angeles',year:'numeric',month:'2-digit',day:'2-digit'});
@@ -156,22 +157,22 @@ function renderQualityCard(){
     const ccls = contribPP>0?'up':(contribPP<0?'down':'neu');
     const dsPP = c.deltaShare*100;
     rows += `<tr><td class="ch">${esc((c.source||'(none)')+' / '+prettyMedium(c.medium))}</td>`
-      + `<td>${c.index} <small style="color:var(--text-secondary)">${(c.quality*100).toFixed(2)}%</small></td>`
+      + `<td><strong>${(c.quality*100).toFixed(2)}%</strong> <small style="color:var(--text-secondary)">idx ${c.index}</small></td>`
       + `<td>${(c.sharePrev*100).toFixed(1)}% → ${(c.shareDay*100).toFixed(1)}%</td>`
       + `<td class="${dsPP>0?'up':dsPP<0?'down':'neu'}">${(dsPP>=0?'+':'')+dsPP.toFixed(2)}pp</td>`
       + `<td class="${ccls}"><strong>${(contribPP>=0?'+':'')+contribPP.toFixed(3)}pp</strong></td></tr>`;
   }
   el.innerHTML = `<div class="qcard">
     <h3>Traffic Quality &amp; Mix-Shift Value</h3>
-    <p class="card__sub" style="margin:0">How much day-over-day traffic-mix changes moved overall intent-to-buy — each channel's quality held at its 30-day baseline, so this isolates the mix effect.</p>
+    <p class="card__sub" style="margin:0">How much day-over-day traffic-mix changes moved the blended <strong>projected conversion rate</strong> — each channel's projected CVR held at its 30-day baseline, so this isolates the mix effect.</p>
     <div class="qhero">
       <span class="qhero__val ${cls}">${(dq>=0?'+':'')+dq.toFixed(2)}pp</span>
       <span class="qhero__txn ${cls}">${txn>=0?'+':''}${Math.round(txn).toLocaleString()} expected txns</span>
-      <span class="qhero__ctx">blended intent-to-buy ${(m.blendedQualityPrev*100).toFixed(2)}% → ${(m.blendedQualityDay*100).toFixed(2)}% · mix shifted toward <strong>${dir}</strong>-intent channels</span>
+      <span class="qhero__ctx">blended projected CVR ${(m.blendedQualityPrev*100).toFixed(2)}% → ${(m.blendedQualityDay*100).toFixed(2)}% · mix shifted toward <strong>${dir}</strong>-converting channels</span>
     </div>
     <p class="qnote">${modelNote}<br>Mix-shift value = Σ (Δ session-share × channel quality). Positive means traffic moved toward higher-converting channels. Based on ${m.scoredChannels} scored channels.</p>
     <div style="overflow-x:auto;margin-top:10px"><table class="tq"><thead><tr>
-      <th>Channel</th><th>Quality (0–100)</th><th>Session share prev→day</th><th>Δ share</th><th>Mix-shift contribution</th>
+      <th>Channel</th><th>Projected CVR</th><th>Session share prev→day</th><th>Δ share</th><th>Mix-shift Δ (proj. CVR)</th>
     </tr></thead><tbody>${rows}</tbody></table></div>
   </div>`;
 }

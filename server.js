@@ -3031,6 +3031,7 @@ app.get('/api/traffic-quality-data', async (req, res) => {
           dur: QL_NUM(g.get(row, g.idx('average_session_duration'))),
           // previous-period (only present on the day query)
           prevSessions: Math.round(QL_NUM(g.get(row, g.prior('sessions')))),
+          prevCvr: QL_NUM(g.get(row, g.prior('conversion_rate'))),
           prevBounce: QL_NUM(g.get(row, g.prior('bounce_rate'))),
           prevAtc: QL_NUM(g.get(row, g.prior('added_to_cart_rate'))),
           prevDur: QL_NUM(g.get(row, g.prior('average_session_duration'))),
@@ -3057,7 +3058,7 @@ app.get('/api/traffic-quality-data', async (req, res) => {
         sessions: members.reduce((s, m) => s + (m.sessions || 0), 0),
         prevSessions: members.reduce((s, m) => s + (m.prevSessions || 0), 0),
         cvr: wavg('cvr', 'sessions'), bounce: wavg('bounce', 'sessions'), atc: wavg('atc', 'sessions'), dur: wavg('dur', 'sessions'),
-        prevBounce: wavg('prevBounce', 'prevSessions'), prevAtc: wavg('prevAtc', 'prevSessions'), prevDur: wavg('prevDur', 'prevSessions'),
+        prevCvr: wavg('prevCvr', 'prevSessions'), prevBounce: wavg('prevBounce', 'prevSessions'), prevAtc: wavg('prevAtc', 'prevSessions'), prevDur: wavg('prevDur', 'prevSessions'),
       });
     };
     collapse(dayMap); collapse(avg7Map); collapse(avg30Map);
@@ -3067,10 +3068,10 @@ app.get('/api/traffic-quality-data', async (req, res) => {
       const a7 = avg7Map.get(key), a30 = avg30Map.get(key);
       channels.push({
         source: d.source, medium: d.medium, sessions: d.sessions, sessionsPrev: d.prevSessions,
-        current: { bounce: d.bounce, atc: d.atc, dur: d.dur },
-        prev:    { bounce: d.prevBounce, atc: d.prevAtc, dur: d.prevDur },
-        avg7:    a7 ? { bounce: a7.bounce, atc: a7.atc, dur: a7.dur } : null,
-        avg30:   a30 ? { bounce: a30.bounce, atc: a30.atc, dur: a30.dur, sessions: a30.sessions, cvr: a30.cvr } : null,
+        current: { cvr: d.cvr, bounce: d.bounce, atc: d.atc, dur: d.dur },
+        prev:    { cvr: d.prevCvr, bounce: d.prevBounce, atc: d.prevAtc, dur: d.prevDur },
+        avg7:    a7 ? { cvr: a7.cvr, bounce: a7.bounce, atc: a7.atc, dur: a7.dur } : null,
+        avg30:   a30 ? { cvr: a30.cvr, bounce: a30.bounce, atc: a30.atc, dur: a30.dur, sessions: a30.sessions } : null,
       });
     }
     // Only consider channels with >200 sessions in the period (drop small-channel noise).
@@ -3099,7 +3100,7 @@ app.get('/api/traffic-quality-series', async (req, res) => {
   const medCond = isNullish(med) ? 'utm_medium IS NULL'
     : medList.length > 1 ? `utm_medium IN (${medList.map(m => `'${esc(m)}'`).join(', ')})`
     : `utm_medium = '${esc(med)}'`;
-  const q = `FROM sessions SHOW sessions, bounce_rate, added_to_cart_rate, average_session_duration WHERE ${srcCond} AND ${medCond} GROUP BY day SINCE ${start} UNTIL ${end} ORDER BY day ASC`;
+  const q = `FROM sessions SHOW sessions, conversion_rate, bounce_rate, added_to_cart_rate, average_session_duration WHERE ${srcCond} AND ${medCond} GROUP BY day SINCE ${start} UNTIL ${end} ORDER BY day ASC`;
   try {
     const t = await runShopifyQLTable(q);
     const g = qlAccessor(t.columns);
@@ -3107,6 +3108,7 @@ app.get('/api/traffic-quality-series', async (req, res) => {
     const series = t.rows.map(row => ({
       day: String(g.get(row, iDay) ?? '').slice(0, 10),
       sessions: Math.round(QL_NUM(g.get(row, iS))),
+      cvr: QL_NUM(g.get(row, g.idx('conversion_rate'))),
       bounce: QL_NUM(g.get(row, g.idx('bounce_rate'))),
       atc: QL_NUM(g.get(row, g.idx('added_to_cart_rate'))),
       dur: QL_NUM(g.get(row, g.idx('average_session_duration'))),
