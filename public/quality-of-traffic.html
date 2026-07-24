@@ -27,6 +27,8 @@
     table.tq tbody tr { cursor:pointer; }
     table.tq tbody tr:hover { background:#f4f7fb; }
     table.tq tbody tr.tq-active { background:#eaf1fe; }
+    table.tq tbody tr.grp td { font-weight:700; background:#eef3fb; cursor:pointer; padding-top:11px; border-top:2px solid var(--border); }
+    table.tq tbody tr.grp:hover td { background:#e2ebf9; }
     .ch { font-weight:600; }
     .ch small { color:var(--text-secondary); font-weight:400; }
     .up { color:var(--positive); } .down { color:var(--negative); } .neu { color:var(--text-secondary); }
@@ -70,6 +72,8 @@
   <div class="meta-line" id="meta-line"></div>
 
   <div id="quality-card"></div>
+
+  <div id="by-channel"></div>
 
   <div id="channel-detail"></div>
 
@@ -120,6 +124,7 @@ async function load(day){
   tables.innerHTML = '<div class="status">Loading…</div>';
   document.getElementById('channel-detail').innerHTML = '';
   document.getElementById('quality-card').innerHTML = '';
+  document.getElementById('by-channel').innerHTML = '';
   _selected = null; _seriesCache = {};
   try {
     const resp = await fetch(`/api/traffic-quality-data?date=${encodeURIComponent(day)}`);
@@ -131,6 +136,7 @@ async function load(day){
       + (data.minSessions ? ` with &gt;${data.minSessions} sessions` : '')
       + ` · facebook paid_social + paid combined`;
     renderQualityCard();
+    renderByChannel();
     renderTables();
   } catch(err){
     tables.innerHTML = `<div class="status err">Error: ${esc(err.message)}</div>`;
@@ -179,6 +185,36 @@ function renderQualityCard(){
   </div>`;
 }
 
+// Grouped-by-channel breakout: one group per channel, a row per metric with
+// Δ vs prior day / 7d avg / 30d avg. Complements the per-metric tables below.
+function renderByChannel(){
+  const el = document.getElementById('by-channel');
+  if(!_data || !_data.channels || !_data.channels.length){ el.innerHTML=''; return; }
+  const order = ['bounce','dur','atc','cvr'];   // as requested
+  const byKey = Object.fromEntries(METRICS.map(m=>[m.key,m]));
+  const metrics = order.map(k=>byKey[k]).filter(Boolean);
+  let body='';
+  for(const c of _data.channels){   // already sorted by sessions desc
+    const active = chKey(c)===_selected ? ' tq-active' : '';
+    body += `<tr class="grp${active}" data-key="${esc(chKey(c))}"><td colspan="5">${esc(chLabel(c))} · ${c.sessions.toLocaleString()} sessions</td></tr>`;
+    for(const m of metrics){
+      const cur = c.current[m.key];
+      body += `<tr><td>${m.label}</td>`
+        + `<td><strong>${fmtVal(m,cur)}</strong></td>`
+        + deltaCell(m, cur, c.prev ? c.prev[m.key] : null)
+        + deltaCell(m, cur, c.avg7 ? c.avg7[m.key] : null)
+        + deltaCell(m, cur, c.avg30 ? c.avg30[m.key] : null)
+        + `</tr>`;
+    }
+  }
+  el.innerHTML = `<div class="card"><h3>By Channel</h3>`
+    + `<p class="card__sub">Each channel's metrics vs prior day, trailing 7-day average and trailing 30-day average. Click a channel to chart its last 30 days.</p>`
+    + `<div style="overflow-x:auto"><table class="tq"><thead><tr>`
+    + `<th>Metric</th><th>Current</th><th>Δ vs prior day</th><th>Δ vs 7d avg</th><th>Δ vs 30d avg</th>`
+    + `</tr></thead><tbody>${body}</tbody></table></div></div>`;
+  el.querySelectorAll('tr.grp').forEach(tr => tr.addEventListener('click', () => selectChannel(tr.dataset.key)));
+}
+
 function renderTables(){
   const minSess = 20;   // hide long-tail noise
   const rows = _data.channels.filter(c => c.sessions >= minSess);
@@ -212,6 +248,7 @@ function renderTables(){
 
 async function selectChannel(key){
   _selected = key;
+  renderByChannel();  // refresh active-group highlight
   renderTables();  // refresh active-row highlight
   const c = _data.channels.find(x => chKey(x)===key);
   if(!c) return;
