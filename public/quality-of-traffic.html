@@ -165,7 +165,7 @@ function renderQualityCard(){
     </div>
     <p class="qnote">${modelNote}<br>Mix-shift value = Σ (Δ session-share × [channel CVR − blended CVR]). A below-average channel gaining share is negative (drags blended CVR down); contributions sum to the total. Based on ${m.scoredChannels} channels.</p>
     <div style="overflow-x:auto;margin-top:10px"><table class="tq"><thead><tr>
-      <th>Channel</th><th>Conversion Rate</th><th>Session share prev→day</th><th>Δ share</th><th>Mix-shift Δ (CVR)</th>
+      <th>Channel</th><th>Conversion Rate</th><th>Session share prev→day</th><th>Δ share</th><th>Mix-shift Δ (CVR) <span title="This channel's share of the day-over-day change in blended conversion rate caused by the traffic mix shifting. Formula: Δ session-share × (channel's conversion rate − blended CVR). Positive = the channel's share change pushed blended CVR up (a high-converting channel gained share, or a low-converting one lost it); negative = it pulled blended CVR down. Each channel's CVR is held fixed, so this isolates the mix effect, and all channels' contributions sum to the headline Mix-shift Δ." style="cursor:help;color:var(--fb-blue)">ⓘ</span></th>
     </tr></thead><tbody>${rows}</tbody></table></div>
   </div>`;
 }

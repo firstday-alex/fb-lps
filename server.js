@@ -2925,7 +2925,7 @@ function computeTrafficQuality(channels) {
     shareDay: c._sd, sharePrev: c._sp, deltaShare: c._sd - c._sp,
     // centered on the blended CVR so below/above-average channels get the right sign
     contribution: (c._sd - c._sp) * (c.quality - blendedDay),
-  })).sort((a, b) => Math.abs(b.contribution) - Math.abs(a.contribution));
+  })).sort((a, b) => b.shareDay - a.shareDay);   // rank by session share (= sessions) desc
 
   return {
     quality: {
