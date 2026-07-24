@@ -1188,6 +1188,8 @@
       <button class="btn-reset" id="btn-reset">&#8592; New query</button>
     </div>
 
+    <div id="scope-note" style="font-size:0.8rem;color:var(--text-secondary);margin:2px 0 14px"></div>
+
     <div class="kpi-row" id="kpi-row"></div>
 
     <!-- Meta ad-spend efficiency (CPM / CPC / CTR) — populated from the Facebook
@@ -3400,6 +3402,8 @@ async function loadFromShopify() {
       ? `${compareStart} → ${compareEnd}`
       : (auto ? `${auto.start} → ${auto.end} (auto · prev period)` : 'previous period');
     render(rows, `Shopify · ${source}/${medium} · ${startDate} → ${endDate} vs ${compareLabel}`);
+    const scopeEl = document.getElementById('scope-note');
+    if (scopeEl) scopeEl.innerHTML = `<strong>Scope:</strong> Meta paid social only — <code>utm_source = "${esc(source)}" AND utm_medium = "${esc(medium)}"</code>. These numbers cover this segment only; the <em>CVR Diagnosis by UTM</em> tab's "${esc(source)}" row blends <em>all</em> mediums, so its CVR will differ.`;
 
     const info = document.getElementById('top-bar-info');
     if (info) {
