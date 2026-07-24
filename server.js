@@ -2895,80 +2895,18 @@ function qlAccessor(cols) {
 }
 const QL_NUM = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
 
-// Solve M·b = V for a small square system (Gaussian elimination, partial pivot).
-// Returns the solution vector, or null if the matrix is singular.
-function solveLinear(M, V) {
-  const n = V.length;
-  const A = M.map((row, i) => [...row, V[i]]);
-  for (let col = 0; col < n; col++) {
-    let piv = col;
-    for (let r = col + 1; r < n; r++) if (Math.abs(A[r][col]) > Math.abs(A[piv][col])) piv = r;
-    if (Math.abs(A[piv][col]) < 1e-12) return null;
-    [A[col], A[piv]] = [A[piv], A[col]];
-    for (let r = 0; r < n; r++) {
-      if (r === col) continue;
-      const f = A[r][col] / A[col][col];
-      for (let k = col; k <= n; k++) A[r][k] -= f * A[col][k];
-    }
-  }
-  return A.map((row, i) => row[n] / row[i]);   // row[i] is the diagonal A[i][i]
-}
+// Day-over-day traffic-mix-shift value, weighted by each channel's ACTUAL
+// conversion rate for the selected day. Holding those per-channel CVRs fixed
+// and moving only the session-share mix isolates the mix effect (Paasche-style
+// shift-share). Per-channel contribution is centered on the blended average —
+// Δshare × (channel CVR − blended CVR) — so a below-average channel gaining
+// share correctly reads NEGATIVE (it drags blended CVR down), and the
+// contributions sum to the total mix-shift Δ.
+function computeTrafficQuality(channels) {
+  const scored = channels
+    .map(c => ({ source: c.source, medium: c.medium, quality: (c.current && isFinite(c.current.cvr)) ? c.current.cvr : null, sessions: c.sessions, sessionsPrev: c.sessionsPrev }))
+    .filter(c => c.quality != null);
 
-// Conversion-anchored quality score + day-over-day traffic-mix-shift value.
-// Fits a session-weighted OLS of 30-day conversion_rate on the 3 engagement
-// metrics across channels → per-channel predicted "intent-to-buy" quality (in
-// CVR units, frozen at the 30-day baseline). Then decomposes the DoD change in
-// BLENDED quality into the part driven purely by traffic mix shifting
-// (channels gaining/losing session share × their baseline quality).
-// fitChannels = pool used to TRAIN the model (broad, for robustness);
-// scoreChannels = channels to score + include in the mix-shift (the displayed set).
-function computeTrafficQuality(fitChannels, scoreChannels = fitChannels) {
-  const MIN_FIT_SESSIONS = 200;
-  const fit = fitChannels.filter(c => c.avg30 && c.avg30.sessions >= MIN_FIT_SESSIONS && isFinite(c.avg30.cvr));
-  const predictors = c => [c.avg30.bounce, c.avg30.atc, c.avg30.dur];
-
-  let model = null, predict = null;
-  if (fit.length >= 5) {
-    const W = fit.reduce((s, c) => s + c.avg30.sessions, 0);
-    const means = [0, 0, 0], stds = [0, 0, 0];
-    for (let j = 0; j < 3; j++) {
-      let m = 0; for (const c of fit) m += c.avg30.sessions * predictors(c)[j]; m /= W;
-      let v = 0; for (const c of fit) v += c.avg30.sessions * (predictors(c)[j] - m) ** 2; v /= W;
-      means[j] = m; stds[j] = Math.sqrt(v) || 1;
-    }
-    const z = c => predictors(c).map((x, j) => (x - means[j]) / stds[j]);
-    const M = Array.from({ length: 4 }, () => [0, 0, 0, 0]); const V = [0, 0, 0, 0];
-    for (const c of fit) {
-      const a = [1, ...z(c)], w = c.avg30.sessions, y = c.avg30.cvr;
-      for (let i = 0; i < 4; i++) { V[i] += w * a[i] * y; for (let k = 0; k < 4; k++) M[i][k] += w * a[i] * a[k]; }
-    }
-    // Ridge regularization on the standardized predictors (not the intercept) —
-    // the 3 engagement metrics are collinear (bounce ↔ duration), which makes a
-    // plain OLS singular/unstable. Predictors are z-scored so Σw·z²≈W; a λ·W
-    // ridge is a gentle, scale-appropriate shrink that guarantees invertibility.
-    const ridge = 0.1 * W;
-    for (let i = 1; i < 4; i++) M[i][i] += ridge;
-    const b = solveLinear(M, V);
-    if (b && b.every(Number.isFinite)) {
-      predict = c => { const a = [1, ...z(c)]; let p = 0; for (let i = 0; i < 4; i++) p += b[i] * a[i]; return Math.max(0, p); };
-      let ybar = 0; for (const c of fit) ybar += c.avg30.sessions * c.avg30.cvr; ybar /= W;
-      let ssRes = 0, ssTot = 0;
-      for (const c of fit) { const w = c.avg30.sessions, y = c.avg30.cvr, p = predict(c); ssRes += w * (y - p) ** 2; ssTot += w * (y - ybar) ** 2; }
-      model = {
-        type: 'ols', r2: ssTot > 0 ? 1 - ssRes / ssTot : null, fit_channels: fit.length, min_fit_sessions: MIN_FIT_SESSIONS,
-        // standardized coefficients — expected CVR change per +1 SD of each metric
-        coef_per_sd: { bounce_rate: b[1], added_to_cart_rate: b[2], average_session_duration: b[3] },
-      };
-    }
-  }
-  if (!predict) {
-    predict = c => (c.avg30 && isFinite(c.avg30.cvr)) ? c.avg30.cvr : null;
-    model = { type: 'fallback_cvr', note: "Too few channels to fit a model; quality = each channel's own 30-day conversion rate." };
-  }
-
-  const scored = scoreChannels.filter(c => c.avg30)
-    .map(c => ({ source: c.source, medium: c.medium, quality: predict(c), sessions: c.sessions, sessionsPrev: c.sessionsPrev }))
-    .filter(c => c.quality != null && isFinite(c.quality));
   const qs = scored.map(c => c.quality);
   const qMin = qs.length ? Math.min(...qs) : 0, qMax = qs.length ? Math.max(...qs) : 0;
   scored.forEach(c => { c.index = (qMax > qMin) ? Math.round((c.quality - qMin) / (qMax - qMin) * 100) : 50; });
@@ -2976,16 +2914,24 @@ function computeTrafficQuality(fitChannels, scoreChannels = fitChannels) {
   const totalDay = scored.reduce((s, c) => s + c.sessions, 0);
   const totalPrev = scored.reduce((s, c) => s + c.sessionsPrev, 0);
   let blendedDay = 0, blendedPrev = 0;
-  const contributions = scored.map(c => {
-    const shareDay = totalDay > 0 ? c.sessions / totalDay : 0;
-    const sharePrev = totalPrev > 0 ? c.sessionsPrev / totalPrev : 0;
-    blendedDay += shareDay * c.quality; blendedPrev += sharePrev * c.quality;
-    return { source: c.source, medium: c.medium, quality: c.quality, index: c.index, shareDay, sharePrev, deltaShare: shareDay - sharePrev, contribution: (shareDay - sharePrev) * c.quality };
-  }).sort((a, b) => Math.abs(b.contribution) - Math.abs(a.contribution));
-  const deltaQuality = blendedDay - blendedPrev;
+  scored.forEach(c => {
+    c._sd = totalDay > 0 ? c.sessions / totalDay : 0;
+    c._sp = totalPrev > 0 ? c.sessionsPrev / totalPrev : 0;
+    blendedDay += c._sd * c.quality; blendedPrev += c._sp * c.quality;
+  });
+  const deltaQuality = blendedDay - blendedPrev;   // Σ Δshare × cvr = mix effect
+  const contributions = scored.map(c => ({
+    source: c.source, medium: c.medium, quality: c.quality, index: c.index,
+    shareDay: c._sd, sharePrev: c._sp, deltaShare: c._sd - c._sp,
+    // centered on the blended CVR so below/above-average channels get the right sign
+    contribution: (c._sd - c._sp) * (c.quality - blendedDay),
+  })).sort((a, b) => Math.abs(b.contribution) - Math.abs(a.contribution));
 
   return {
-    quality: { model, channels: scored.map(c => ({ source: c.source, medium: c.medium, quality: c.quality, index: c.index })) },
+    quality: {
+      model: { type: 'current_cvr', note: "Weighted by each channel's actual conversion rate for the selected day." },
+      channels: scored.map(c => ({ source: c.source, medium: c.medium, quality: c.quality, index: c.index })),
+    },
     mixShift: {
       blendedQualityDay: blendedDay, blendedQualityPrev: blendedPrev, deltaQuality,
       estTransactionImpact: deltaQuality * totalDay,
@@ -3077,8 +3023,7 @@ app.get('/api/traffic-quality-data', async (req, res) => {
     // Only consider channels with >200 sessions in the period (drop small-channel noise).
     const MIN_SESSIONS = 200;
     const considered = channels.filter(c => c.sessions > MIN_SESSIONS).sort((a, b) => b.sessions - a.sessions);
-    // Train the quality model on the broad channel pool (robust); score + mix-shift on the >200 set.
-    const { quality, mixShift } = computeTrafficQuality(channels, considered);
+    const { quality, mixShift } = computeTrafficQuality(considered);
     res.json({ date: day, minSessions: MIN_SESSIONS, compare: { prevDay: shiftDate(day, -1), avg7: { start: shiftDate(day, -6), end: day }, avg30: { start: shiftDate(day, -29), end: day } }, channels: considered, quality, mixShift });
   } catch (err) {
     console.error('[traffic-quality-data] error:', err);

@@ -143,14 +143,7 @@ function renderQualityCard(){
   const cls = dq>0?'up':(dq<0?'down':'neu');
   const txn = m.estTransactionImpact;
   const model = q.model || {};
-  const lbl = { bounce_rate:'bounce rate', added_to_cart_rate:'add-to-cart rate', average_session_duration:'session duration' };
-  let modelNote;
-  if(model.type==='ols'){
-    const rank = Object.entries(model.coef_per_sd||{}).sort((a,b)=>Math.abs(b[1])-Math.abs(a[1]));
-    modelNote = `Quality = each channel's 30-day conversion rate predicted from bounce rate, add-to-cart rate &amp; session duration (session-weighted ridge regression, R²&nbsp;${model.r2!=null?model.r2.toFixed(2):'—'}). Most predictive signal: <strong>${rank.length?lbl[rank[0][0]]:'—'}</strong>.`;
-  } else {
-    modelNote = `Quality = each channel's own 30-day conversion rate. ${esc(model.note||'')}`;
-  }
+  const modelNote = `Weighted by each channel's <strong>actual conversion rate</strong> for ${_data.date}. Each channel's CVR is held fixed and only the session-share mix moves, so this isolates the mix effect.`;
   let rows='';
   for(const c of m.contributions){
     const contribPP = c.contribution*100;
@@ -164,15 +157,15 @@ function renderQualityCard(){
   }
   el.innerHTML = `<div class="qcard">
     <h3>Traffic Quality &amp; Mix-Shift Value</h3>
-    <p class="card__sub" style="margin:0">How much day-over-day traffic-mix changes moved the blended <strong>projected conversion rate</strong> — each channel's projected CVR held at its 30-day baseline, so this isolates the mix effect.</p>
+    <p class="card__sub" style="margin:0">How much day-over-day traffic-mix changes moved the blended <strong>conversion rate</strong> — each channel's CVR held fixed, so this isolates the mix effect.</p>
     <div class="qhero">
       <span class="qhero__val ${cls}">${(dq>=0?'+':'')+dq.toFixed(2)}pp</span>
       <span class="qhero__txn ${cls}">${txn>=0?'+':''}${Math.round(txn).toLocaleString()} expected txns</span>
-      <span class="qhero__ctx">blended projected CVR ${(m.blendedQualityPrev*100).toFixed(2)}% → ${(m.blendedQualityDay*100).toFixed(2)}% · mix shifted toward <strong>${dir}</strong>-converting channels</span>
+      <span class="qhero__ctx">blended CVR ${(m.blendedQualityPrev*100).toFixed(2)}% → ${(m.blendedQualityDay*100).toFixed(2)}% · mix shifted toward <strong>${dir}</strong>-converting channels</span>
     </div>
-    <p class="qnote">${modelNote}<br>Mix-shift value = Σ (Δ session-share × channel quality). Positive means traffic moved toward higher-converting channels. Based on ${m.scoredChannels} scored channels.</p>
+    <p class="qnote">${modelNote}<br>Mix-shift value = Σ (Δ session-share × [channel CVR − blended CVR]). A below-average channel gaining share is negative (drags blended CVR down); contributions sum to the total. Based on ${m.scoredChannels} channels.</p>
     <div style="overflow-x:auto;margin-top:10px"><table class="tq"><thead><tr>
-      <th>Channel</th><th>Projected CVR</th><th>Session share prev→day</th><th>Δ share</th><th>Mix-shift Δ (proj. CVR)</th>
+      <th>Channel</th><th>Conversion Rate</th><th>Session share prev→day</th><th>Δ share</th><th>Mix-shift Δ (CVR)</th>
     </tr></thead><tbody>${rows}</tbody></table></div>
   </div>`;
 }
