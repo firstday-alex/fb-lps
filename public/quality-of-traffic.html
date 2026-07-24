@@ -40,6 +40,8 @@
     .qhero__txn { font-size:1rem; font-weight:700; }
     .qhero__ctx { color:var(--text-secondary); font-size:0.85rem; }
     .qnote { font-size:0.78rem; color:var(--text-secondary); margin:8px 0 0; }
+    .tip { cursor:help; color:var(--fb-blue); font-weight:700; }
+    #floating-tip { position:fixed; z-index:9999; max-width:320px; background:#1c1e21; color:#fff; font-size:0.74rem; font-weight:400; line-height:1.45; padding:10px 12px; border-radius:8px; box-shadow:0 4px 16px rgba(0,0,0,0.28); display:none; pointer-events:none; text-transform:none; letter-spacing:normal; }
     .qnote code { background:var(--neutral-bg); padding:1px 5px; border-radius:4px; }
     /* chart */
     .chart-toggles { display:flex; gap:8px; flex-wrap:wrap; margin:6px 0 12px; }
@@ -73,6 +75,7 @@
 
   <div id="tables"><div class="status" id="status">Loading…</div></div>
 </div>
+<div id="floating-tip"></div>
 
 <script>
 const METRICS = [
@@ -152,20 +155,20 @@ function renderQualityCard(){
     rows += `<tr><td class="ch">${esc((c.source||'(none)')+' / '+prettyMedium(c.medium))}</td>`
       + `<td><strong>${(c.quality*100).toFixed(1)}%</strong></td>`
       + `<td>${(c.sharePrev*100).toFixed(1)}% → ${(c.shareDay*100).toFixed(1)}%</td>`
-      + `<td class="${dsPP>0?'up':dsPP<0?'down':'neu'}">${(dsPP>=0?'+':'')+dsPP.toFixed(2)}pp</td>`
-      + `<td class="${ccls}"><strong>${(contribPP>=0?'+':'')+contribPP.toFixed(3)}pp</strong></td></tr>`;
+      + `<td class="${dsPP>0?'up':dsPP<0?'down':'neu'}">${(dsPP>=0?'+':'')+dsPP.toFixed(1)}%</td>`
+      + `<td class="${ccls}"><strong>${(contribPP>=0?'+':'')+contribPP.toFixed(2)}%</strong></td></tr>`;
   }
   el.innerHTML = `<div class="qcard">
     <h3>Traffic Quality &amp; Mix-Shift Value</h3>
     <p class="card__sub" style="margin:0">How much day-over-day traffic-mix changes moved the blended <strong>conversion rate</strong> — each channel's CVR held fixed, so this isolates the mix effect.</p>
     <div class="qhero">
-      <span class="qhero__val ${cls}">${(dq>=0?'+':'')+dq.toFixed(2)}pp</span>
+      <span class="qhero__val ${cls}">${(dq>=0?'+':'')+dq.toFixed(2)}%</span>
       <span class="qhero__txn ${cls}">${txn>=0?'+':''}${Math.round(txn).toLocaleString()} expected txns</span>
       <span class="qhero__ctx">blended CVR ${(m.blendedQualityPrev*100).toFixed(1)}% → ${(m.blendedQualityDay*100).toFixed(1)}% · mix shifted toward <strong>${dir}</strong>-converting channels</span>
     </div>
     <p class="qnote">${modelNote}<br>Mix-shift value = Σ (Δ session-share × [channel CVR − blended CVR]). A below-average channel gaining share is negative (drags blended CVR down); contributions sum to the total. Based on ${m.scoredChannels} channels.</p>
     <div style="overflow-x:auto;margin-top:10px"><table class="tq"><thead><tr>
-      <th>Channel</th><th>Conversion Rate</th><th>Session share prev→day</th><th>Δ share</th><th>Mix-shift Δ (CVR) <span title="This channel's share of the day-over-day change in blended conversion rate caused by the traffic mix shifting. Formula: Δ session-share × (channel's conversion rate − blended CVR). Positive = the channel's share change pushed blended CVR up (a high-converting channel gained share, or a low-converting one lost it); negative = it pulled blended CVR down. Each channel's CVR is held fixed, so this isolates the mix effect, and all channels' contributions sum to the headline Mix-shift Δ." style="cursor:help;color:var(--fb-blue)">ⓘ</span></th>
+      <th>Channel</th><th>Conversion Rate</th><th>Session share prev→day</th><th>Δ share</th><th>Mix-shift Δ (CVR) <span class="tip" data-tip="Δ share × (this channel's CVR − blended CVR). Positive = its share change helped blended CVR (a high-converting channel gained share, or a low one lost it); negative = it hurt. All channels add up to the total.">ⓘ</span></th>
     </tr></thead><tbody>${rows}</tbody></table></div>
   </div>`;
 }
@@ -273,6 +276,24 @@ function renderChart(key){
     + lines + ticks + `</svg>`
     + `<div class="chart-legend">${legend}</div>`;
 }
+
+// Floating tooltip — delegated so it works on dynamically-rendered [data-tip]
+// elements and isn't clipped by any table's overflow container.
+(function(){
+  const tip = document.getElementById('floating-tip');
+  document.addEventListener('mouseover', e => {
+    const t = e.target.closest('[data-tip]');
+    if(!t) return;
+    tip.textContent = t.getAttribute('data-tip');
+    tip.style.display = 'block';
+    const r = t.getBoundingClientRect();
+    let x = r.left, y = r.bottom + 6;
+    if(x + 332 > window.innerWidth) x = window.innerWidth - 332;
+    if(x < 8) x = 8;
+    tip.style.left = x + 'px'; tip.style.top = y + 'px';
+  });
+  document.addEventListener('mouseout', e => { if(e.target.closest('[data-tip]')) tip.style.display = 'none'; });
+})();
 
 document.addEventListener('DOMContentLoaded', () => {
   const inp = document.getElementById('day-input');
