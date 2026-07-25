@@ -60,10 +60,6 @@
         <label>End</label>
         <input type="date" id="end" />
       </div>
-      <div class="field">
-        <label>Access token</label>
-        <input type="password" id="token" placeholder="DAILY_REPORT_TOKEN" style="width:180px" />
-      </div>
       <button id="run">Run analysis</button>
       <button type="button" class="quick" id="quick-yday">Reset to yesterday</button>
     </div>
@@ -120,16 +116,18 @@
     }
 
     async function run() {
-      const tab = $('tab').value, start = $('start').value, end = $('end').value, token = $('token').value.trim();
+      const tab = $('tab').value, start = $('start').value, end = $('end').value;
       const out = $('out');
       if (!start || !end) { out.innerHTML = '<div class="err">Please choose a start and end date.</div>'; return; }
-      try { localStorage.setItem('tabAnalysisToken', token); } catch (e) {}
       $('run').disabled = true;
       out.innerHTML = `<div class="card spin">Running analysis for <strong>${tab}</strong> (${start} → ${end})… querying Shopify + summarizing.</div>`;
       try {
         const params = new URLSearchParams({ tab, start, end });
-        if (token) params.set('token', token);
         const resp = await fetch('/api/tab-analysis?' + params.toString());
+        if (resp.status === 401) {
+          out.innerHTML = '<div class="err">Not logged in. <a href="/auth/facebook" style="color:#9cc0ff">Log in with Facebook</a>, then run again.</div>';
+          return;
+        }
         const data = await resp.json();
         if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
         const w = data.window || {};
@@ -150,15 +148,12 @@
       }
     }
 
-    // Init: default to yesterday, restore token, honor ?token= / ?start= / ?end= in URL.
+    // Init: default to yesterday; honor ?start= / ?end= in URL.
     (function init() {
       const q = new URLSearchParams(location.search);
       setYesterday();
       if (/^\d{4}-\d{2}-\d{2}$/.test(q.get('start') || '')) $('start').value = q.get('start');
       if (/^\d{4}-\d{2}-\d{2}$/.test(q.get('end') || '')) $('end').value = q.get('end');
-      let tok = q.get('token');
-      if (!tok) { try { tok = localStorage.getItem('tabAnalysisToken'); } catch (e) {} }
-      if (tok) $('token').value = tok;
       $('run').addEventListener('click', run);
       $('quick-yday').addEventListener('click', setYesterday);
     })();

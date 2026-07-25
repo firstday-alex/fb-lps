@@ -2954,10 +2954,7 @@ ${JSON.stringify(brief)}`;
   return text;
 }
 
-app.get('/api/tab-analysis', async (req, res) => {
-  const supplied = req.query.token || req.get('x-report-token');
-  if (!reportTokenOk(supplied)) return res.status(401).json({ error: 'Invalid or missing token' });
-
+app.get('/api/tab-analysis', requireAuth, async (req, res) => {
   const tabKey = String(req.query.tab || 'meta-cvr-impact');
   const tab = ANALYSIS_TABS[tabKey];
   if (!tab) return res.status(400).json({ error: `Unknown tab '${tabKey}'. Known: ${Object.keys(ANALYSIS_TABS).join(', ')}` });
