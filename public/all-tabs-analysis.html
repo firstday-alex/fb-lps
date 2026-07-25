@@ -35,6 +35,13 @@
     .kpi .d { font-size:.78rem; margin-top:1px; }
     .up { color:var(--good); } .down { color:var(--bad); }
     details { margin-top:8px; } summary { cursor:pointer; color:var(--muted); font-size:.82rem; }
+    .ctx { margin-top:14px; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; }
+    .ctx > summary { font-size:.9rem; color:var(--ink); font-weight:600; }
+    .ctx textarea { width:100%; background:#0c0e12; border:1px solid var(--line); color:var(--ink); border-radius:8px; padding:10px; font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; resize:vertical; }
+    .ctx-actions { display:flex; align-items:center; gap:12px; margin-top:10px; }
+    .ctx-status { color:var(--muted); font-size:.8rem; }
+    .ctx-badge { color:var(--good); font-size:.72rem; font-weight:600; }
+    .pill { display:inline-block; font-size:.68rem; font-weight:600; color:var(--accent); border:1px solid var(--line); border-radius:20px; padding:1px 8px; margin-left:6px; }
     pre { background:#0c0e12; border:1px solid var(--line); border-radius:8px; padding:12px; overflow:auto; font-size:.78rem; color:#c7cdda; }
     .err { color:var(--bad); background:#2a1416; border:1px solid #4a2024; padding:12px 14px; border-radius:8px; }
     .spin { color:var(--muted); }
@@ -64,6 +71,16 @@
       <button type="button" class="quick" id="quick-yday">Reset to yesterday</button>
     </div>
     <p class="hint">Single-day range (Start = End) compares that day to the day before. A multi-day range compares to the equal-length window immediately before it.</p>
+
+    <details class="ctx" id="ctx-panel">
+      <summary>Analysis instructions &amp; context <span id="ctx-badge" class="ctx-badge"></span></summary>
+      <p class="hint" style="margin-top:10px">Guidance for the AI summary — what to focus on, known launches/tests, how to interpret moves. <strong>Saved server-side and applied on every device.</strong> It steers focus only; it can't add numbers the data doesn't contain.</p>
+      <textarea id="ctx-text" rows="6" placeholder="e.g. /pages/kde-behind-the-science-lp launched 2026-07-20, so low prior volume is expected. Prioritize scaling campaigns over creative-testing noise. Flag any LP where CVR AND sessions both drop."></textarea>
+      <div class="ctx-actions">
+        <button type="button" id="ctx-save">Save context</button>
+        <span id="ctx-status" class="ctx-status"></span>
+      </div>
+    </details>
 
     <div class="out" id="out"></div>
   </div>
@@ -132,8 +149,9 @@
         if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
         const w = data.window || {};
         const cmp = typeof w.comparison === 'string' ? w.comparison : `${w.comparison?.start} → ${w.comparison?.end}`;
+        const ctxPill = data.context_applied ? '<span class="pill">context applied</span>' : '';
         out.innerHTML = `<div class="card">
-          <h2>${data.label}</h2>
+          <h2>${data.label}${ctxPill}</h2>
           <div class="meta">${w.start} → ${w.end} &nbsp;·&nbsp; compared to ${cmp} &nbsp;·&nbsp; ${data.model}</div>
           ${kpiRow(data.brief && data.brief.overall)}
           <div class="md">${mdToHtml(data.summary || '')}</div>
@@ -148,7 +166,42 @@
       }
     }
 
-    // Init: default to yesterday; honor ?start= / ?end= in URL.
+    async function loadContext() {
+      try {
+        const resp = await fetch('/api/tab-analysis-context');
+        if (!resp.ok) return; // 401 (not logged in) etc — leave empty quietly
+        const d = await resp.json();
+        $('ctx-text').value = d.text || '';
+        if (d.text && d.text.trim()) {
+          $('ctx-badge').textContent = '• active';
+          const when = d.updated_at ? new Date(d.updated_at).toLocaleString() : '';
+          $('ctx-status').textContent = when ? ('Last saved ' + when) : '';
+        }
+        if (d.ephemeral) $('ctx-status').textContent = '⚠ Not persisting: Vercel KV not configured (saves are lost on redeploy).';
+      } catch (e) {}
+    }
+
+    async function saveContext() {
+      const text = $('ctx-text').value;
+      $('ctx-save').disabled = true;
+      $('ctx-status').textContent = 'Saving…';
+      try {
+        const resp = await fetch('/api/tab-analysis-context', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text }),
+        });
+        const d = await resp.json();
+        if (!resp.ok) throw new Error(d.error || ('HTTP ' + resp.status));
+        $('ctx-status').textContent = 'Saved ✓ (applies on every device on the next run)';
+        $('ctx-badge').textContent = text.trim() ? '• active' : '';
+      } catch (e) {
+        $('ctx-status').textContent = 'Save failed: ' + e.message;
+      } finally {
+        $('ctx-save').disabled = false;
+      }
+    }
+
+    // Init: default to yesterday; honor ?start= / ?end= in URL; load saved context.
     (function init() {
       const q = new URLSearchParams(location.search);
       setYesterday();
@@ -156,6 +209,8 @@
       if (/^\d{4}-\d{2}-\d{2}$/.test(q.get('end') || '')) $('end').value = q.get('end');
       $('run').addEventListener('click', run);
       $('quick-yday').addEventListener('click', setYesterday);
+      $('ctx-save').addEventListener('click', saveContext);
+      loadContext();
     })();
   </script>
 </body>

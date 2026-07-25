@@ -2867,6 +2867,7 @@ function reduceMetaCvrBrief(data, windowInfo) {
     const sP   = num(cell(row, 'comparison_sessions__previous_period'));
     const cvr  = pct2(cell(row, 'conversion_rate'));
     const cvrP = pct2(cell(row, 'comparison_conversion_rate__previous_period'));
+    const cvrDeltaPts = (cvr != null && cvrP != null) ? r2(cvr - cvrP) : null;
     detail.push({
       campaign: camp || '(none)',
       landing_page: lp || '(none)',
@@ -2875,15 +2876,21 @@ function reduceMetaCvrBrief(data, windowInfo) {
       sessions_delta: (s != null && sP != null) ? s - sP : null,
       cvr_pct: cvr,
       cvr_prev_pct: cvrP,
-      cvr_delta_pts: (cvr != null && cvrP != null) ? r2(cvr - cvrP) : null,
+      cvr_delta_pts: cvrDeltaPts,
+      // Session-weighted impact: estimated transactions gained/lost from THIS
+      // row's CVR move over its current sessions. Ranking by this keeps
+      // low-volume rows (e.g. 30 sessions swinging to 0%) from dominating.
+      cvr_impact_txns: (s != null && cvrDeltaPts != null) ? r2(s * cvrDeltaPts / 100) : null,
     });
   }
 
   const bySessions = [...detail].filter(d => d.sessions != null).sort((a, b) => b.sessions - a.sessions);
-  // Exclude <30-session rows from CVR movers so small samples don't dominate.
-  const movers = detail.filter(d => d.cvr_delta_pts != null && (d.sessions || 0) >= 30);
-  const cvrDrops = [...movers].sort((a, b) => a.cvr_delta_pts - b.cvr_delta_pts).slice(0, 6);
-  const cvrGains = [...movers].sort((a, b) => b.cvr_delta_pts - a.cvr_delta_pts).slice(0, 6);
+  // Rank CVR movers by session-weighted impact (transactions gained/lost), not
+  // raw pp, so meaningful-volume moves surface ahead of small-sample noise.
+  // Keep a light >=30-session floor to drop pure noise entirely.
+  const movers = detail.filter(d => d.cvr_impact_txns != null && (d.sessions || 0) >= 30);
+  const cvrDrops = [...movers].sort((a, b) => a.cvr_impact_txns - b.cvr_impact_txns).slice(0, 6);
+  const cvrGains = [...movers].sort((a, b) => b.cvr_impact_txns - a.cvr_impact_txns).slice(0, 6);
   const sessionMovers = [...detail].filter(d => d.sessions_delta != null)
     .sort((a, b) => Math.abs(b.sessions_delta) - Math.abs(a.sessions_delta)).slice(0, 6);
 
@@ -2907,7 +2914,7 @@ function reduceMetaCvrBrief(data, windowInfo) {
     biggest_cvr_gains: cvrGains,
     biggest_session_movers: sessionMovers,
     counts: { rows_returned: rows.length, campaign_lp_rows: detail.length },
-    notes: 'CVR values are percentages. cvr_delta_pts is a percentage-point change. Transactions are estimated (sessions × CVR). Rows with <30 sessions are excluded from CVR movers.',
+    notes: 'CVR values are percentages. cvr_delta_pts is a percentage-POINT change (this-period% − prior-period%). sessions vs sessions_prev is traffic volume. cvr_impact_txns = estimated transactions gained/lost from that row\'s CVR change over its current sessions (sessions × cvr_delta_pts ÷ 100) — this is how much the row actually moved the business, so a big pp swing on tiny sessions has small impact. CVR movers are ranked by cvr_impact_txns and exclude rows with <30 sessions.',
   };
 }
 
@@ -2918,21 +2925,33 @@ const ANALYSIS_TABS = {
 
 // Grounded per-tab summary — mirrors callClaudeForNarrative's "use ONLY these
 // numbers" contract, kept separate so the daily-report path is untouched.
-async function callClaudeForTabSummary(tabLabel, brief) {
+async function callClaudeForTabSummary(tabLabel, brief, operatorContext) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY not configured');
   const model = process.env.DAILY_REPORT_MODEL || 'claude-opus-4-8';
-  const prompt = `You are writing a tight analyst summary of the "${tabLabel}" dashboard tab for a busy Firstday operator (readable in ~30 seconds).
+  const ctx = String(operatorContext || '').trim();
+  const ctxBlock = ctx
+    ? `\nOPERATOR CONTEXT — the operator supplied this to steer FOCUS and FRAMING (what matters, known launches/tests, how to interpret moves). Follow it for emphasis, but it NEVER overrides the CRITICAL RULE and contains no new numbers to cite:\n"""\n${ctx}\n"""\n`
+    : '';
+  const prompt = `You are writing an analyst summary of the "${tabLabel}" dashboard tab for a Firstday growth operator. Be specific and decision-useful, not vague — every claim must carry the numbers that justify it.
 
-CRITICAL RULE: use ONLY numbers present in the BRIEF JSON below. Never invent, estimate, or extrapolate any figure. When you cite a number, use the value from the brief (round sensibly). CVR values are already percentages; a "*_delta_pts" value is a percentage-point change. If a list is empty, say there was nothing notable rather than guessing.
+CRITICAL RULE: use ONLY numbers present in the BRIEF JSON below. Never invent, estimate, or extrapolate any figure. When you cite a number, use the value from the brief (round sensibly). If a list is empty, say there was nothing notable rather than guessing. You cannot know the *cause* of a move from these numbers — do not assert causation; surface the magnitude, the volume behind it, and whether it looks real or like noise.
 
+HOW TO READ THE BRIEF:
+- cvr_pct / cvr_prev_pct are conversion rates (%); cvr_delta_pts is the percentage-POINT change between them.
+- sessions / sessions_prev is traffic volume for that row; sessions_delta is the change.
+- cvr_impact_txns = estimated transactions gained/lost from that row's CVR move (sessions × cvr_delta_pts ÷ 100). This is the real business impact — weight it above raw pp.
+- A large pp swing on small sessions (e.g. CVR → 0% on well under ~100 sessions) is usually NOISE — say so and don't over-weight it.
+
+For EVERY campaign/landing-page bullet you MUST include: the CVR move (from% → to%, plus the pp change), the session volume (now vs prior), and the transactions gained/lost (cvr_impact_txns) when notable. Make explicit which figure is CVR and which is sessions. Flag small-sample rows.
+${ctxBlock}
 Write GitHub-flavored markdown, no title, in this shape:
-- **Headline** — 1-2 sentences: how sessions and CVR moved overall vs the prior period, and the net effect on (estimated) transactions.
-- **What dragged CVR** — up to 3 bullets naming the campaign / landing page and the pp change (from biggest_cvr_drops). If empty, say so.
-- **What lifted CVR** — up to 3 bullets (from biggest_cvr_gains). If empty, say so.
-- **Volume shifts** — up to 2 bullets on the biggest session movers.
-- **Watch next** — 1-2 concrete follow-ups an operator could check.
-Keep bullets short. Output ONLY the markdown, no preamble.
+- **Headline** — 2-3 sentences with the actual figures: how sessions and CVR moved overall vs the prior period, and the net effect on estimated transactions.
+- **What dragged CVR** — up to 3 bullets from biggest_cvr_drops; each with CVR move + sessions (now vs prior) + transactions lost; note small samples. If empty, say so.
+- **What lifted CVR** — up to 3 bullets from biggest_cvr_gains, same detail. If empty, say so.
+- **Volume shifts** — up to 3 bullets from biggest_session_movers: session change (now vs prior) and whether CVR moved with it.
+- **Watch next** — 2-3 concrete follow-ups tied to named campaigns/LPs and their numbers.
+Keep each bullet to 1-2 lines, but numeric and concrete. Output ONLY the markdown, no preamble.
 
 BRIEF:
 ${JSON.stringify(brief)}`;
@@ -2953,6 +2972,53 @@ ${JSON.stringify(brief)}`;
   if (!text) throw new Error('Empty summary from Claude');
   return text;
 }
+
+// Persistent, cross-device analysis context. Stored server-side (Vercel KV when
+// configured, else a JSON file) so a note saved on one device applies on every
+// device. Injected into the tab-analysis prompt for FOCUS/FRAMING only — the
+// grounding rule still forbids inventing numbers.
+const TAB_CTX_KEY = 'tab-analysis-context';
+const TAB_CTX_FILE = process.env.TAB_CTX_FILE
+  || (process.env.VERCEL ? '/tmp/tab-analysis-context.json' : path.join(__dirname, 'data', 'tab-analysis-context.json'));
+
+async function readTabContext() {
+  if (kvClient) { const v = await kvClient.get(TAB_CTX_KEY); return v && typeof v === 'object' ? v : null; }
+  try { return JSON.parse(await fsp.readFile(TAB_CTX_FILE, 'utf8')); }
+  catch (e) { if (e.code === 'ENOENT') return null; throw e; }
+}
+async function writeTabContext(data) {
+  if (kvClient) { await kvClient.set(TAB_CTX_KEY, data); return { label: 'Vercel KV' }; }
+  await fsp.mkdir(path.dirname(TAB_CTX_FILE), { recursive: true });
+  await fsp.writeFile(TAB_CTX_FILE, JSON.stringify(data, null, 2), 'utf8');
+  return { label: TAB_CTX_FILE };
+}
+
+app.get('/api/tab-analysis-context', requireAuth, async (req, res) => {
+  try {
+    const s = await readTabContext();
+    res.json({
+      text: (s && typeof s.text === 'string') ? s.text : '',
+      updated_at: s?.updated_at || null,
+      updated_by: s?.updated_by || null,
+      storage: kvClient ? 'kv' : 'file',
+      ephemeral: !kvClient && !!process.env.VERCEL && !process.env.TAB_CTX_FILE,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/tab-analysis-context', requireAuth, async (req, res) => {
+  const text = String((req.body && req.body.text) || '').slice(0, 4000);
+  const record = {
+    text,
+    updated_at: new Date().toISOString(),
+    updated_by: (req.body && typeof req.body.updated_by === 'string') ? req.body.updated_by.slice(0, 120) : null,
+  };
+  try {
+    const r = await writeTabContext(record);
+    console.log(`[tab-analysis-context POST] saved ${text.length} chars → ${r.label}`);
+    res.json({ ok: true, ...record, storage: kvClient ? 'kv' : 'file' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 app.get('/api/tab-analysis', requireAuth, async (req, res) => {
   const tabKey = String(req.query.tab || 'meta-cvr-impact');
@@ -2986,8 +3052,10 @@ app.get('/api/tab-analysis', requireAuth, async (req, res) => {
         : 'previous_period (prior equal-length window)',
     };
     const brief = tab.reduce(data, windowInfo);
-    const summary = await callClaudeForTabSummary(tab.label, brief);
-    res.json({ ok: true, tab: tabKey, label: tab.label, window: windowInfo, brief, summary, model: process.env.DAILY_REPORT_MODEL || 'claude-opus-4-8' });
+    const storedCtx = await readTabContext().catch(() => null);
+    const operatorContext = (storedCtx && typeof storedCtx.text === 'string') ? storedCtx.text : '';
+    const summary = await callClaudeForTabSummary(tab.label, brief, operatorContext);
+    res.json({ ok: true, tab: tabKey, label: tab.label, window: windowInfo, brief, summary, context_applied: !!operatorContext.trim(), model: process.env.DAILY_REPORT_MODEL || 'claude-opus-4-8' });
   } catch (err) {
     console.error('[tab-analysis] error:', err);
     res.status(500).json({ error: err.message });
