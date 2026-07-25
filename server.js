@@ -2816,6 +2816,187 @@ app.get('/api/generate-daily-report', async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// TAB ANALYSIS (test scope: meta-cvr-impact)
+// A thin, additive layer over the EXISTING dashboard data endpoints. It does not
+// change any dashboard or ShopifyQL. For a given date range it calls the existing
+// endpoint verbatim (internal HTTP call), reduces the response to a small set of
+// headline numbers, and asks Claude to summarize ONLY those numbers (no
+// hallucination). Default window is "yesterday vs day prior": start=end=yesterday,
+// and the data endpoint's built-in COMPARE TO previous_period supplies the
+// day-prior figures. Auth: same DAILY_REPORT_TOKEN gate as the daily report.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Turn the /api/meta-cvr-impact-data response into a compact, grounded brief.
+// conversion_rate is a 0-1 fraction in ShopifyQL; we scale ×100 to match the
+// dashboard's "(cvr*100).toFixed(2)%" display. cvr_delta_pts is a
+// percentage-POINT change (now% − prev%).
+function reduceMetaCvrBrief(data, windowInfo) {
+  const colNames = (data.columns || []).map(c => String(c.name || ''));
+  const idx = (n) => colNames.findIndex(c => c.toLowerCase() === n);
+  const rows = Array.isArray(data.rows) ? data.rows : [];
+  // Rows can be objects keyed by column name OR positional arrays — handle both.
+  const cell = (row, name) => {
+    if (Array.isArray(row)) { const i = idx(name); return i >= 0 ? row[i] : null; }
+    if (row && typeof row === 'object') {
+      const key = colNames.find(c => c.toLowerCase() === name);
+      return key != null ? row[key] : null;
+    }
+    return null;
+  };
+  const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
+  const pct2 = (v) => { const n = num(v); return n == null ? null : Math.round(n * 10000) / 100; }; // fraction→% (2dp)
+  const r2 = (n) => (n == null ? null : Math.round(n * 100) / 100);
+
+  // Grand totals ride on __totals columns of every row — read from row 0.
+  const r0 = rows[0] || [];
+  const sessionsNow  = num(cell(r0, 'sessions__totals'));
+  const sessionsPrev = num(cell(r0, 'comparison_sessions__previous_period__totals'));
+  const cvrNow  = pct2(cell(r0, 'conversion_rate__totals'));
+  const cvrPrev = pct2(cell(r0, 'comparison_conversion_rate__previous_period__totals'));
+  const txnsNow  = (sessionsNow != null && cvrNow  != null) ? Math.round(sessionsNow  * cvrNow  / 100) : null;
+  const txnsPrev = (sessionsPrev != null && cvrPrev != null) ? Math.round(sessionsPrev * cvrPrev / 100) : null;
+
+  // Per campaign × landing-page rows (skip the empty-dimension totals row).
+  const detail = [];
+  for (const row of rows) {
+    const camp = String(cell(row, 'utm_campaign') ?? '').trim();
+    const lp   = String(cell(row, 'landing_page_path') ?? '').trim();
+    if (!camp && !lp) continue;                       // totals-only row
+    const s    = num(cell(row, 'sessions'));
+    const sP   = num(cell(row, 'comparison_sessions__previous_period'));
+    const cvr  = pct2(cell(row, 'conversion_rate'));
+    const cvrP = pct2(cell(row, 'comparison_conversion_rate__previous_period'));
+    detail.push({
+      campaign: camp || '(none)',
+      landing_page: lp || '(none)',
+      sessions: s,
+      sessions_prev: sP,
+      sessions_delta: (s != null && sP != null) ? s - sP : null,
+      cvr_pct: cvr,
+      cvr_prev_pct: cvrP,
+      cvr_delta_pts: (cvr != null && cvrP != null) ? r2(cvr - cvrP) : null,
+    });
+  }
+
+  const bySessions = [...detail].filter(d => d.sessions != null).sort((a, b) => b.sessions - a.sessions);
+  // Exclude <30-session rows from CVR movers so small samples don't dominate.
+  const movers = detail.filter(d => d.cvr_delta_pts != null && (d.sessions || 0) >= 30);
+  const cvrDrops = [...movers].sort((a, b) => a.cvr_delta_pts - b.cvr_delta_pts).slice(0, 6);
+  const cvrGains = [...movers].sort((a, b) => b.cvr_delta_pts - a.cvr_delta_pts).slice(0, 6);
+  const sessionMovers = [...detail].filter(d => d.sessions_delta != null)
+    .sort((a, b) => Math.abs(b.sessions_delta) - Math.abs(a.sessions_delta)).slice(0, 6);
+
+  return {
+    tab: 'Meta CVR Impact',
+    window: windowInfo,
+    filter: data.filter || null,
+    overall: {
+      sessions_now: sessionsNow,
+      sessions_prev: sessionsPrev,
+      sessions_pct_change: (sessionsNow != null && sessionsPrev) ? r2((sessionsNow / sessionsPrev - 1) * 100) : null,
+      cvr_now_pct: cvrNow,
+      cvr_prev_pct: cvrPrev,
+      cvr_delta_pts: (cvrNow != null && cvrPrev != null) ? r2(cvrNow - cvrPrev) : null,
+      est_transactions_now: txnsNow,
+      est_transactions_prev: txnsPrev,
+      est_transactions_delta: (txnsNow != null && txnsPrev != null) ? txnsNow - txnsPrev : null,
+    },
+    top_by_sessions: bySessions.slice(0, 8),
+    biggest_cvr_drops: cvrDrops,
+    biggest_cvr_gains: cvrGains,
+    biggest_session_movers: sessionMovers,
+    counts: { rows_returned: rows.length, campaign_lp_rows: detail.length },
+    notes: 'CVR values are percentages. cvr_delta_pts is a percentage-point change. Transactions are estimated (sessions × CVR). Rows with <30 sessions are excluded from CVR movers.',
+  };
+}
+
+// Registry of analyzable tabs. Add entries to extend beyond meta-cvr-impact.
+const ANALYSIS_TABS = {
+  'meta-cvr-impact': { label: 'Meta CVR Impact', endpoint: '/api/meta-cvr-impact-data', reduce: reduceMetaCvrBrief },
+};
+
+// Grounded per-tab summary — mirrors callClaudeForNarrative's "use ONLY these
+// numbers" contract, kept separate so the daily-report path is untouched.
+async function callClaudeForTabSummary(tabLabel, brief) {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error('ANTHROPIC_API_KEY not configured');
+  const model = process.env.DAILY_REPORT_MODEL || 'claude-opus-4-8';
+  const prompt = `You are writing a tight analyst summary of the "${tabLabel}" dashboard tab for a busy Firstday operator (readable in ~30 seconds).
+
+CRITICAL RULE: use ONLY numbers present in the BRIEF JSON below. Never invent, estimate, or extrapolate any figure. When you cite a number, use the value from the brief (round sensibly). CVR values are already percentages; a "*_delta_pts" value is a percentage-point change. If a list is empty, say there was nothing notable rather than guessing.
+
+Write GitHub-flavored markdown, no title, in this shape:
+- **Headline** — 1-2 sentences: how sessions and CVR moved overall vs the prior period, and the net effect on (estimated) transactions.
+- **What dragged CVR** — up to 3 bullets naming the campaign / landing page and the pp change (from biggest_cvr_drops). If empty, say so.
+- **What lifted CVR** — up to 3 bullets (from biggest_cvr_gains). If empty, say so.
+- **Volume shifts** — up to 2 bullets on the biggest session movers.
+- **Watch next** — 1-2 concrete follow-ups an operator could check.
+Keep bullets short. Output ONLY the markdown, no preamble.
+
+BRIEF:
+${JSON.stringify(brief)}`;
+
+  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ model, max_tokens: 2000, messages: [{ role: 'user', content: prompt }] }),
+  });
+  const dj = await resp.json();
+  if (!resp.ok) throw new Error(`Claude API ${resp.status}: ${JSON.stringify(dj).slice(0, 300)}`);
+  if (dj.stop_reason === 'refusal') throw new Error('Claude refused to generate the summary');
+  const text = (dj.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+  if (!text) throw new Error('Empty summary from Claude');
+  return text;
+}
+
+app.get('/api/tab-analysis', async (req, res) => {
+  const supplied = req.query.token || req.get('x-report-token');
+  if (!reportTokenOk(supplied)) return res.status(401).json({ error: 'Invalid or missing token' });
+
+  const tabKey = String(req.query.tab || 'meta-cvr-impact');
+  const tab = ANALYSIS_TABS[tabKey];
+  if (!tab) return res.status(400).json({ error: `Unknown tab '${tabKey}'. Known: ${Object.keys(ANALYSIS_TABS).join(', ')}` });
+
+  // Default window: yesterday vs day prior.
+  const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || '');
+  const yday = (() => { const d = new Date(); d.setUTCDate(d.getUTCDate() - 1); return d.toISOString().slice(0, 10); })();
+  const start = isDate(req.query.start) ? req.query.start : yday;
+  const end   = isDate(req.query.end)   ? req.query.end   : yday;
+
+  try {
+    // Reuse the EXISTING dashboard endpoint verbatim via an internal call.
+    const proto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+    const base = `${proto}://${req.get('host')}`;
+    const params = new URLSearchParams({ start, end });
+    for (const k of ['source', 'medium', 'sources', 'compare_start', 'compare_end']) {
+      if (req.query[k]) params.set(k, String(req.query[k]));
+    }
+    const dataUrl = `${base}${tab.endpoint}?${params.toString()}`;
+    const r = await fetch(dataUrl);
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || `data endpoint ${r.status}`);
+
+    const hasCustomCompare = isDate(req.query.compare_start) && isDate(req.query.compare_end);
+    const windowInfo = {
+      start, end,
+      comparison: hasCustomCompare
+        ? { start: req.query.compare_start, end: req.query.compare_end }
+        : 'previous_period (prior equal-length window)',
+    };
+    const brief = tab.reduce(data, windowInfo);
+    const summary = await callClaudeForTabSummary(tab.label, brief);
+    res.json({ ok: true, tab: tabKey, label: tab.label, window: windowInfo, brief, summary, model: process.env.DAILY_REPORT_MODEL || 'claude-opus-4-8' });
+  } catch (err) {
+    console.error('[tab-analysis] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/daily-report', async (req, res) => {
   if (!reportTokenOk(req.query.key)) return res.status(401).json({ error: 'Invalid or missing key' });
   try {

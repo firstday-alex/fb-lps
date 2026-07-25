@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tab Analysis — Firstday</title>
+  <style>
+    :root { --bg:#0f1115; --card:#171a21; --line:#272b34; --ink:#e7e9ee; --muted:#9aa3b2; --accent:#5b8cff; --good:#37c07a; --bad:#f2606a; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+    .wrap { max-width: 860px; margin: 0 auto; padding: 28px 20px 80px; }
+    h1 { font-size: 1.4rem; margin: 0 0 4px; }
+    .sub { color: var(--muted); margin: 0 0 22px; font-size: .92rem; }
+    .controls { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; display:flex; flex-wrap:wrap; gap:14px 18px; align-items:flex-end; }
+    .field { display:flex; flex-direction:column; gap:5px; }
+    .field label { font-size:.72rem; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+    input, select { background:#0c0e12; border:1px solid var(--line); color:var(--ink); border-radius:8px; padding:8px 10px; font-size:.9rem; }
+    input[type=date] { color-scheme: dark; }
+    button { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:9px 18px; font-size:.92rem; font-weight:600; cursor:pointer; }
+    button:disabled { opacity:.55; cursor:progress; }
+    .hint { color:var(--muted); font-size:.8rem; margin-top:10px; }
+    .quick { background:transparent; border:1px solid var(--line); color:var(--muted); padding:6px 12px; font-weight:500; }
+    .out { margin-top:24px; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:20px 22px; margin-bottom:18px; }
+    .card h2 { font-size:1.05rem; margin:0 0 2px; }
+    .card .meta { color:var(--muted); font-size:.82rem; margin-bottom:14px; }
+    .md h1,.md h2,.md h3 { font-size:1rem; margin:16px 0 6px; }
+    .md ul { margin:6px 0 12px; padding-left:20px; }
+    .md li { margin:3px 0; }
+    .md strong { color:#fff; }
+    .kpis { display:flex; flex-wrap:wrap; gap:10px; margin:2px 0 16px; }
+    .kpi { background:#0c0e12; border:1px solid var(--line); border-radius:9px; padding:9px 12px; min-width:120px; }
+    .kpi .k { font-size:.68rem; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+    .kpi .v { font-size:1.15rem; font-weight:700; margin-top:2px; }
+    .kpi .d { font-size:.78rem; margin-top:1px; }
+    .up { color:var(--good); } .down { color:var(--bad); }
+    details { margin-top:8px; } summary { cursor:pointer; color:var(--muted); font-size:.82rem; }
+    pre { background:#0c0e12; border:1px solid var(--line); border-radius:8px; padding:12px; overflow:auto; font-size:.78rem; color:#c7cdda; }
+    .err { color:var(--bad); background:#2a1416; border:1px solid #4a2024; padding:12px 14px; border-radius:8px; }
+    .spin { color:var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Tab Analysis</h1>
+    <p class="sub">Pick a date range and run an automated, numbers-grounded summary of a dashboard tab. Defaults to <strong>yesterday vs the day prior</strong>.</p>
+
+    <div class="controls">
+      <div class="field">
+        <label>Tab</label>
+        <select id="tab">
+          <option value="meta-cvr-impact">Meta CVR Impact</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Start</label>
+        <input type="date" id="start" />
+      </div>
+      <div class="field">
+        <label>End</label>
+        <input type="date" id="end" />
+      </div>
+      <div class="field">
+        <label>Access token</label>
+        <input type="password" id="token" placeholder="DAILY_REPORT_TOKEN" style="width:180px" />
+      </div>
+      <button id="run">Run analysis</button>
+      <button type="button" class="quick" id="quick-yday">Reset to yesterday</button>
+    </div>
+    <p class="hint">Single-day range (Start = End) compares that day to the day before. A multi-day range compares to the equal-length window immediately before it.</p>
+
+    <div class="out" id="out"></div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const fmtN = (n) => (n == null || !isFinite(n)) ? '—' : Math.round(n).toLocaleString();
+    const fmtPct = (n) => (n == null || !isFinite(n)) ? '—' : n.toFixed(2) + '%';
+    const signed = (n, suffix='') => (n == null || !isFinite(n)) ? '—' : (n > 0 ? '+' : '') + n.toLocaleString(undefined,{maximumFractionDigits:2}) + suffix;
+    const cls = (n) => n == null ? '' : (n > 0 ? 'up' : n < 0 ? 'down' : '');
+
+    function ydayISO(offset = 1) {
+      const d = new Date();
+      d.setUTCDate(d.getUTCDate() - offset);
+      return d.toISOString().slice(0, 10);
+    }
+    function setYesterday() { $('start').value = ydayISO(1); $('end').value = ydayISO(1); }
+
+    // Minimal, safe markdown → HTML (bold, headings, bullets, paragraphs).
+    function mdToHtml(md) {
+      const esc = (s) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      const lines = esc(md).split('\n');
+      let html = '', inList = false;
+      const inline = (s) => s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/`(.+?)`/g, '<code>$1</code>');
+      for (let raw of lines) {
+        const line = raw.trimEnd();
+        const bullet = line.match(/^\s*[-*]\s+(.*)$/);
+        const head = line.match(/^(#{1,3})\s+(.*)$/);
+        if (bullet) { if (!inList) { html += '<ul>'; inList = true; } html += '<li>' + inline(bullet[1]) + '</li>'; continue; }
+        if (inList) { html += '</ul>'; inList = false; }
+        if (head) { const lvl = head[1].length; html += `<h${lvl}>` + inline(head[2]) + `</h${lvl}>`; continue; }
+        if (line.trim() === '') continue;
+        html += '<p>' + inline(line) + '</p>';
+      }
+      if (inList) html += '</ul>';
+      return html;
+    }
+
+    function kpiRow(o) {
+      if (!o) return '';
+      const sPct = o.sessions_pct_change, cD = o.cvr_delta_pts, tD = o.est_transactions_delta;
+      return `<div class="kpis">
+        <div class="kpi"><div class="k">Sessions</div><div class="v">${fmtN(o.sessions_now)}</div>
+          <div class="d ${cls(sPct)}">${signed(sPct,'%')} vs ${fmtN(o.sessions_prev)}</div></div>
+        <div class="kpi"><div class="k">CVR</div><div class="v">${fmtPct(o.cvr_now_pct)}</div>
+          <div class="d ${cls(cD)}">${signed(cD,'pp')} vs ${fmtPct(o.cvr_prev_pct)}</div></div>
+        <div class="kpi"><div class="k">Est. transactions</div><div class="v">${fmtN(o.est_transactions_now)}</div>
+          <div class="d ${cls(tD)}">${signed(tD)} vs ${fmtN(o.est_transactions_prev)}</div></div>
+      </div>`;
+    }
+
+    async function run() {
+      const tab = $('tab').value, start = $('start').value, end = $('end').value, token = $('token').value.trim();
+      const out = $('out');
+      if (!start || !end) { out.innerHTML = '<div class="err">Please choose a start and end date.</div>'; return; }
+      try { localStorage.setItem('tabAnalysisToken', token); } catch (e) {}
+      $('run').disabled = true;
+      out.innerHTML = `<div class="card spin">Running analysis for <strong>${tab}</strong> (${start} → ${end})… querying Shopify + summarizing.</div>`;
+      try {
+        const params = new URLSearchParams({ tab, start, end });
+        if (token) params.set('token', token);
+        const resp = await fetch('/api/tab-analysis?' + params.toString());
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
+        const w = data.window || {};
+        const cmp = typeof w.comparison === 'string' ? w.comparison : `${w.comparison?.start} → ${w.comparison?.end}`;
+        out.innerHTML = `<div class="card">
+          <h2>${data.label}</h2>
+          <div class="meta">${w.start} → ${w.end} &nbsp;·&nbsp; compared to ${cmp} &nbsp;·&nbsp; ${data.model}</div>
+          ${kpiRow(data.brief && data.brief.overall)}
+          <div class="md">${mdToHtml(data.summary || '')}</div>
+          <details><summary>Show the exact numbers Claude was given (grounding)</summary>
+            <pre>${JSON.stringify(data.brief, null, 2).replace(/</g,'&lt;')}</pre>
+          </details>
+        </div>`;
+      } catch (err) {
+        out.innerHTML = `<div class="err">${err.message}</div>`;
+      } finally {
+        $('run').disabled = false;
+      }
+    }
+
+    // Init: default to yesterday, restore token, honor ?token= / ?start= / ?end= in URL.
+    (function init() {
+      const q = new URLSearchParams(location.search);
+      setYesterday();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(q.get('start') || '')) $('start').value = q.get('start');
+      if (/^\d{4}-\d{2}-\d{2}$/.test(q.get('end') || '')) $('end').value = q.get('end');
+      let tok = q.get('token');
+      if (!tok) { try { tok = localStorage.getItem('tabAnalysisToken'); } catch (e) {} }
+      if (tok) $('token').value = tok;
+      $('run').addEventListener('click', run);
+      $('quick-yday').addEventListener('click', setYesterday);
+    })();
+  </script>
+</body>
+</html>
