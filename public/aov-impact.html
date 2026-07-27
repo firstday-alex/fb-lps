@@ -359,6 +359,72 @@
       </div>
     </div>
 
+    <!-- Why is AOV moving? UPT × ASP BY LANDING PAGE -->
+    <div class="card">
+      <h3>Why is AOV moving, by landing page? &nbsp;<span style="font-weight:400;color:var(--text-secondary);font-size:0.85rem">(units/order × price/unit)</span></h3>
+      <p class="card__sub">
+        The UPT × ASP split from above, grouped by <strong>landing page</strong> (all sources combined).
+        <strong>UPT Effect</strong> = ΔUPT × prevASP, <strong>ASP Effect</strong> = prevUPT × ΔASP,
+        <strong>Interaction</strong> = ΔUPT × ΔASP. The three sum to Δ AOV for that page; <strong>Driver</strong> flags the larger contributor.
+      </p>
+      <div class="scroll-x">
+        <table id="lp-uptasp-table">
+          <thead>
+            <tr>
+              <th>Landing page</th>
+              <th class="r">Prev UPT</th>
+              <th class="r">Curr UPT</th>
+              <th class="r">Δ UPT</th>
+              <th class="r">Prev ASP</th>
+              <th class="r">Curr ASP</th>
+              <th class="r">Δ ASP</th>
+              <th class="r">Prev AOV</th>
+              <th class="r">Curr AOV</th>
+              <th class="r">Δ AOV</th>
+              <th class="r">UPT Effect</th>
+              <th class="r">ASP Effect</th>
+              <th class="r">Interaction</th>
+              <th class="r" title="Which effect is the larger driver of Δ AOV?">Driver</th>
+            </tr>
+          </thead>
+          <tbody id="lp-uptasp-tbody"></tbody>
+          <tfoot id="lp-uptasp-tfoot"></tfoot>
+        </table>
+      </div>
+    </div>
+
+    <!-- Blended AOV decomposition BY LANDING PAGE -->
+    <div class="card">
+      <h3>Blended AOV Decomposition by landing page</h3>
+      <p class="card__sub">
+        Decomposes Δ <strong>blended AOV</strong> into per-landing-page contributions (all sources combined).
+        <strong>Own-AOV Effect</strong> = prevOrderShare × ΔAOV (the page's own basket move, weighted by its share of last period's orders).
+        <strong>Mix-Shift Effect</strong> = ΔOrderShare × (currAOV − blended avg) (gaining/losing orders at a basket above or below the blended average).
+        The two sum to the page's contribution; rows sum to total Δ Blended AOV.
+      </p>
+      <div class="scroll-x">
+        <table id="lp-aov-table">
+          <thead>
+            <tr>
+              <th>Landing page</th>
+              <th class="r">Prev Order Share</th>
+              <th class="r">Curr Order Share</th>
+              <th class="r">Δ Share</th>
+              <th class="r">Prev AOV</th>
+              <th class="r">Curr AOV</th>
+              <th class="r">Δ AOV</th>
+              <th class="r">Own-AOV Effect</th>
+              <th class="r">Mix-Shift Effect</th>
+              <th class="r">Total Contribution</th>
+              <th class="r">% of Δ Blended</th>
+            </tr>
+          </thead>
+          <tbody id="lp-aov-tbody"></tbody>
+          <tfoot id="lp-aov-tfoot"></tfoot>
+        </table>
+      </div>
+    </div>
+
     <!-- Landing-page basket-shrinkage ranking -->
     <div class="card">
       <h3>Landing pages where baskets are shrinking</h3>
@@ -724,8 +790,9 @@ function renderRevTable(channels, opts = {}) {
     </tr>`;
 }
 
-function renderUptTable(channels) {
-  const tbody = document.getElementById('upt-tbody');
+function renderUptTable(channels, opts = {}) {
+  const { tbodyId = 'upt-tbody', tfootId = 'upt-tfoot', labelCell = srcCell, labelKey = 'source' } = opts;
+  const tbody = document.getElementById(tbodyId);
   const fmtUpt = n => (n == null || !isFinite(n)) ? '—' : n.toFixed(2);
   const sUpt = n => {
     if (n == null || !isFinite(n)) return '—';
@@ -751,7 +818,7 @@ function renderUptTable(channels) {
           : `ASP (${(aspEffect / (uptEffect + aspEffect || 1) * 100).toFixed(0)}%)`);
     return `
       <tr>
-        <td>${srcCell(c.source)}</td>
+        <td>${labelCell(c[labelKey])}</td>
         <td class="r">${fmtUpt(c.prevUpt)}</td>
         <td class="r">${fmtUpt(c.currUpt)}</td>
         <td class="r ${cls(dUpt)}">${sUpt(dUpt)}</td>
@@ -781,7 +848,7 @@ function renderUptTable(channels) {
   const totalDriver = (Math.abs(aggUE) === 0 && Math.abs(aggSE) === 0)
     ? '—'
     : (Math.abs(aggUE) > Math.abs(aggSE) ? 'UPT' : 'ASP');
-  document.getElementById('upt-tfoot').innerHTML = `
+  document.getElementById(tfootId).innerHTML = `
     <tr>
       <td>Blended</td>
       <td class="r">${fmtUpt(tPrevUpt)}</td>
@@ -800,7 +867,8 @@ function renderUptTable(channels) {
     </tr>`;
 }
 
-function renderAovTable(channels) {
+function renderAovTable(channels, opts = {}) {
+  const { tbodyId = 'aov-tbody', tfootId = 'aov-tfoot', labelCell = srcCell, labelKey = 'source' } = opts;
   const prevTotalO = channels.reduce((a,c)=>a+c.prevO,0);
   const currTotalO = channels.reduce((a,c)=>a+c.currO,0);
   const prevTotalR = channels.reduce((a,c)=>a+c.prevR,0);
@@ -811,7 +879,7 @@ function renderAovTable(channels) {
   const decomp = decomposeBlendedAOV(channels, prevTotalO, prevBlended, currTotalO);
   const rows = decomp.map(c => `
     <tr>
-      <td>${srcCell(c.source)}</td>
+      <td>${labelCell(c[labelKey])}</td>
       <td class="r">${fmtPct(c.prevShare)}</td>
       <td class="r">${fmtPct(c.currShare)}</td>
       <td class="r ${cls(c.dShare)}">${signedPct(c.dShare)}</td>
@@ -823,11 +891,11 @@ function renderAovTable(channels) {
       <td class="r ${cls(c.total)}">${signed$2(c.total)}</td>
       <td class="r">${dBlended === 0 ? '—' : ((c.total / dBlended) * 100).toFixed(0) + '%'}</td>
     </tr>`).join('');
-  document.getElementById('aov-tbody').innerHTML = rows;
+  document.getElementById(tbodyId).innerHTML = rows;
   const sumOwn = decomp.reduce((a,c)=>a+c.ownEffect,0);
   const sumMix = decomp.reduce((a,c)=>a+c.mixEffect,0);
   const sumTot = sumOwn + sumMix;
-  document.getElementById('aov-tfoot').innerHTML = `
+  document.getElementById(tfootId).innerHTML = `
     <tr>
       <td>Total Δ Blended AOV</td>
       <td class="r">100%</td>
@@ -1042,7 +1110,9 @@ function render(payload) {
   renderRevTable(sources);
   renderRevTable(landingPages, { tbodyId: 'lp-rev-tbody', tfootId: 'lp-rev-tfoot', labelCell: lpCell, labelKey: 'landingPage' });
   renderUptTable(sources);
+  renderUptTable(landingPages, { tbodyId: 'lp-uptasp-tbody', tfootId: 'lp-uptasp-tfoot', labelCell: lpCell, labelKey: 'landingPage' });
   renderAovTable(sources);
+  renderAovTable(landingPages, { tbodyId: 'lp-aov-tbody', tfootId: 'lp-aov-tfoot', labelCell: lpCell, labelKey: 'landingPage' });
   const minOrders = parseInt(document.getElementById('lp-min-orders').value, 10) || 20;
   renderLpUpt(_drillTree, minOrders);
   renderDrill();
