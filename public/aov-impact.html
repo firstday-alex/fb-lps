@@ -325,6 +325,40 @@
       </div>
     </div>
 
+    <!-- Δ Revenue decomposition BY LANDING PAGE (aggregated across sources) -->
+    <div class="card">
+      <h3>Revenue Decomposition by landing page</h3>
+      <p class="card__sub">
+        The same Δ Revenue split as the utm_source table above, but grouped by <strong>landing page</strong> (all sources combined).
+        Use it to see which pages are moving revenue and whether the shift is order volume vs basket size.
+        <strong>Orders Effect</strong> = ΔOrders × prevAOV, <strong>AOV Effect</strong> = prevOrders × ΔAOV,
+        <strong>Interaction</strong> = ΔOrders × ΔAOV. The three sum to Δ Revenue for that page; rows sum to the overall Δ Revenue.
+      </p>
+      <div class="scroll-x">
+        <table id="lp-rev-table">
+          <thead>
+            <tr>
+              <th>Landing page</th>
+              <th class="r">Prev Orders</th>
+              <th class="r">Curr Orders</th>
+              <th class="r">Δ Orders</th>
+              <th class="r">Prev AOV</th>
+              <th class="r">Curr AOV</th>
+              <th class="r">Δ AOV</th>
+              <th class="r">Prev Rev</th>
+              <th class="r">Curr Rev</th>
+              <th class="r">Δ Rev</th>
+              <th class="r">Orders Effect</th>
+              <th class="r">AOV Effect</th>
+              <th class="r">Interaction</th>
+            </tr>
+          </thead>
+          <tbody id="lp-rev-tbody"></tbody>
+          <tfoot id="lp-rev-tfoot"></tfoot>
+        </table>
+      </div>
+    </div>
+
     <!-- Landing-page basket-shrinkage ranking -->
     <div class="card">
       <h3>Landing pages where baskets are shrinking</h3>
@@ -532,6 +566,41 @@ function aggregateSource(rowsCur, rowsPrev) {
   return list;
 }
 
+// Same shape as aggregateSource, but grouped by landing_page (all sources
+// combined). Produces a `landingPage` label field instead of `source`.
+function aggregateLandingPage(rowsCur, rowsPrev) {
+  const m = new Map();
+  const touch = (key) => {
+    if (!m.has(key)) m.set(key, { landingPage: key, prevO: 0, prevR: 0, prevU: 0, currO: 0, currR: 0, currU: 0 });
+    return m.get(key);
+  };
+  rowsCur.forEach(r => {
+    const g = touch(r.landing_page || '(none)');
+    g.currO += r.orders; g.currR += r.revenue; g.currU += (r.units || 0);
+  });
+  rowsPrev.forEach(r => {
+    const g = touch(r.landing_page || '(none)');
+    g.prevO += r.orders; g.prevR += r.revenue; g.prevU += (r.units || 0);
+  });
+  const list = Array.from(m.values()).map(g => ({
+    ...g,
+    prevA: g.prevO > 0 ? g.prevR / g.prevO : 0,
+    currA: g.currO > 0 ? g.currR / g.currO : 0,
+    prevUpt: g.prevO > 0 ? g.prevU / g.prevO : 0,
+    currUpt: g.currO > 0 ? g.currU / g.currO : 0,
+    prevAsp: g.prevU > 0 ? g.prevR / g.prevU : 0,
+    currAsp: g.currU > 0 ? g.currR / g.currU : 0,
+  }));
+  // Most impactful landing pages first (largest absolute revenue move).
+  list.sort((a, b) => Math.abs(b.currR - b.prevR) - Math.abs(a.currR - a.prevR));
+  return list;
+}
+
+function lpCell(lp) {
+  const label = (lp == null || lp === '') ? '(none)' : lp;
+  return `<code style="font-size:0.82rem">${label}</code>`;
+}
+
 // utm_source → landing_page, with the same prevO/currO/prevR/currR/prevU/currU shape
 function buildSourceDrill(rowsCur, rowsPrev) {
   const src = new Map();
@@ -601,8 +670,9 @@ function renderKpi(channels) {
   `).join('');
 }
 
-function renderRevTable(channels) {
-  const tbody = document.getElementById('rev-tbody');
+function renderRevTable(channels, opts = {}) {
+  const { tbodyId = 'rev-tbody', tfootId = 'rev-tfoot', labelCell = srcCell, labelKey = 'source' } = opts;
+  const tbody = document.getElementById(tbodyId);
   let totalPrevR=0, totalCurrR=0, totalPrevO=0, totalCurrO=0;
   const rows = channels.map(c => {
     const d = decomposeRev(c.prevO, c.prevA, c.currO, c.currA);
@@ -610,7 +680,7 @@ function renderRevTable(channels) {
     totalPrevO += c.prevO;   totalCurrO += c.currO;
     return `
       <tr>
-        <td>${srcCell(c.source)}</td>
+        <td>${labelCell(c[labelKey])}</td>
         <td class="r">${fmtInt(c.prevO)}</td>
         <td class="r">${fmtInt(c.currO)}</td>
         <td class="r ${cls(d.dO)}">${signedInt(d.dO)}</td>
@@ -636,7 +706,7 @@ function renderRevTable(channels) {
   const aggOE = channels.reduce((a,c)=>a + (c.currO - c.prevO) * c.prevA, 0);
   const aggAE = channels.reduce((a,c)=>a + c.prevO * (c.currA - c.prevA), 0);
   const aggInt = channels.reduce((a,c)=>a + (c.currO - c.prevO) * (c.currA - c.prevA), 0);
-  document.getElementById('rev-tfoot').innerHTML = `
+  document.getElementById(tfootId).innerHTML = `
     <tr>
       <td>Total</td>
       <td class="r">${fmtInt(totalPrevO)}</td>
@@ -950,6 +1020,7 @@ async function load() {
 
 function render(payload) {
   const sources = aggregateSource(payload.current.rows, payload.previous.rows);
+  const landingPages = aggregateLandingPage(payload.current.rows, payload.previous.rows);
   _drillTree = buildSourceDrill(payload.current.rows, payload.previous.rows);
 
   // Top bar
@@ -969,6 +1040,7 @@ function render(payload) {
 
   renderKpi(sources);
   renderRevTable(sources);
+  renderRevTable(landingPages, { tbodyId: 'lp-rev-tbody', tfootId: 'lp-rev-tfoot', labelCell: lpCell, labelKey: 'landingPage' });
   renderUptTable(sources);
   renderAovTable(sources);
   const minOrders = parseInt(document.getElementById('lp-min-orders').value, 10) || 20;
