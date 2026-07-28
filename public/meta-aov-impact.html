@@ -1,0 +1,1185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Meta Paid Social &middot; AOV Impact</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --fb-blue: #1877f2;
+      --bg: #f0f2f5;
+      --surface: #fff;
+      --text-primary: #1c1e21;
+      --text-secondary: #65676b;
+      --border: #dddfe2;
+      --positive: #1a7f37;
+      --positive-bg: #dcfce7;
+      --negative: #c0392b;
+      --negative-bg: #fee2e2;
+      --neutral-bg: #e4e6eb;
+      --shadow: 0 1px 3px rgba(0,0,0,0.12);
+      --radius: 8px;
+      --c-campaign: #1877f2;
+      --c-lp: #7c3aed;
+      --c-ad: #f97316;
+      --amber: #d97706;
+      --amber-bg: #fef3c7;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text-primary);
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    header {
+      background: var(--fb-blue);
+      color: white;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .header__back {
+      color: rgba(255,255,255,0.85);
+      text-decoration: none;
+      font-size: 0.875rem;
+      border: 1px solid rgba(255,255,255,0.3);
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+    }
+    .header__back:hover { background: rgba(255,255,255,0.15); color: white; }
+    .header__alt-link {
+      margin-left: auto;
+      color: rgba(255,255,255,0.85);
+      text-decoration: none;
+      font-size: 0.8rem;
+      border: 1px solid rgba(255,255,255,0.3);
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+    }
+    .header__alt-link:hover { background: rgba(255,255,255,0.15); color: white; }
+    header h1 { font-size: 1.2rem; font-weight: 700; }
+    header p { font-size: 0.8rem; opacity: 0.75; }
+
+    /* Load screen */
+    #upload-screen { max-width: 560px; margin: 60px auto; padding: 0 24px; }
+    .upload-card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 32px;
+      text-align: center;
+    }
+    .upload-card h2 { font-size: 1.1rem; margin-bottom: 8px; }
+    .upload-card p { font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 24px; }
+    .date-row {
+      display: flex; gap: 12px; align-items: center; justify-content: center;
+      flex-wrap: wrap; margin-bottom: 16px;
+    }
+    .date-row label {
+      font-size: 0.8rem; color: var(--text-secondary);
+      display: flex; gap: 6px; align-items: center;
+    }
+    .date-row input[type=date],
+    .date-row input[type=text] {
+      padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px;
+      font: inherit; font-size: 0.85rem;
+    }
+    .date-row input[type=text] { width: 130px; }
+    .btn-reset {
+      font-size: 0.75rem; padding: 4px 10px; background: var(--neutral-bg);
+      border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
+    }
+    .load-btn {
+      width: 100%; padding: 12px 16px; font: inherit; font-weight: 600;
+      background: var(--fb-blue); color: white; border: 0; border-radius: 6px;
+      cursor: pointer; margin-top: 8px;
+    }
+    .load-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .load-status { font-size: 0.8rem; color: var(--text-secondary); margin-top: 12px; min-height: 1.2em; }
+    .load-status.error { color: var(--negative); }
+
+    /* Results */
+    #results-screen { display: none; }
+    .results-wrap { max-width: 1280px; margin: 24px auto; padding: 0 24px; }
+
+    .top-bar {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 8px; flex-wrap: wrap; gap: 8px;
+    }
+    .top-bar__info { font-size: 0.85rem; color: var(--text-secondary); }
+    .top-bar__info strong { color: var(--text-primary); }
+
+    #scope-note {
+      font-size: 0.8rem; color: var(--text-secondary); margin: 2px 0 14px;
+      line-height: 1.5;
+    }
+    #scope-note code {
+      background: var(--surface); padding: 1px 4px; border-radius: 3px;
+      border: 1px solid var(--border); font-size: 0.76rem;
+    }
+
+    .kpi-row {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px; margin-bottom: 16px;
+    }
+    .kpi {
+      background: var(--surface); border-radius: var(--radius); padding: 14px 16px;
+      box-shadow: var(--shadow);
+    }
+    .kpi__label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-secondary); }
+    .kpi__value { font-size: 1.25rem; font-weight: 700; margin-top: 4px; }
+    .kpi__delta { font-size: 0.78rem; margin-top: 2px; }
+    .kpi__delta.up { color: var(--positive); }
+    .kpi__delta.down { color: var(--negative); }
+
+    .card {
+      background: var(--surface); border-radius: var(--radius); padding: 20px;
+      box-shadow: var(--shadow); margin-bottom: 16px;
+    }
+    .card h3 { font-size: 1rem; margin-bottom: 8px; }
+    .card__sub { font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 14px; }
+    .card__sub strong { color: var(--text-primary); }
+
+    table { width: 100%; border-collapse: collapse; font-size: 0.83rem; }
+    th { text-align: left; padding: 8px 10px; font-size: 0.72rem;
+         text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-secondary);
+         background: #f7f8fa; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    th.r { text-align: right; }
+    td { padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    td.r { text-align: right; font-variant-numeric: tabular-nums; }
+    tr:last-child td { border-bottom: none; }
+    tfoot td { background: #f7f8fa; font-weight: 600; border-top: 2px solid var(--border); }
+
+    .dim-dot {
+      display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+      margin-right: 8px; vertical-align: middle;
+    }
+    .dim-cell { display: inline-flex; align-items: center; max-width: 340px; }
+    .dim-cell code {
+      font-size: 0.82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+
+    .scroll-x { overflow-x: auto; }
+
+    .drill-row.lp td { background: #f4f6f9; font-size: 0.78rem; }
+    .drill-row.lp td:first-child { padding-left: 42px; color: var(--text-secondary); }
+
+    .drill-toggle { cursor: pointer; user-select: none; color: var(--fb-blue); font-size: 0.78rem; }
+    .drill-toggle:hover { text-decoration: underline; }
+
+    .num-pos { color: var(--positive); }
+    .num-neg { color: var(--negative); }
+
+    .footnote {
+      font-size: 0.75rem; color: var(--text-secondary);
+      margin-top: 12px; line-height: 1.5;
+    }
+    .warning {
+      background: var(--amber-bg); color: var(--amber);
+      padding: 10px 14px; border-radius: 6px; font-size: 0.8rem; margin-bottom: 12px;
+    }
+    .empty-note {
+      text-align: center; color: var(--text-secondary); padding: 20px; font-size: 0.82rem;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <a class="header__back" href="/">&#8592; Ads Viewer</a>
+  <div>
+    <h1>Meta Paid Social &middot; AOV Impact</h1>
+    <p>Campaign, ad &amp; landing-page decomposition of revenue and blended-AOV change, from Shopify orders</p>
+  </div>
+  <a class="header__alt-link" href="/aov-impact.html">All sources (AOV Impact) &#8594;</a>
+</header>
+
+<!-- ===== LOAD SCREEN ===== -->
+<div id="upload-screen">
+  <div class="upload-card">
+    <h2>Meta Paid Social AOV Impact</h2>
+    <p>Loads Shopify orders for a date range and the previous period, keeps only orders whose
+       first visit carries the <code>utm_source</code> / <code>utm_medium</code> below, and decomposes
+       Δ Revenue + Δ Blended AOV across campaigns, ads and landing pages.</p>
+    <div class="date-row">
+      <label>Start <input type="date" id="date-start"></label>
+      <label>End <input type="date" id="date-end"></label>
+    </div>
+    <div class="date-row" style="margin-top:4px">
+      <label>Compare Start <input type="date" id="compare-start"></label>
+      <label>Compare End <input type="date" id="compare-end"></label>
+      <button type="button" id="compare-reset" class="btn-reset" title="Reset comparison to the period immediately preceding Start–End">↻ Auto</button>
+    </div>
+    <div class="date-row" style="margin-top:4px">
+      <label>utm_source <input type="text" id="filter-source" value="facebook"></label>
+      <label>utm_medium <input type="text" id="filter-medium" value="paid_social"></label>
+    </div>
+    <button class="load-btn" id="btn-load">Load from Shopify</button>
+    <div class="load-status" id="load-status"></div>
+  </div>
+</div>
+
+<!-- ===== RESULTS SCREEN ===== -->
+<div id="results-screen">
+  <div class="results-wrap">
+    <div class="top-bar">
+      <div class="top-bar__info" id="top-bar-info"></div>
+      <button class="btn-reset" id="btn-reset">← Load another range</button>
+    </div>
+
+    <div id="scope-note"></div>
+
+    <div id="warning-area"></div>
+
+    <div class="kpi-row" id="kpi-row"></div>
+
+    <!-- Δ Revenue decomposition by campaign -->
+    <div class="card">
+      <h3>Revenue Decomposition by campaign</h3>
+      <p class="card__sub">
+        Each <code>utm_campaign</code>'s contribution to <strong>Δ Revenue</strong> inside this Meta segment, split into:
+        <strong>Orders Effect</strong> = ΔOrders × prevAOV (more/fewer orders at the old basket),
+        <strong>AOV Effect</strong> = prevOrders × ΔAOV (same orders earning a higher/lower basket),
+        and <strong>Interaction</strong> = ΔOrders × ΔAOV (the cross-term).
+        The three sum to Δ Revenue for that campaign; rows sum to the segment's Δ Revenue.
+      </p>
+      <div class="scroll-x">
+        <table>
+          <thead>
+            <tr>
+              <th>utm_campaign</th>
+              <th class="r">Prev Orders</th>
+              <th class="r">Curr Orders</th>
+              <th class="r">Δ Orders</th>
+              <th class="r">Prev AOV</th>
+              <th class="r">Curr AOV</th>
+              <th class="r">Δ AOV</th>
+              <th class="r">Prev Rev</th>
+              <th class="r">Curr Rev</th>
+              <th class="r">Δ Rev</th>
+              <th class="r">Orders Effect</th>
+              <th class="r">AOV Effect</th>
+              <th class="r">Interaction</th>
+            </tr>
+          </thead>
+          <tbody id="camp-rev-tbody"></tbody>
+          <tfoot id="camp-rev-tfoot"></tfoot>
+        </table>
+      </div>
+    </div>
+
+    <!-- UPT × ASP by campaign -->
+    <div class="card">
+      <h3>Why is AOV moving? &nbsp;<span style="font-weight:400;color:var(--text-secondary);font-size:0.85rem">(units/order × price/unit, by campaign)</span></h3>
+      <p class="card__sub">
+        AOV is identical to <strong>UPT × ASP</strong>: units per transaction (basket size) times average selling price per unit.
+        <strong>UPT Effect</strong> = ΔUPT × prevASP (basket-size move at the old price).
+        <strong>ASP Effect</strong> = prevUPT × ΔASP (per-unit price move at the old basket).
+        <strong>Interaction</strong> = ΔUPT × ΔASP. The three sum to Δ AOV for that campaign.
+        If UPT Effect dominates → people are buying fewer items per order. If ASP Effect dominates → average unit price fell (discounts or mix-shift to cheaper SKUs).
+      </p>
+      <div class="scroll-x">
+        <table>
+          <thead>
+            <tr>
+              <th>utm_campaign</th>
+              <th class="r">Prev UPT</th>
+              <th class="r">Curr UPT</th>
+              <th class="r">Δ UPT</th>
+              <th class="r">Prev ASP</th>
+              <th class="r">Curr ASP</th>
+              <th class="r">Δ ASP</th>
+              <th class="r">Prev AOV</th>
+              <th class="r">Curr AOV</th>
+              <th class="r">Δ AOV</th>
+              <th class="r">UPT Effect</th>
+              <th class="r">ASP Effect</th>
+              <th class="r">Interaction</th>
+              <th class="r" title="Which effect is the larger driver of Δ AOV?">Driver</th>
+            </tr>
+          </thead>
+          <tbody id="camp-upt-tbody"></tbody>
+          <tfoot id="camp-upt-tfoot"></tfoot>
+        </table>
+      </div>
+    </div>
+
+    <!-- Blended AOV decomposition by campaign -->
+    <div class="card">
+      <h3>Blended AOV Decomposition by campaign</h3>
+      <p class="card__sub">
+        Decomposes the change in this segment's <strong>blended AOV</strong> (Meta revenue ÷ Meta orders) into per-campaign contributions.
+        <strong>Own-AOV Effect</strong> = prevOrderShare × ΔAOV (the campaign's own AOV move, weighted by its share of last period's Meta orders).
+        <strong>Mix-Shift Effect</strong> = ΔOrderShare × (currAOV − blended avg) (gaining/losing orders at a basket above or below the blended average).
+        The two sum to the campaign's contribution; rows sum to total Δ Blended AOV.
+      </p>
+      <div class="scroll-x">
+        <table>
+          <thead>
+            <tr>
+              <th>utm_campaign</th>
+              <th class="r">Prev Order Share</th>
+              <th class="r">Curr Order Share</th>
+              <th class="r">Δ Share</th>
+              <th class="r">Prev AOV</th>
+              <th class="r">Curr AOV</th>
+              <th class="r">Δ AOV</th>
+              <th class="r">Own-AOV Effect</th>
+              <th class="r">Mix-Shift Effect</th>
+              <th class="r">Total Contribution</th>
+              <th class="r">% of Δ Blended</th>
+            </tr>
+          </thead>
+          <tbody id="camp-aov-tbody"></tbody>
+          <tfoot id="camp-aov-tfoot"></tfoot>
+        </table>
+      </div>
+    </div>
+
+    <!-- Δ Revenue decomposition by landing page -->
+    <div class="card">
+      <h3>Revenue Decomposition by landing page</h3>
+      <p class="card__sub">
+        The same Δ Revenue split, grouped by <strong>landing page</strong> (all Meta campaigns combined).
+        Use it to see which pages are moving Meta revenue and whether the shift is order volume vs basket size.
+      </p>
+      <div class="scroll-x">
+        <table>
+          <thead>
+            <tr>
+              <th>Landing page</th>
+              <th class="r">Prev Orders</th>
+              <th class="r">Curr Orders</th>
+              <th class="r">Δ Orders</th>
+              <th class="r">Prev AOV</th>
+              <th class="r">Curr AOV</th>
+              <th class="r">Δ AOV</th>
+              <th class="r">Prev Rev</th>
+              <th class="r">Curr Rev</th>
+              <th class="r">Δ Rev</th>
+              <th class="r">Orders Effect</th>
+              <th class="r">AOV Effect</th>
+              <th class="r">Interaction</th>
+            </tr>
+          </thead>
+          <tbody id="lp-rev-tbody"></tbody>
+          <tfoot id="lp-rev-tfoot"></tfoot>
+        </table>
+      </div>
+    </div>
+
+    <!-- UPT × ASP by landing page -->
+    <div class="card">
+      <h3>Why is AOV moving, by landing page? &nbsp;<span style="font-weight:400;color:var(--text-secondary);font-size:0.85rem">(units/order × price/unit)</span></h3>
+      <p class="card__sub">
+        The UPT × ASP split grouped by <strong>landing page</strong> (all Meta campaigns combined).
+        <strong>UPT Effect</strong> = ΔUPT × prevASP, <strong>ASP Effect</strong> = prevUPT × ΔASP,
+        <strong>Interaction</strong> = ΔUPT × ΔASP. <strong>Driver</strong> flags the larger contributor.
+      </p>
+      <div class="scroll-x">
+        <table>
+          <thead>
+            <tr>
+              <th>Landing page</th>
+              <th class="r">Prev UPT</th>
+              <th class="r">Curr UPT</th>
+              <th class="r">Δ UPT</th>
+              <th class="r">Prev ASP</th>
+              <th class="r">Curr ASP</th>
+              <th class="r">Δ ASP</th>
+              <th class="r">Prev AOV</th>
+              <th class="r">Curr AOV</th>
+              <th class="r">Δ AOV</th>
+              <th class="r">UPT Effect</th>
+              <th class="r">ASP Effect</th>
+              <th class="r">Interaction</th>
+              <th class="r" title="Which effect is the larger driver of Δ AOV?">Driver</th>
+            </tr>
+          </thead>
+          <tbody id="lp-upt-tbody"></tbody>
+          <tfoot id="lp-upt-tfoot"></tfoot>
+        </table>
+      </div>
+    </div>
+
+    <!-- Blended AOV decomposition by landing page -->
+    <div class="card">
+      <h3>Blended AOV Decomposition by landing page</h3>
+      <p class="card__sub">
+        Decomposes Δ <strong>blended AOV</strong> for this Meta segment into per-landing-page contributions.
+        <strong>Own-AOV Effect</strong> = prevOrderShare × ΔAOV, <strong>Mix-Shift Effect</strong> = ΔOrderShare × (currAOV − blended avg).
+      </p>
+      <div class="scroll-x">
+        <table>
+          <thead>
+            <tr>
+              <th>Landing page</th>
+              <th class="r">Prev Order Share</th>
+              <th class="r">Curr Order Share</th>
+              <th class="r">Δ Share</th>
+              <th class="r">Prev AOV</th>
+              <th class="r">Curr AOV</th>
+              <th class="r">Δ AOV</th>
+              <th class="r">Own-AOV Effect</th>
+              <th class="r">Mix-Shift Effect</th>
+              <th class="r">Total Contribution</th>
+              <th class="r">% of Δ Blended</th>
+            </tr>
+          </thead>
+          <tbody id="lp-aov-tbody"></tbody>
+          <tfoot id="lp-aov-tfoot"></tfoot>
+        </table>
+      </div>
+    </div>
+
+    <!-- Δ Revenue decomposition by ad (utm_content) -->
+    <div class="card">
+      <h3>Revenue Decomposition by ad</h3>
+      <p class="card__sub">
+        Each row is one <code>utm_content</code> (ad name). Same Δ Revenue split, so you can see which
+        creatives moved Meta revenue and whether it came from order volume or basket size.
+        Ads with fewer than
+        <input type="number" id="ad-min-orders" value="3" min="1" step="1" style="width:56px; padding:2px 4px; font:inherit; font-size:0.85rem; border:1px solid var(--border); border-radius:4px;">
+        orders in <em>both</em> periods are collapsed into a single long-tail row, so the total still ties
+        to the segment — single-order ads otherwise swamp the table.
+      </p>
+      <div class="scroll-x">
+        <table>
+          <thead>
+            <tr>
+              <th>utm_content (ad)</th>
+              <th class="r">Prev Orders</th>
+              <th class="r">Curr Orders</th>
+              <th class="r">Δ Orders</th>
+              <th class="r">Prev AOV</th>
+              <th class="r">Curr AOV</th>
+              <th class="r">Δ AOV</th>
+              <th class="r">Prev Rev</th>
+              <th class="r">Curr Rev</th>
+              <th class="r">Δ Rev</th>
+              <th class="r">Orders Effect</th>
+              <th class="r">AOV Effect</th>
+              <th class="r">Interaction</th>
+            </tr>
+          </thead>
+          <tbody id="ad-rev-tbody"></tbody>
+          <tfoot id="ad-rev-tfoot"></tfoot>
+        </table>
+      </div>
+    </div>
+
+    <!-- Basket-shrinkage ranking -->
+    <div class="card">
+      <h3>Slices where Meta baskets are shrinking</h3>
+      <p class="card__sub">
+        Every slice with at least
+        <input type="number" id="slice-min-orders" value="10" min="1" step="5" style="width:60px; padding:2px 4px; font:inherit; font-size:0.85rem; border:1px solid var(--border); border-radius:4px;">
+        orders in both periods, grouped by
+        <select id="slice-dim" style="padding:2px 4px; font:inherit; font-size:0.85rem; border:1px solid var(--border); border-radius:4px;">
+          <option value="campaign_lp">campaign × landing page</option>
+          <option value="ad_lp">ad × landing page</option>
+          <option value="campaign_ad">campaign × ad</option>
+        </select>
+        and sorted by Δ UPT ascending (largest basket shrinkage at the top).
+        <strong>UPT</strong> = units per order.
+      </p>
+      <div class="scroll-x">
+        <table>
+          <thead>
+            <tr>
+              <th id="slice-h1">Campaign</th>
+              <th id="slice-h2">Landing page</th>
+              <th class="r">Prev Orders</th>
+              <th class="r">Curr Orders</th>
+              <th class="r">Prev UPT</th>
+              <th class="r">Curr UPT</th>
+              <th class="r">Δ UPT</th>
+              <th class="r">Prev ASP</th>
+              <th class="r">Curr ASP</th>
+              <th class="r">Δ ASP</th>
+              <th class="r">Δ AOV</th>
+            </tr>
+          </thead>
+          <tbody id="slice-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Drill-down campaign → landing page -->
+    <div class="card">
+      <h3>Drill-down: campaign → landing page</h3>
+      <p class="card__sub">Click a campaign to expand its landing pages. Each row carries the same Δ Revenue split for that slice.</p>
+      <div class="scroll-x">
+        <table>
+          <thead>
+            <tr>
+              <th>Slice</th>
+              <th class="r">Prev Orders</th>
+              <th class="r">Curr Orders</th>
+              <th class="r">Δ Orders</th>
+              <th class="r">Prev AOV</th>
+              <th class="r">Curr AOV</th>
+              <th class="r">Δ AOV</th>
+              <th class="r">Δ Rev</th>
+              <th class="r">Orders Effect</th>
+              <th class="r">AOV Effect</th>
+            </tr>
+          </thead>
+          <tbody id="drill-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <p class="footnote">
+      Attribution is read from each order's <code>customerJourneySummary.firstVisit</code> — an order counts
+      toward this segment when that first visit carries the <code>utm_source</code>/<code>utm_medium</code> you
+      loaded with. Orders with no recorded first visit, or a different source/medium, are excluded entirely
+      (they are not bucketed as Unknown here). Campaign / ad / landing page all come from that same first visit,
+      so a blank value shows as <code>(none)</code>.
+      AOV = total_price ÷ orders; UPT = units ÷ orders; ASP = total_price ÷ units.
+      Revenue is order total_price (incl. tax/shipping, currency = shop currency); units is
+      <code>subtotalLineItemsQuantity</code>.
+      This is <em>order-level first-touch</em> attribution, not Shopify session data — so order counts here will
+      not tie exactly to the session-based transactions on the Meta CVR Impact tab.
+    </p>
+  </div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────
+const esc = s => String(s == null ? '' : s)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+const NONE = '(none)';
+const keyOr = v => {
+  const s = (v == null ? '' : String(v)).trim();
+  return s || NONE;
+};
+
+function dimCell(color) {
+  return (label) => `<span class="dim-cell" title="${esc(label)}">`
+    + `<span class="dim-dot" style="background:${color}"></span>`
+    + `<code>${esc(label)}</code></span>`;
+}
+const campCell = dimCell('#1877f2');
+const lpCell   = dimCell('#7c3aed');
+const adCell   = dimCell('#f97316');
+
+// ─────────────────────────────────────────────
+// FORMATTERS
+// ─────────────────────────────────────────────
+const fmt$ = n => (n == null || !isFinite(n)) ? '—' : '$' + n.toLocaleString('en-US', { maximumFractionDigits: 0 });
+const fmt$2 = n => (n == null || !isFinite(n)) ? '—' : '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtInt = n => (n == null || !isFinite(n)) ? '—' : n.toLocaleString('en-US');
+const fmtPct = n => (n == null || !isFinite(n)) ? '—' : (n * 100).toFixed(1) + '%';
+const fmtUpt = n => (n == null || !isFinite(n)) ? '—' : n.toFixed(2);
+const signed$ = n => {
+  if (n == null || !isFinite(n)) return '—';
+  return (n >= 0 ? '+' : '−') + '$' + Math.abs(n).toLocaleString('en-US', { maximumFractionDigits: 0 });
+};
+const signed$2 = n => {
+  if (n == null || !isFinite(n)) return '—';
+  return (n >= 0 ? '+' : '−') + '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
+const signedInt = n => {
+  if (n == null || !isFinite(n)) return '—';
+  return (n >= 0 ? '+' : '−') + Math.abs(n).toLocaleString('en-US');
+};
+const signedPct = n => {
+  if (n == null || !isFinite(n)) return '—';
+  return (n >= 0 ? '+' : '−') + (Math.abs(n) * 100).toFixed(2) + 'pp';
+};
+const sUpt = n => {
+  if (n == null || !isFinite(n)) return '—';
+  return (n >= 0 ? '+' : '−') + Math.abs(n).toFixed(2);
+};
+const cls = n => n == null || !isFinite(n) ? '' : (n > 0 ? 'num-pos' : (n < 0 ? 'num-neg' : ''));
+
+// ─────────────────────────────────────────────
+// MATH (identical decomposition to aov-impact.html)
+// ─────────────────────────────────────────────
+// Per-slice Δ Revenue decomposition: Rev = Orders × AOV
+function decomposeRev(prevO, prevA, currO, currA) {
+  const dO = currO - prevO;
+  const dA = currA - prevA;
+  const prevRev = prevO * prevA;
+  const currRev = currO * currA;
+  return {
+    dO, dA,
+    ordersEffect: dO * prevA,
+    aovEffect: prevO * dA,
+    interaction: dO * dA,
+    prevRev, currRev, dRev: currRev - prevRev,
+  };
+}
+
+// Blended AOV per-slice contribution: Δblended = Σ prevShare·ΔAOV + Σ ΔShare·(currAOV − blendedAvg)
+// where blendedAvg is the previous-period blended AOV (mix-shift measured against the old mix).
+function decomposeBlendedAOV(groups, prevTotalO, prevBlendedA, currTotalO) {
+  return groups.map(c => {
+    const prevShare = prevTotalO > 0 ? c.prevO / prevTotalO : 0;
+    const currShare = currTotalO > 0 ? c.currO / currTotalO : 0;
+    const dShare = currShare - prevShare;
+    const dA = (c.currA || 0) - (c.prevA || 0);
+    const ownEffect = prevShare * dA;
+    const mixEffect = dShare * ((c.currA || 0) - prevBlendedA);
+    return { ...c, prevShare, currShare, dShare, dA, ownEffect, mixEffect, total: ownEffect + mixEffect };
+  });
+}
+
+// ─────────────────────────────────────────────
+// AGGREGATION
+// ─────────────────────────────────────────────
+const withRatios = g => ({
+  ...g,
+  prevA: g.prevO > 0 ? g.prevR / g.prevO : 0,
+  currA: g.currO > 0 ? g.currR / g.currO : 0,
+  prevUpt: g.prevO > 0 ? g.prevU / g.prevO : 0,
+  currUpt: g.currO > 0 ? g.currU / g.currO : 0,
+  prevAsp: g.prevU > 0 ? g.prevR / g.prevU : 0,
+  currAsp: g.currU > 0 ? g.currR / g.currU : 0,
+});
+// Most impactful slices first (largest absolute revenue move).
+const byAbsRevMove = (a, b) => Math.abs(b.currR - b.prevR) - Math.abs(a.currR - a.prevR);
+
+// One flat grouping over any key function. Returns rows with a `key` label field.
+function aggregateBy(rowsCur, rowsPrev, keyFn) {
+  const m = new Map();
+  const touch = (k) => {
+    if (!m.has(k)) m.set(k, { key: k, prevO: 0, prevR: 0, prevU: 0, currO: 0, currR: 0, currU: 0 });
+    return m.get(k);
+  };
+  const apply = (rows, slot) => rows.forEach(r => {
+    const g = touch(keyFn(r));
+    g[slot + 'O'] += r.orders;
+    g[slot + 'R'] += r.revenue;
+    g[slot + 'U'] += (r.units || 0);
+  });
+  apply(rowsCur, 'curr');
+  apply(rowsPrev, 'prev');
+  return Array.from(m.values()).map(withRatios).sort(byAbsRevMove);
+}
+
+// Two-level tree: topKeyFn → subKeyFn, each node carrying the same shape.
+function buildDrill(rowsCur, rowsPrev, topKeyFn, subKeyFn) {
+  const top = new Map();
+  const ensureTop = (k) => {
+    if (!top.has(k)) top.set(k, { key: k, subs: new Map(), prevO:0, prevR:0, prevU:0, currO:0, currR:0, currU:0 });
+    return top.get(k);
+  };
+  const ensureSub = (node, k) => {
+    if (!node.subs.has(k)) node.subs.set(k, { key: k, prevO:0, prevR:0, prevU:0, currO:0, currR:0, currU:0 });
+    return node.subs.get(k);
+  };
+  const apply = (rows, slot) => rows.forEach(r => {
+    const tN = ensureTop(topKeyFn(r));
+    const sN = ensureSub(tN, subKeyFn(r));
+    const u = r.units || 0;
+    tN[slot + 'O'] += r.orders; tN[slot + 'R'] += r.revenue; tN[slot + 'U'] += u;
+    sN[slot + 'O'] += r.orders; sN[slot + 'R'] += r.revenue; sN[slot + 'U'] += u;
+  });
+  apply(rowsCur, 'curr');
+  apply(rowsPrev, 'prev');
+
+  const out = [];
+  for (const tN of top.values()) {
+    const subs = Array.from(tN.subs.values()).map(withRatios).sort(byAbsRevMove);
+    out.push({ ...withRatios(tN), subs });
+  }
+  return out.sort(byAbsRevMove);
+}
+
+// ─────────────────────────────────────────────
+// RENDER — shared table renderers (labelCell picks the dot colour)
+// ─────────────────────────────────────────────
+function renderKpi(groups) {
+  const prevR = groups.reduce((a,c)=>a+c.prevR, 0);
+  const currR = groups.reduce((a,c)=>a+c.currR, 0);
+  const prevO = groups.reduce((a,c)=>a+c.prevO, 0);
+  const currO = groups.reduce((a,c)=>a+c.currO, 0);
+  const prevU = groups.reduce((a,c)=>a+c.prevU, 0);
+  const currU = groups.reduce((a,c)=>a+c.currU, 0);
+  const prevA = prevO > 0 ? prevR / prevO : 0;
+  const currA = currO > 0 ? currR / currO : 0;
+  const prevUpt = prevO > 0 ? prevU / prevO : 0;
+  const currUpt = currO > 0 ? currU / currO : 0;
+  const prevAsp = prevU > 0 ? prevR / prevU : 0;
+  const currAsp = currU > 0 ? currR / currU : 0;
+  const kpis = [
+    { label: 'Meta Revenue', curr: fmt$(currR),   prev: fmt$(prevR),   d: currR - prevR,   fmt: signed$ },
+    { label: 'Meta Orders',  curr: fmtInt(currO), prev: fmtInt(prevO), d: currO - prevO,   fmt: signedInt },
+    { label: 'Blended AOV',  curr: fmt$2(currA),  prev: fmt$2(prevA),  d: currA - prevA,   fmt: signed$2 },
+    { label: 'UPT (units/order)', curr: fmtUpt(currUpt), prev: fmtUpt(prevUpt), d: currUpt - prevUpt, fmt: sUpt },
+    { label: 'ASP (price/unit)',  curr: fmt$2(currAsp),  prev: fmt$2(prevAsp),  d: currAsp - prevAsp, fmt: signed$2 },
+  ];
+  document.getElementById('kpi-row').innerHTML = kpis.map(k => `
+    <div class="kpi">
+      <div class="kpi__label">${k.label}</div>
+      <div class="kpi__value">${k.curr}</div>
+      <div class="kpi__delta ${k.d > 0 ? 'up' : (k.d < 0 ? 'down' : '')}">
+        prev ${k.prev} · ${k.fmt(k.d)}
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderRevTable(groups, tbodyId, tfootId, labelCell) {
+  let totalPrevR=0, totalCurrR=0, totalPrevO=0, totalCurrO=0;
+  const rows = groups.map(c => {
+    const d = decomposeRev(c.prevO, c.prevA, c.currO, c.currA);
+    totalPrevR += d.prevRev; totalCurrR += d.currRev;
+    totalPrevO += c.prevO;   totalCurrO += c.currO;
+    return `
+      <tr>
+        <td>${labelCell(c.key)}</td>
+        <td class="r">${fmtInt(c.prevO)}</td>
+        <td class="r">${fmtInt(c.currO)}</td>
+        <td class="r ${cls(d.dO)}">${signedInt(d.dO)}</td>
+        <td class="r">${fmt$2(c.prevA)}</td>
+        <td class="r">${fmt$2(c.currA)}</td>
+        <td class="r ${cls(d.dA)}">${signed$2(d.dA)}</td>
+        <td class="r">${fmt$(d.prevRev)}</td>
+        <td class="r">${fmt$(d.currRev)}</td>
+        <td class="r ${cls(d.dRev)}">${signed$(d.dRev)}</td>
+        <td class="r ${cls(d.ordersEffect)}">${signed$(d.ordersEffect)}</td>
+        <td class="r ${cls(d.aovEffect)}">${signed$(d.aovEffect)}</td>
+        <td class="r ${cls(d.interaction)}">${signed$(d.interaction)}</td>
+      </tr>`;
+  }).join('');
+  document.getElementById(tbodyId).innerHTML = rows
+    || `<tr><td colspan="13" class="empty-note">No orders matched this scope.</td></tr>`;
+
+  const dRev = totalCurrR - totalPrevR;
+  const dO = totalCurrO - totalPrevO;
+  const totalPrevA = totalPrevO > 0 ? totalPrevR / totalPrevO : 0;
+  const totalCurrA = totalCurrO > 0 ? totalCurrR / totalCurrO : 0;
+  // Aggregate effects from per-slice sums (these sum exactly to dRev)
+  const aggOE = groups.reduce((a,c)=>a + (c.currO - c.prevO) * c.prevA, 0);
+  const aggAE = groups.reduce((a,c)=>a + c.prevO * (c.currA - c.prevA), 0);
+  const aggInt = groups.reduce((a,c)=>a + (c.currO - c.prevO) * (c.currA - c.prevA), 0);
+  document.getElementById(tfootId).innerHTML = `
+    <tr>
+      <td>Total (Meta)</td>
+      <td class="r">${fmtInt(totalPrevO)}</td>
+      <td class="r">${fmtInt(totalCurrO)}</td>
+      <td class="r ${cls(dO)}">${signedInt(dO)}</td>
+      <td class="r">${fmt$2(totalPrevA)}</td>
+      <td class="r">${fmt$2(totalCurrA)}</td>
+      <td class="r ${cls(totalCurrA - totalPrevA)}">${signed$2(totalCurrA - totalPrevA)}</td>
+      <td class="r">${fmt$(totalPrevR)}</td>
+      <td class="r">${fmt$(totalCurrR)}</td>
+      <td class="r ${cls(dRev)}">${signed$(dRev)}</td>
+      <td class="r ${cls(aggOE)}">${signed$(aggOE)}</td>
+      <td class="r ${cls(aggAE)}">${signed$(aggAE)}</td>
+      <td class="r ${cls(aggInt)}">${signed$(aggInt)}</td>
+    </tr>`;
+}
+
+function renderUptTable(groups, tbodyId, tfootId, labelCell) {
+  let totalPrevU = 0, totalCurrU = 0, totalPrevO = 0, totalCurrO = 0, totalPrevR = 0, totalCurrR = 0;
+  let aggUE = 0, aggSE = 0, aggInt = 0;
+  const rows = groups.map(c => {
+    const dUpt = c.currUpt - c.prevUpt;
+    const dAsp = c.currAsp - c.prevAsp;
+    const dAov = c.currA - c.prevA;
+    const uptEffect = dUpt * c.prevAsp;
+    const aspEffect = c.prevUpt * dAsp;
+    const interaction = dUpt * dAsp;
+    totalPrevU += c.prevU; totalCurrU += c.currU;
+    totalPrevO += c.prevO; totalCurrO += c.currO;
+    totalPrevR += c.prevR; totalCurrR += c.currR;
+    aggUE += uptEffect; aggSE += aspEffect; aggInt += interaction;
+    const driver = (Math.abs(uptEffect) === 0 && Math.abs(aspEffect) === 0)
+      ? '—'
+      : (Math.abs(uptEffect) > Math.abs(aspEffect)
+          ? `UPT (${(uptEffect / (uptEffect + aspEffect || 1) * 100).toFixed(0)}%)`
+          : `ASP (${(aspEffect / (uptEffect + aspEffect || 1) * 100).toFixed(0)}%)`);
+    return `
+      <tr>
+        <td>${labelCell(c.key)}</td>
+        <td class="r">${fmtUpt(c.prevUpt)}</td>
+        <td class="r">${fmtUpt(c.currUpt)}</td>
+        <td class="r ${cls(dUpt)}">${sUpt(dUpt)}</td>
+        <td class="r">${fmt$2(c.prevAsp)}</td>
+        <td class="r">${fmt$2(c.currAsp)}</td>
+        <td class="r ${cls(dAsp)}">${signed$2(dAsp)}</td>
+        <td class="r">${fmt$2(c.prevA)}</td>
+        <td class="r">${fmt$2(c.currA)}</td>
+        <td class="r ${cls(dAov)}">${signed$2(dAov)}</td>
+        <td class="r ${cls(uptEffect)}">${signed$2(uptEffect)}</td>
+        <td class="r ${cls(aspEffect)}">${signed$2(aspEffect)}</td>
+        <td class="r ${cls(interaction)}">${signed$2(interaction)}</td>
+        <td class="r" style="font-weight:600">${driver}</td>
+      </tr>`;
+  }).join('');
+  document.getElementById(tbodyId).innerHTML = rows
+    || `<tr><td colspan="14" class="empty-note">No orders matched this scope.</td></tr>`;
+
+  const tPrevUpt = totalPrevO > 0 ? totalPrevU / totalPrevO : 0;
+  const tCurrUpt = totalCurrO > 0 ? totalCurrU / totalCurrO : 0;
+  const tPrevAsp = totalPrevU > 0 ? totalPrevR / totalPrevU : 0;
+  const tCurrAsp = totalCurrU > 0 ? totalCurrR / totalCurrU : 0;
+  const tPrevAov = totalPrevO > 0 ? totalPrevR / totalPrevO : 0;
+  const tCurrAov = totalCurrO > 0 ? totalCurrR / totalCurrO : 0;
+  const totalDriver = (Math.abs(aggUE) === 0 && Math.abs(aggSE) === 0)
+    ? '—'
+    : (Math.abs(aggUE) > Math.abs(aggSE) ? 'UPT' : 'ASP');
+  document.getElementById(tfootId).innerHTML = `
+    <tr>
+      <td>Blended (Meta)</td>
+      <td class="r">${fmtUpt(tPrevUpt)}</td>
+      <td class="r">${fmtUpt(tCurrUpt)}</td>
+      <td class="r ${cls(tCurrUpt - tPrevUpt)}">${sUpt(tCurrUpt - tPrevUpt)}</td>
+      <td class="r">${fmt$2(tPrevAsp)}</td>
+      <td class="r">${fmt$2(tCurrAsp)}</td>
+      <td class="r ${cls(tCurrAsp - tPrevAsp)}">${signed$2(tCurrAsp - tPrevAsp)}</td>
+      <td class="r">${fmt$2(tPrevAov)}</td>
+      <td class="r">${fmt$2(tCurrAov)}</td>
+      <td class="r ${cls(tCurrAov - tPrevAov)}">${signed$2(tCurrAov - tPrevAov)}</td>
+      <td class="r ${cls(aggUE)}">${signed$2(aggUE)}</td>
+      <td class="r ${cls(aggSE)}">${signed$2(aggSE)}</td>
+      <td class="r ${cls(aggInt)}">${signed$2(aggInt)}</td>
+      <td class="r" style="font-weight:600">${totalDriver}</td>
+    </tr>`;
+}
+
+function renderAovTable(groups, tbodyId, tfootId, labelCell) {
+  const prevTotalO = groups.reduce((a,c)=>a+c.prevO,0);
+  const currTotalO = groups.reduce((a,c)=>a+c.currO,0);
+  const prevTotalR = groups.reduce((a,c)=>a+c.prevR,0);
+  const currTotalR = groups.reduce((a,c)=>a+c.currR,0);
+  const prevBlended = prevTotalO > 0 ? prevTotalR / prevTotalO : 0;
+  const currBlended = currTotalO > 0 ? currTotalR / currTotalO : 0;
+  const dBlended = currBlended - prevBlended;
+  const decomp = decomposeBlendedAOV(groups, prevTotalO, prevBlended, currTotalO);
+  const rows = decomp.map(c => `
+    <tr>
+      <td>${labelCell(c.key)}</td>
+      <td class="r">${fmtPct(c.prevShare)}</td>
+      <td class="r">${fmtPct(c.currShare)}</td>
+      <td class="r ${cls(c.dShare)}">${signedPct(c.dShare)}</td>
+      <td class="r">${fmt$2(c.prevA)}</td>
+      <td class="r">${fmt$2(c.currA)}</td>
+      <td class="r ${cls(c.dA)}">${signed$2(c.dA)}</td>
+      <td class="r ${cls(c.ownEffect)}">${signed$2(c.ownEffect)}</td>
+      <td class="r ${cls(c.mixEffect)}">${signed$2(c.mixEffect)}</td>
+      <td class="r ${cls(c.total)}">${signed$2(c.total)}</td>
+      <td class="r">${dBlended === 0 ? '—' : ((c.total / dBlended) * 100).toFixed(0) + '%'}</td>
+    </tr>`).join('');
+  document.getElementById(tbodyId).innerHTML = rows
+    || `<tr><td colspan="11" class="empty-note">No orders matched this scope.</td></tr>`;
+  const sumOwn = decomp.reduce((a,c)=>a+c.ownEffect,0);
+  const sumMix = decomp.reduce((a,c)=>a+c.mixEffect,0);
+  const sumTot = sumOwn + sumMix;
+  document.getElementById(tfootId).innerHTML = `
+    <tr>
+      <td>Total Δ Blended AOV</td>
+      <td class="r">100%</td>
+      <td class="r">100%</td>
+      <td class="r">—</td>
+      <td class="r">${fmt$2(prevBlended)}</td>
+      <td class="r">${fmt$2(currBlended)}</td>
+      <td class="r ${cls(dBlended)}">${signed$2(dBlended)}</td>
+      <td class="r ${cls(sumOwn)}">${signed$2(sumOwn)}</td>
+      <td class="r ${cls(sumMix)}">${signed$2(sumMix)}</td>
+      <td class="r ${cls(sumTot)}">${signed$2(sumTot)}</td>
+      <td class="r">100%</td>
+    </tr>`;
+}
+
+// ─────────────────────────────────────────────
+// BASKET-SHRINKAGE SLICES
+// ─────────────────────────────────────────────
+const SLICE_DIMS = {
+  campaign_lp:  { h1: 'Campaign', h2: 'Landing page', c1: campCell, c2: lpCell,
+                  k1: r => keyOr(r.utm_campaign), k2: r => keyOr(r.landing_page) },
+  ad_lp:        { h1: 'Ad (utm_content)', h2: 'Landing page', c1: adCell, c2: lpCell,
+                  k1: r => keyOr(r.utm_content), k2: r => keyOr(r.landing_page) },
+  campaign_ad:  { h1: 'Campaign', h2: 'Ad (utm_content)', c1: campCell, c2: adCell,
+                  k1: r => keyOr(r.utm_campaign), k2: r => keyOr(r.utm_content) },
+};
+
+let _rows = { cur: [], prev: [] };
+
+// ─────────────────────────────────────────────
+// BY-AD TABLE — long tail collapsed so the footer total still ties
+// ─────────────────────────────────────────────
+function renderAdTable() {
+  const min = parseInt(document.getElementById('ad-min-orders').value, 10) || 1;
+  const ads = aggregateBy(_rows.cur, _rows.prev, r => keyOr(r.utm_content));
+  const shown = ads.filter(a => a.prevO >= min || a.currO >= min);
+  const tail  = ads.filter(a => !(a.prevO >= min || a.currO >= min));
+  const groups = shown.slice();
+  if (tail.length) {
+    const t = tail.reduce((a, c) => ({
+      prevO: a.prevO + c.prevO, prevR: a.prevR + c.prevR, prevU: a.prevU + c.prevU,
+      currO: a.currO + c.currO, currR: a.currR + c.currR, currU: a.currU + c.currU,
+    }), { prevO:0, prevR:0, prevU:0, currO:0, currR:0, currU:0 });
+    groups.push(withRatios({ key: `(long tail — ${tail.length} ads under ${min} orders)`, ...t }));
+  }
+  renderRevTable(groups, 'ad-rev-tbody', 'ad-rev-tfoot', adCell);
+}
+
+function renderSlices() {
+  const dimKey = document.getElementById('slice-dim').value;
+  const dim = SLICE_DIMS[dimKey];
+  const minOrders = parseInt(document.getElementById('slice-min-orders').value, 10) || 1;
+  document.getElementById('slice-h1').textContent = dim.h1;
+  document.getElementById('slice-h2').textContent = dim.h2;
+
+  const tree = buildDrill(_rows.cur, _rows.prev, dim.k1, dim.k2);
+  const flat = [];
+  tree.forEach(tN => tN.subs.forEach(sN => flat.push({ top: tN.key, sub: sN.key, ...sN })));
+  const shown = flat
+    .filter(r => r.prevO >= minOrders && r.currO >= minOrders)
+    .map(r => ({ ...r, dUpt: r.currUpt - r.prevUpt, dAsp: r.currAsp - r.prevAsp, dAov: r.currA - r.prevA }))
+    .sort((a, b) => a.dUpt - b.dUpt); // most negative ΔUPT first
+
+  if (shown.length === 0) {
+    document.getElementById('slice-tbody').innerHTML = `
+      <tr><td colspan="11" class="empty-note">
+        No ${esc(dim.h1.toLowerCase())} × ${esc(dim.h2.toLowerCase())} slices meet the ${minOrders}-order
+        minimum in both periods. Lower the threshold to see more rows.
+      </td></tr>`;
+    return;
+  }
+
+  document.getElementById('slice-tbody').innerHTML = shown.map(r => `
+    <tr>
+      <td>${dim.c1(r.top)}</td>
+      <td>${dim.c2(r.sub)}</td>
+      <td class="r">${fmtInt(r.prevO)}</td>
+      <td class="r">${fmtInt(r.currO)}</td>
+      <td class="r">${fmtUpt(r.prevUpt)}</td>
+      <td class="r">${fmtUpt(r.currUpt)}</td>
+      <td class="r ${cls(r.dUpt)}" style="font-weight:600">${sUpt(r.dUpt)}</td>
+      <td class="r">${fmt$2(r.prevAsp)}</td>
+      <td class="r">${fmt$2(r.currAsp)}</td>
+      <td class="r ${cls(r.dAsp)}">${signed$2(r.dAsp)}</td>
+      <td class="r ${cls(r.dAov)}">${signed$2(r.dAov)}</td>
+    </tr>`).join('');
+}
+
+// ─────────────────────────────────────────────
+// DRILL-DOWN (campaign → landing page)
+// ─────────────────────────────────────────────
+let _drillTree = [];
+const _expanded = new Set();
+
+function renderDrill() {
+  const parts = [];
+  _drillTree.forEach((tN, ti) => {
+    const id = 'c' + ti;
+    const open = _expanded.has(id);
+    const d = decomposeRev(tN.prevO, tN.prevA, tN.currO, tN.currA);
+    parts.push(`
+      <tr data-drill="${id}" style="cursor:pointer">
+        <td>
+          <span class="dim-cell" title="${esc(tN.key)}">
+            <span class="dim-dot" style="background:#1877f2"></span>
+            <span class="drill-toggle">${open ? '▾' : '▸'}</span>&nbsp;<code>${esc(tN.key)}</code>
+            <span style="color:var(--text-secondary); font-size:0.78rem; margin-left:6px">(${tN.subs.length} LP)</span>
+          </span>
+        </td>
+        <td class="r">${fmtInt(tN.prevO)}</td>
+        <td class="r">${fmtInt(tN.currO)}</td>
+        <td class="r ${cls(d.dO)}">${signedInt(d.dO)}</td>
+        <td class="r">${fmt$2(tN.prevA)}</td>
+        <td class="r">${fmt$2(tN.currA)}</td>
+        <td class="r ${cls(d.dA)}">${signed$2(d.dA)}</td>
+        <td class="r ${cls(d.dRev)}">${signed$(d.dRev)}</td>
+        <td class="r ${cls(d.ordersEffect)}">${signed$(d.ordersEffect)}</td>
+        <td class="r ${cls(d.aovEffect)}">${signed$(d.aovEffect)}</td>
+      </tr>`);
+    if (!open) return;
+    tN.subs.forEach(sN => {
+      const sd = decomposeRev(sN.prevO, sN.prevA, sN.currO, sN.currA);
+      parts.push(`
+        <tr class="drill-row lp">
+          <td><code style="font-size:0.75rem">${esc(sN.key)}</code></td>
+          <td class="r">${fmtInt(sN.prevO)}</td>
+          <td class="r">${fmtInt(sN.currO)}</td>
+          <td class="r ${cls(sd.dO)}">${signedInt(sd.dO)}</td>
+          <td class="r">${fmt$2(sN.prevA)}</td>
+          <td class="r">${fmt$2(sN.currA)}</td>
+          <td class="r ${cls(sd.dA)}">${signed$2(sd.dA)}</td>
+          <td class="r ${cls(sd.dRev)}">${signed$(sd.dRev)}</td>
+          <td class="r ${cls(sd.ordersEffect)}">${signed$(sd.ordersEffect)}</td>
+          <td class="r ${cls(sd.aovEffect)}">${signed$(sd.aovEffect)}</td>
+        </tr>`);
+    });
+  });
+  const tbody = document.getElementById('drill-tbody');
+  tbody.innerHTML = parts.join('')
+    || `<tr><td colspan="10" class="empty-note">No orders matched this scope.</td></tr>`;
+  tbody.querySelectorAll('tr[data-drill]').forEach(tr => {
+    tr.addEventListener('click', () => {
+      const k = tr.dataset.drill;
+      if (_expanded.has(k)) _expanded.delete(k); else _expanded.add(k);
+      renderDrill();
+    });
+  });
+}
+
+// ─────────────────────────────────────────────
+// LOADER
+// ─────────────────────────────────────────────
+// Tracks whether the user has manually edited the compare-* inputs. While
+// false, the comparison window auto-snaps to the period immediately preceding
+// the main range each time start/end change.
+let _compareManualOverride = false;
+
+function setDefaultDates() {
+  // Default: yesterday → yesterday (single-day), compare = day immediately prior
+  const today = new Date(); today.setUTCHours(0,0,0,0);
+  const y = new Date(today.getTime() - 86400000);
+  document.getElementById('date-start').value = y.toISOString().slice(0,10);
+  document.getElementById('date-end').value = y.toISOString().slice(0,10);
+  autoCompare();
+}
+function autoCompare() {
+  if (_compareManualOverride) return;
+  const s = document.getElementById('date-start').value;
+  const e = document.getElementById('date-end').value;
+  if (!s || !e) return;
+  const sD = new Date(s + 'T00:00:00Z');
+  const eD = new Date(e + 'T00:00:00Z');
+  if (eD < sD) return;
+  const len = Math.round((eD - sD) / 86400000) + 1;
+  const pe = new Date(sD.getTime() - 86400000);
+  const ps = new Date(pe.getTime() - (len - 1) * 86400000);
+  document.getElementById('compare-start').value = ps.toISOString().slice(0,10);
+  document.getElementById('compare-end').value = pe.toISOString().slice(0,10);
+}
+
+async function load() {
+  const s = document.getElementById('date-start').value;
+  const e = document.getElementById('date-end').value;
+  const cs = document.getElementById('compare-start').value;
+  const ce = document.getElementById('compare-end').value;
+  const source = document.getElementById('filter-source').value.trim();
+  const medium = document.getElementById('filter-medium').value.trim();
+  const statusEl = document.getElementById('load-status');
+  const btn = document.getElementById('btn-load');
+  if (!s || !e) { statusEl.textContent = 'Pick start and end.'; statusEl.classList.add('error'); return; }
+  if (!source) { statusEl.textContent = 'utm_source is required — use the AOV Impact tab for all sources.'; statusEl.classList.add('error'); return; }
+  statusEl.classList.remove('error');
+  btn.disabled = true;
+  statusEl.textContent = 'Fetching orders from Shopify…';
+  try {
+    const params = new URLSearchParams({ start: s, end: e, source, group: 'campaign_lp' });
+    if (medium) params.set('medium', medium);
+    if (cs && ce) { params.set('compare_start', cs); params.set('compare_end', ce); }
+    const t0 = Date.now();
+    const r = await fetch(`/api/aov-impact-data?${params.toString()}`);
+    if (!r.ok) {
+      const txt = await r.text();
+      throw new Error('HTTP ' + r.status + ': ' + txt);
+    }
+    const j = await r.json();
+    statusEl.textContent = `Loaded in ${(Date.now()-t0)/1000|0}s. `
+      + `${j.current.order_count} current orders in scope, ${j.previous.order_count} previous.`;
+    render(j, source, medium);
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = 'Failed: ' + err.message;
+    statusEl.classList.add('error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function render(payload, source, medium) {
+  _rows = { cur: payload.current.rows, prev: payload.previous.rows };
+
+  const campaigns = aggregateBy(_rows.cur, _rows.prev, r => keyOr(r.utm_campaign));
+  const landingPages = aggregateBy(_rows.cur, _rows.prev, r => keyOr(r.landing_page));
+  _drillTree = buildDrill(_rows.cur, _rows.prev, r => keyOr(r.utm_campaign), r => keyOr(r.landing_page));
+
+  // Top bar
+  document.getElementById('top-bar-info').innerHTML = `
+    <strong>Current</strong> ${esc(payload.current.start)} → ${esc(payload.current.end)}
+    &nbsp;·&nbsp;
+    <strong>Previous</strong> ${esc(payload.previous.start)} → ${esc(payload.previous.end)}
+  `;
+
+  // Scope note — spell out what was kept vs scanned so the segment is unambiguous.
+  const scopeCond = `<code>utm_source = "${esc(source)}"</code>`
+    + (medium ? ` AND <code>utm_medium = "${esc(medium)}"</code>` : ' (any medium)');
+  const share = (m, t) => (t > 0 ? ((m / t) * 100).toFixed(1) + '%' : '—');
+  document.getElementById('scope-note').innerHTML = `
+    <strong>Scope:</strong> ${scopeCond}, matched on each order's first visit.
+    Current period: <strong>${fmtInt(payload.current.order_count)}</strong> of
+    ${fmtInt(payload.current.scanned_count)} orders in range
+    (${share(payload.current.order_count, payload.current.scanned_count)}).
+    Previous: <strong>${fmtInt(payload.previous.order_count)}</strong> of
+    ${fmtInt(payload.previous.scanned_count)}
+    (${share(payload.previous.order_count, payload.previous.scanned_count)}).
+    All AOV / UPT / ASP figures below are Meta-segment-only, so they will differ from the
+    all-sources numbers on the <a href="/aov-impact.html" style="color:var(--fb-blue)">AOV Impact</a> tab.
+  `;
+
+  // Truncation warnings
+  const warns = [];
+  if (payload.current.truncated)  warns.push(`Current period exceeded the order page cap — ${fmtInt(payload.current.scanned_count)} orders scanned, results may be partial.`);
+  if (payload.previous.truncated) warns.push(`Previous period exceeded the order page cap — ${fmtInt(payload.previous.scanned_count)} orders scanned, results may be partial.`);
+  if (payload.current.order_count === 0) warns.push(`No current-period orders matched this utm_source/utm_medium. Check the spelling of the filters.`);
+  document.getElementById('warning-area').innerHTML = warns.length
+    ? warns.map(w => `<div class="warning">${w}</div>`).join('')
+    : '';
+
+  renderKpi(campaigns);
+  renderRevTable(campaigns,    'camp-rev-tbody', 'camp-rev-tfoot', campCell);
+  renderUptTable(campaigns,    'camp-upt-tbody', 'camp-upt-tfoot', campCell);
+  renderAovTable(campaigns,    'camp-aov-tbody', 'camp-aov-tfoot', campCell);
+  renderRevTable(landingPages, 'lp-rev-tbody',   'lp-rev-tfoot',   lpCell);
+  renderUptTable(landingPages, 'lp-upt-tbody',   'lp-upt-tfoot',   lpCell);
+  renderAovTable(landingPages, 'lp-aov-tbody',   'lp-aov-tfoot',   lpCell);
+  renderAdTable();
+  renderSlices();
+  renderDrill();
+
+  document.getElementById('upload-screen').style.display = 'none';
+  document.getElementById('results-screen').style.display = 'block';
+}
+
+// ─────────────────────────────────────────────
+// WIRE-UP
+// ─────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  setDefaultDates();
+  ['date-start','date-end'].forEach(id => document.getElementById(id).addEventListener('change', autoCompare));
+  ['compare-start','compare-end'].forEach(id => document.getElementById(id).addEventListener('change', () => { _compareManualOverride = true; }));
+  document.getElementById('compare-reset').addEventListener('click', () => { _compareManualOverride = false; autoCompare(); });
+  document.getElementById('btn-load').addEventListener('click', load);
+  document.getElementById('slice-min-orders').addEventListener('input', () => {
+    if (_rows.cur.length === 0 && _rows.prev.length === 0) return;
+    renderSlices();
+  });
+  document.getElementById('slice-dim').addEventListener('change', () => {
+    if (_rows.cur.length === 0 && _rows.prev.length === 0) return;
+    renderSlices();
+  });
+  document.getElementById('ad-min-orders').addEventListener('input', () => {
+    if (_rows.cur.length === 0 && _rows.prev.length === 0) return;
+    renderAdTable();
+  });
+  document.getElementById('btn-reset').addEventListener('click', () => {
+    document.getElementById('results-screen').style.display = 'none';
+    document.getElementById('upload-screen').style.display = 'block';
+  });
+});
+</script>
+
+</body>
+</html>

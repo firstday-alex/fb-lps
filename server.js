@@ -1606,6 +1606,11 @@ app.get('/api/lp-by-channel-data', async (req, res) => {
 // attribution. Paginates by cursor; pre-aggregates server-side to keep payload
 // small. Returns current + previous period as { rows: [{utm_source, utm_medium,
 // landing_page, orders, revenue}], order_count, truncated }.
+//
+// Optional query params (used by meta-aov-impact.html; omitting them keeps the
+// exact shape aov-impact.html expects):
+//   source / medium  — restrict to one utm_source / utm_medium
+//   group=campaign_lp — add utm_campaign + utm_content to the aggregation key
 
 app.get('/api/aov-impact-data', async (req, res) => {
   if (!SHOPIFY_URL || !SHOPIFY_TOKEN) {
@@ -1630,6 +1635,11 @@ app.get('/api/aov-impact-data', async (req, res) => {
     cs = prevStart.toISOString().slice(0, 10);
     ce = prevEnd.toISOString().slice(0, 10);
   }
+
+  // Blank = no filter (the default aov-impact.html behaviour).
+  const fSource = (req.query.source || '').toString().toLowerCase().trim();
+  const fMedium = (req.query.medium || '').toString().toLowerCase().trim();
+  const byCampaign = req.query.group === 'campaign_lp';
 
   const endpoint = `https://${SHOPIFY_URL}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
   const ORDERS_GQL = `query Orders($q: String!, $after: String) {
@@ -1662,6 +1672,7 @@ app.get('/api/aov-impact-data', async (req, res) => {
     const all = [];
     let cursor = null;
     let pages = 0;
+    let scanned = 0;
     const MAX_PAGES = 240; // up to ~60k orders per period — covers ~3 weeks at this store
     const q = `created_at:>=${s}T00:00:00 AND created_at:<=${e}T23:59:59`;
     while (true) {
@@ -1682,31 +1693,39 @@ app.get('/api/aov-impact-data', async (req, res) => {
         const utm = fv?.utmParameters;
         const src = ((utm?.source || (fv?.source && fv.source !== 'an unknown source' ? fv.source : '')) || '').toString().toLowerCase().trim();
         const med = ((utm?.medium || '') + '').toLowerCase().trim();
+        scanned++;
+        if (fSource && src !== fSource) continue;
+        if (fMedium && med !== fMedium) continue;
         all.push({
           revenue: isFinite(amt) ? amt : 0,
           units,
           source: src,
           medium: med,
+          campaign: ((utm?.campaign || '') + '').trim(),
+          content: ((utm?.content || '') + '').trim(),
           landing_page: lpPath(fv?.landingPage),
         });
       }
       pages++;
       const truncated = data.pageInfo.hasNextPage && pages >= MAX_PAGES;
       if (!data.pageInfo.hasNextPage || pages >= MAX_PAGES) {
-        return { orders: all, pages, truncated };
+        return { orders: all, pages, truncated, scanned };
       }
       cursor = data.pageInfo.endCursor;
     }
-    return { orders: all, pages, truncated: false };
+    return { orders: all, pages, truncated: false, scanned };
   };
 
   const aggregate = (orders) => {
     const map = new Map();
     for (const o of orders) {
-      const key = o.source + '|' + o.medium + '|' + o.landing_page;
+      const key = byCampaign
+        ? o.source + '|' + o.medium + '|' + o.campaign + '|' + o.content + '|' + o.landing_page
+        : o.source + '|' + o.medium + '|' + o.landing_page;
       let g = map.get(key);
       if (!g) {
         g = { utm_source: o.source, utm_medium: o.medium, landing_page: o.landing_page, orders: 0, revenue: 0, units: 0 };
+        if (byCampaign) { g.utm_campaign = o.campaign; g.utm_content = o.content; }
         map.set(key, g);
       }
       g.orders += 1;
@@ -1724,8 +1743,9 @@ app.get('/api/aov-impact-data', async (req, res) => {
     ]);
     console.log(`[aov-impact-data] orders: current=${cur.orders.length} (pages=${cur.pages}, trunc=${cur.truncated}) previous=${prev.orders.length} (pages=${prev.pages}, trunc=${prev.truncated})`);
     res.json({
-      current:  { start, end,    rows: aggregate(cur.orders),  order_count: cur.orders.length,  truncated: cur.truncated },
-      previous: { start: cs, end: ce, rows: aggregate(prev.orders), order_count: prev.orders.length, truncated: prev.truncated },
+      scope: { source: fSource || null, medium: fMedium || null, group: byCampaign ? 'campaign_lp' : 'source_lp' },
+      current:  { start, end,    rows: aggregate(cur.orders),  order_count: cur.orders.length,  scanned_count: cur.scanned,  truncated: cur.truncated },
+      previous: { start: cs, end: ce, rows: aggregate(prev.orders), order_count: prev.orders.length, scanned_count: prev.scanned, truncated: prev.truncated },
     });
   } catch (err) {
     console.error('[aov-impact-data] error:', err);
