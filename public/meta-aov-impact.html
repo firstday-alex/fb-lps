@@ -107,7 +107,10 @@
 
     /* Results */
     #results-screen { display: none; }
-    .results-wrap { max-width: 1280px; margin: 24px auto; padding: 0 24px; }
+    /* Full-bleed results: no max-width, just a fixed 40px gutter all round, so
+       the wide decomposition tables get every pixel available and the label
+       column truncates as rarely as possible. */
+    .results-wrap { max-width: none; margin: 0; padding: 40px; }
 
     .top-bar {
       display: flex; align-items: center; justify-content: space-between;
@@ -147,12 +150,16 @@
     .card__sub { font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 14px; }
     .card__sub strong { color: var(--text-primary); }
 
-    table { width: 100%; border-collapse: collapse; font-size: 0.83rem; }
-    th { text-align: left; padding: 8px 10px; font-size: 0.72rem;
+    /* Table type is sized in px (not rem) so the "2px smaller" step below is
+       literal: body 13→11px, headers 12→10px, drill sub-rows 12→10px. */
+    table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    /* Tight horizontal cell padding: with 14 columns, 10px→6px hands ~110px
+       back to the label column instead of spending it on gutters. */
+    th { text-align: left; padding: 8px 6px; font-size: 10px;
          text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-secondary);
          background: #f7f8fa; border-bottom: 1px solid var(--border); white-space: nowrap; }
     th.r { text-align: right; }
-    td { padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    td { padding: 8px 6px; border-bottom: 1px solid var(--border); white-space: nowrap; }
     td.r { text-align: right; font-variant-numeric: tabular-nums; }
     tr:last-child td { border-bottom: none; }
     tfoot td { background: #f7f8fa; font-weight: 600; border-top: 2px solid var(--border); }
@@ -161,17 +168,26 @@
       display: inline-block; width: 10px; height: 10px; border-radius: 50%;
       margin-right: 8px; vertical-align: middle;
     }
-    .dim-cell { display: inline-flex; align-items: center; max-width: 340px; }
+    /* Label column: takes whatever the row can spare. The vw term reserves
+       ~1040px for the numeric columns, so a wide screen shows full campaign and
+       ad names (the longest run ~120 chars ≈ 780px at 11px monospace) while a
+       narrow one falls back to an ellipsis rather than shoving the whole table
+       into horizontal scroll. A cap is unavoidable: uncapped, one 120-char ad
+       name would push every metric column off-screen. */
+    .dim-cell {
+      display: inline-flex; align-items: center;
+      max-width: max(300px, min(1200px, 100vw - 1150px));
+    }
     .dim-cell code {
-      font-size: 0.82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
 
     .scroll-x { overflow-x: auto; }
 
-    .drill-row.lp td { background: #f4f6f9; font-size: 0.78rem; }
+    .drill-row.lp td { background: #f4f6f9; font-size: 10px; }
     .drill-row.lp td:first-child { padding-left: 42px; color: var(--text-secondary); }
 
-    .drill-toggle { cursor: pointer; user-select: none; color: var(--fb-blue); font-size: 0.78rem; }
+    .drill-toggle { cursor: pointer; user-select: none; color: var(--fb-blue); font-size: 10px; }
     .drill-toggle:hover { text-decoration: underline; }
 
     .num-pos { color: var(--positive); }
@@ -186,7 +202,7 @@
       padding: 10px 14px; border-radius: 6px; font-size: 0.8rem; margin-bottom: 12px;
     }
     .empty-note {
-      text-align: center; color: var(--text-secondary); padding: 20px; font-size: 0.82rem;
+      text-align: center; color: var(--text-secondary); padding: 20px; font-size: 11px;
     }
   </style>
 </head>
@@ -991,7 +1007,7 @@ function renderDrill() {
           <span class="dim-cell" title="${esc(tN.key)}">
             <span class="dim-dot" style="background:#1877f2"></span>
             <span class="drill-toggle">${open ? '▾' : '▸'}</span>&nbsp;<code>${esc(tN.key)}</code>
-            <span style="color:var(--text-secondary); font-size:0.78rem; margin-left:6px">(${tN.subs.length} LP)</span>
+            <span style="color:var(--text-secondary); font-size:10px; margin-left:6px">(${tN.subs.length} LP)</span>
           </span>
         </td>
         <td class="r">${fmtInt(tN.prevO)}</td>
@@ -1009,7 +1025,7 @@ function renderDrill() {
       const sd = decomposeRev(sN.prevO, sN.prevA, sN.currO, sN.currA);
       parts.push(`
         <tr class="drill-row lp">
-          <td><code style="font-size:0.75rem">${esc(sN.key)}</code></td>
+          <td><code style="font-size:10px">${esc(sN.key)}</code></td>
           <td class="r">${fmtInt(sN.prevO)}</td>
           <td class="r">${fmtInt(sN.currO)}</td>
           <td class="r ${cls(sd.dO)}">${signedInt(sd.dO)}</td>
