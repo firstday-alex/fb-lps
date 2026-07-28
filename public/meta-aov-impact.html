@@ -649,8 +649,11 @@ const withRatios = g => ({
   prevAsp: g.prevU > 0 ? g.prevR / g.prevU : 0,
   currAsp: g.currU > 0 ? g.currR / g.currU : 0,
 });
-// Most impactful slices first (largest absolute revenue move).
-const byAbsRevMove = (a, b) => Math.abs(b.currR - b.prevR) - Math.abs(a.currR - a.prevR);
+// Biggest slices first, by current-period order count. Falls back to previous
+// orders (so slices that lost all their volume still rank by their old size)
+// and then the label, keeping row order stable across re-renders.
+const byOrdersDesc = (a, b) =>
+  (b.currO - a.currO) || (b.prevO - a.prevO) || String(a.key).localeCompare(String(b.key));
 
 // One flat grouping over any key function. Returns rows with a `key` label field.
 function aggregateBy(rowsCur, rowsPrev, keyFn) {
@@ -667,7 +670,7 @@ function aggregateBy(rowsCur, rowsPrev, keyFn) {
   });
   apply(rowsCur, 'curr');
   apply(rowsPrev, 'prev');
-  return Array.from(m.values()).map(withRatios).sort(byAbsRevMove);
+  return Array.from(m.values()).map(withRatios).sort(byOrdersDesc);
 }
 
 // Two-level tree: topKeyFn → subKeyFn, each node carrying the same shape.
@@ -693,10 +696,10 @@ function buildDrill(rowsCur, rowsPrev, topKeyFn, subKeyFn) {
 
   const out = [];
   for (const tN of top.values()) {
-    const subs = Array.from(tN.subs.values()).map(withRatios).sort(byAbsRevMove);
+    const subs = Array.from(tN.subs.values()).map(withRatios).sort(byOrdersDesc);
     out.push({ ...withRatios(tN), subs });
   }
-  return out.sort(byAbsRevMove);
+  return out.sort(byOrdersDesc);
 }
 
 // ─────────────────────────────────────────────
