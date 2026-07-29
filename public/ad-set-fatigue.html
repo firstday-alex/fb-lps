@@ -176,9 +176,11 @@
 
     /* Results */
     #results-screen { display: none; }
+    /* Full browser width — ad-set names are long, so the table gets every
+       pixel available instead of being boxed into a fixed column. */
     .results-wrap {
-      max-width: 1320px;
-      margin: 0 auto;
+      max-width: none;
+      margin: 0;
       padding: 20px 24px;
       display: flex;
       flex-direction: column;
@@ -277,11 +279,12 @@
       vertical-align: middle;
     }
     table.fatigue-table td.r { text-align: right; font-variant-numeric: tabular-nums; }
+    /* Ad-set name wraps to its full text instead of being ellipsised. */
     table.fatigue-table td.adset {
-      max-width: 380px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      min-width: 300px;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      line-height: 1.35;
       cursor: pointer;
     }
     table.fatigue-table tr.row-main { cursor: pointer; }

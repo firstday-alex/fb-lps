@@ -181,9 +181,11 @@
 
     /* Results screen */
     #results-screen { display: none; }
+    /* Full browser width — source / campaign names are long, so the tables get
+       every pixel available instead of being boxed into a 1100px column. */
     .results-wrap {
-      max-width: 1100px;
-      margin: 0 auto;
+      max-width: none;
+      margin: 0;
       padding: 20px 24px;
       display: flex;
       flex-direction: column;
@@ -400,7 +402,7 @@
     /* Contributors sticky header */
     .contrib-header {
       display: grid;
-      grid-template-columns: 200px 50px 50px 58px 50px 1fr 84px 72px 18px;
+      grid-template-columns: minmax(260px, 2.2fr) 50px 50px 58px 50px minmax(120px, 1fr) 84px 72px 18px;
       gap: 8px;
       padding: 6px 4px;
       font-size: 0.68rem;
@@ -439,7 +441,7 @@
     .source-wrap:last-child { border-bottom: none; }
     .source-row {
       display: grid;
-      grid-template-columns: 200px 50px 50px 58px 50px 1fr 84px 72px 18px;
+      grid-template-columns: minmax(260px, 2.2fr) 50px 50px 58px 50px minmax(120px, 1fr) 84px 72px 18px;
       align-items: center;
       gap: 8px;
       padding: 11px 4px;
@@ -450,7 +452,13 @@
     }
     .source-row:hover { background: #f7f9ff; }
     .source-wrap.open .source-row { background: #eef3ff; }
-    .source-label { display: flex; align-items: flex-start; gap: 7px; font-weight: 600; }
+    /* Full source name wraps onto as many lines as it needs. */
+    .source-label {
+      display: flex; align-items: flex-start; gap: 7px; font-weight: 600;
+      min-width: 0; white-space: normal; overflow-wrap: anywhere;
+      word-break: break-word; line-height: 1.3;
+    }
+    .source-label .ch-dot { margin-top: 4px; }
     .source-driver { font-size: 0.72rem; color: var(--text-secondary); font-weight: 400; margin-top: 2px; }
 
     /* Effects panel — expands on click */
@@ -542,7 +550,7 @@
     }
     .cvr-chart-row {
       display: grid;
-      grid-template-columns: 160px 60px 1fr 60px 60px;
+      grid-template-columns: minmax(280px, 1.8fr) 60px minmax(120px, 1fr) 60px 60px;
       align-items: center;
       gap: 8px;
       padding: 6px 0;
@@ -556,8 +564,10 @@
       border-bottom: 2px solid var(--border); padding-bottom: 8px;
     }
     .cvr-chart-row .r { text-align: right; }
-    .cvr-src-label { font-weight: 600; display: flex; align-items: center; gap: 6px; }
-    .cvr-src-label .ch-dot { flex-shrink: 0; }
+    /* Source / LP label: wrap to full text instead of truncating so the team
+       can read the whole name. Dot stays pinned to the first line. */
+    .cvr-src-label { font-weight: 600; display: flex; align-items: flex-start; gap: 6px; min-width: 0; white-space: normal; overflow-wrap: anywhere; word-break: break-word; line-height: 1.25; }
+    .cvr-src-label .ch-dot { flex-shrink: 0; margin-top: 4px; }
     .cvr-bar-cell { position: relative; height: 22px; }
     .cvr-bar-track {
       position: absolute; top: 0; bottom: 0;
@@ -606,7 +616,7 @@
     }
     .cvr-drill-row {
       display: grid;
-      grid-template-columns: 200px 60px 1fr 60px 60px;
+      grid-template-columns: minmax(260px, 1.8fr) 60px minmax(120px, 1fr) 60px 60px;
       align-items: center;
       gap: 8px;
       padding: 5px 0;
@@ -618,9 +628,11 @@
       font-family: Menlo, Monaco, monospace;
       font-size: 0.72rem;
       color: var(--text-primary);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      min-width: 0;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      line-height: 1.3;
     }
     .cvr-drill-empty {
       font-size: 0.78rem;
@@ -632,7 +644,7 @@
     /* Session volume chart */
     .sess-chart-row {
       display: grid;
-      grid-template-columns: 160px 70px 1fr 70px 90px;
+      grid-template-columns: minmax(280px, 2fr) 70px minmax(120px, 1fr) 70px 90px;
       align-items: center;
       gap: 8px;
       padding: 6px 0;
@@ -708,7 +720,7 @@
     .bucket-bar-curr { top: 12px; }
     .bucket-sources {
       font-size: 0.7rem; color: var(--text-secondary); margin-top: 2px;
-      max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      overflow-wrap: anywhere; word-break: break-word; line-height: 1.35;
     }
 
     /* Mix-shift summary card */
@@ -1552,7 +1564,7 @@ function render(rawRows, filename) {
         ? `<span class="cvr-badge ${cvrVsAvg > 0 ? 'cvr-badge--hi' : 'cvr-badge--lo'}" title="CVR vs avg ${(tCurrCvr*100).toFixed(2)}%">${cvrVsAvg > 0 ? '↑' : '↓'} ${Math.abs(cvrVsAvg*100).toFixed(2)}pp vs avg</span>`
         : '';
 
-      const shortSrc = g.source.length > 26 ? g.source.slice(0, 24) + '…' : g.source;
+      // Full source name — CSS (.source-label) wraps it; no truncation.
       const wrap = document.createElement('div');
       wrap.className = 'source-wrap';
       const row = document.createElement('div');
@@ -1561,8 +1573,8 @@ function render(rawRows, filename) {
       row.innerHTML = `
         <div class="source-label" title="${esc(g.source)}">
           <span class="ch-dot" style="background:${esc(chColor(g.channel))}"></span>
-          <div>
-            <div>${esc(shortSrc)}${cvrBadge}</div>
+          <div style="min-width:0">
+            <div>${esc(g.source)}${cvrBadge}</div>
             <div class="source-driver">${esc(g.primaryEffect.typeLabel)}</div>
           </div>
         </div>
@@ -1791,7 +1803,7 @@ function renderCvrMovement(rows, blendedPrev, blendedCurr) {
 
   sorted.forEach((r, idx) => {
     const srcLabel = r.source || '(direct / none)';
-    const shortSrc = srcLabel.length > 22 ? srcLabel.slice(0, 20) + '…' : srcLabel;
+    const shortSrc = srcLabel;          // wrap full name (CSS handles wrapping); no truncation
     const delta = r.currC - r.prevCvr;
     const deltaPP = delta * 100;
     const barWidthPct = Math.round(Math.abs(delta) / maxAbsDelta * 45);
@@ -1858,7 +1870,7 @@ function buildLpDrilldownHtml(sourceKey) {
   const maxAbsDelta = Math.max(...sorted.map(r => Math.abs(r.currC - r.prevCvr)), 0.001);
   const rowsHtml = sorted.map(r => {
     const label = r.lp || '(no path)';
-    const shortLabel = label.length > 32 ? label.slice(0, 30) + '…' : label;
+    const shortLabel = label;           // .cvr-drill-lp wraps the full path
     const delta = r.currC - r.prevCvr;
     const deltaPP = delta * 100;
     const barWidthPct = Math.round(Math.abs(delta) / maxAbsDelta * 45);
@@ -2112,7 +2124,7 @@ function renderCvrBuckets(rows) {
     sortedSrcs.forEach(s => {
       const sDeltaClass = impactCls(s.delta, b.key);
       srcRows += `
-        <div style="display:grid;grid-template-columns:130px 55px 55px 50px 50px;gap:6px;padding:2px 0;font-size:0.73rem;color:var(--text-secondary)">
+        <div style="display:grid;grid-template-columns:minmax(240px,1fr) 55px 55px 50px 50px;gap:6px;padding:2px 0;font-size:0.73rem;color:var(--text-secondary)">
           <div style="font-weight:500;color:var(--text-primary)">${esc(s.name)}</div>
           <div class="r">${fmtN(s.prevS)}</div>
           <div class="r">${fmtN(s.currS)}</div>
@@ -2139,7 +2151,7 @@ function renderCvrBuckets(rows) {
       <details style="padding:0 0 4px 40px">
         <summary style="font-size:0.72rem;color:var(--fb-blue);cursor:pointer;padding:4px 0;user-select:none">Show ${b.sources.length} source${b.sources.length !== 1 ? 's' : ''}</summary>
         <div style="padding:2px 0 4px">
-          <div style="display:grid;grid-template-columns:130px 55px 55px 50px 50px;gap:6px;padding:2px 0;font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);border-bottom:1px solid var(--border)">
+          <div style="display:grid;grid-template-columns:minmax(240px,1fr) 55px 55px 50px 50px;gap:6px;padding:2px 0;font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);border-bottom:1px solid var(--border)">
             <div>Source</div><div class="r">Prev</div><div class="r">Curr</div><div class="r">Δ</div><div class="r">CVR</div>
           </div>
           ${srcRows || '<div style="font-size:0.73rem;color:var(--text-secondary);padding:4px 0">—</div>'}
@@ -2222,7 +2234,7 @@ function renderSessionVolume(rows, tDelta) {
 
   sorted.forEach(r => {
     const srcLabel = r.source || '(direct / none)';
-    const shortSrc = srcLabel.length > 22 ? srcLabel.slice(0, 20) + '…' : srcLabel;
+    const shortSrc = srcLabel;          // wrap full name (CSS handles wrapping); no truncation
     const sessDelta = r.currS - r.prevSess;
     const sessPct = r.prevSess > 0 ? (sessDelta / r.prevSess * 100) : (r.currS > 0 ? 100 : 0);
 
@@ -2582,7 +2594,7 @@ function renderDrillDown(container, source, tDelta, tPrevConv) {
   const contribs = [];
   lpRows.forEach(r => {
     const d = decompose(r.prevSess, r.prevCvr, r.currS, r.currC);
-    const shortLp = r.lp.length > 45 ? r.lp.slice(0, 43) + '…' : r.lp;
+    const shortLp = r.lp;              // .drill-lp already wraps (word-break)
     if (d.sessEffect !== 0) contribs.push({ lp: r.lp, shortLp, currS: r.currS, currC: r.currC, typeLabel: d.dS >= 0 ? 'Sessions Increase' : 'Sessions Decrease', value: d.sessEffect, detail: `${fmtS(Math.round(d.dS))} sessions (${fmtP(r.prevSess > 0 ? d.dS/r.prevSess*100 : 0, 1)})` });
     if (d.cvrEffect !== 0) contribs.push({ lp: r.lp, shortLp, currS: r.currS, currC: r.currC, typeLabel: d.dC >= 0 ? 'CVR Increase' : 'CVR Decrease', value: d.cvrEffect, detail: `${fmtPP(d.dC*100)} (${(r.prevCvr*100).toFixed(2)}% → ${(r.currC*100).toFixed(2)}%)` });
     if (Math.abs(d.interaction) > 0.5) contribs.push({ lp: r.lp, shortLp, currS: r.currS, currC: r.currC, typeLabel: 'Interaction Effect', value: d.interaction, detail: `${fmtS(Math.round(d.dS))} sessions × ${fmtPP(d.dC*100)} CVR` });

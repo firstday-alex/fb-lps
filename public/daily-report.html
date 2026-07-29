@@ -12,7 +12,10 @@
     header a.back { color:rgba(255,255,255,0.9); text-decoration:none; font-size:0.85rem; border:1px solid rgba(255,255,255,0.35); padding:5px 12px; border-radius:6px; }
     header h1 { font-size:1.25rem; margin:0; }
     header p { margin:2px 0 0; font-size:0.82rem; color:rgba(255,255,255,0.85); }
-    .wrap { max-width:900px; margin:0 auto; padding:24px 20px 80px; }
+    /* Full browser width so the tables get every pixel; the narrative prose keeps
+       a readable measure via .narrative p/ul below. */
+    .wrap { max-width:none; margin:0; padding:24px 20px 80px; }
+    .narrative p, .narrative ul, .meta-line { max-width:900px; }
     .meta-line { color:var(--text-secondary); font-size:0.85rem; margin-bottom:18px; }
     .card { background:#fff; border-radius:12px; padding:24px 28px; box-shadow:0 1px 3px rgba(0,0,0,0.08); margin-bottom:20px; }
     .narrative h1 { font-size:1.5rem; margin:0 0 12px; }
@@ -119,7 +122,7 @@ function renderBrief(b){
       const sd=deltaPct(r.sessions.curr,r.sessions.prev);
       const cvrpp=(r.cvr.curr-r.cvr.prev)*100;
       const name = r.source || r.campaign || '(none)';
-      t += `<tr><td title="${esc(name)}">${esc(name.length>40?name.slice(0,38)+'…':name)}</td><td>${fmtN(r.sessions.curr)}</td><td class="${cls(sd)}">${fmtPct(sd)}</td><td>${(r.cvr.curr*100).toFixed(2)}%</td><td class="${cls(cvrpp)}">${fmtPP(cvrpp)}</td><td>${fmtN(r.transactions.curr)}</td></tr>`;
+      t += `<tr><td title="${esc(name)}" style="overflow-wrap:anywhere;word-break:break-word;line-height:1.35;min-width:220px">${esc(name)}</td><td>${fmtN(r.sessions.curr)}</td><td class="${cls(sd)}">${fmtPct(sd)}</td><td>${(r.cvr.curr*100).toFixed(2)}%</td><td class="${cls(cvrpp)}">${fmtPP(cvrpp)}</td><td>${fmtN(r.transactions.curr)}</td></tr>`;
     });
     return t+'</tbody></table>';
   };

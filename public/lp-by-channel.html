@@ -23,7 +23,9 @@
     header h1 { font-size: 1.2rem; font-weight: 700; }
     header p { font-size: 0.8rem; opacity: 0.75; }
 
-    .wrap { max-width: 1280px; margin: 0 auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 16px; }
+    /* Full browser width — landing-page paths are long, so the table gets every
+       pixel available instead of being boxed into a fixed column. */
+    .wrap { max-width: none; margin: 0; padding: 20px 24px; display: flex; flex-direction: column; gap: 16px; }
 
     .controls { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow);
       padding: 16px 20px; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px; }
@@ -68,7 +70,8 @@
     table.heat th:hover { color: var(--fb-blue); }
     table.heat th.sorted { color: var(--fb-blue); }
     th.col-label, td.col-label { text-align: left; }
-    td.col-label { font-weight: 600; max-width: 340px; overflow: hidden; text-overflow: ellipsis; }
+    /* Landing-page label wraps to its full path instead of being ellipsised. */
+    td.col-label { font-weight: 600; min-width: 280px; white-space: normal; overflow-wrap: anywhere; word-break: break-word; line-height: 1.35; }
     tr.totals-row td { font-weight: 700; border-top: 2px solid var(--border); border-bottom: none; background: #f9fafc; }
     .cell-val { display: block; }
     .cell-delta { display: block; font-size: 0.7rem; font-weight: 600; }

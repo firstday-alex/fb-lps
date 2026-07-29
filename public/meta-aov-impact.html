@@ -176,16 +176,16 @@
     }
     /* Label column: takes whatever the row can spare. The vw term reserves
        ~1040px for the numeric columns, so a wide screen shows full campaign and
-       ad names (the longest run ~120 chars ≈ 780px at 11px monospace) while a
-       narrow one falls back to an ellipsis rather than shoving the whole table
-       into horizontal scroll. A cap is unavoidable: uncapped, one 120-char ad
-       name would push every metric column off-screen. */
+       ad names (the longest run ~120 chars ≈ 780px at 11px monospace) on one
+       line; a narrow one wraps the name onto extra lines rather than shoving the
+       whole table into horizontal scroll. A cap is unavoidable: uncapped, one
+       120-char ad name would push every metric column off-screen. */
     .dim-cell {
       display: inline-flex; align-items: center;
       max-width: max(300px, min(1200px, 100vw - 1110px));
     }
     .dim-cell code {
-      font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      font-size: 11px; overflow-wrap: anywhere; word-break: break-word; line-height: 1.35;
     }
 
     .scroll-x { overflow-x: auto; }

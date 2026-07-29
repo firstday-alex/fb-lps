@@ -150,10 +150,11 @@ header h1 { font-size: 1.25rem; }
   font-family: monospace;
   font-size: 0.78rem;
   color: #1877f2;
-  max-width: 140px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* Wrap the full path instead of ellipsising it. */
+  min-width: 160px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.35;
 }
 
 /* Row hover */
@@ -176,10 +177,10 @@ header h1 { font-size: 1.25rem; }
 .ad-name-campaign {
   font-size: 0.68rem;
   color: #999;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 320px;
+  /* Wrap the full campaign name instead of ellipsising it. */
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.35;
 }
 
 /* Segment tags */

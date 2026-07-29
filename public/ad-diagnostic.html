@@ -134,9 +134,11 @@
     }
     .crit-status.saved { color: var(--positive); }
 
+    /* Full browser width — ad / ad-set names are long, so the tables get every
+       pixel available instead of being boxed into a fixed column. */
     .wrap {
-      max-width: 1400px;
-      margin: 0 auto;
+      max-width: none;
+      margin: 0;
       padding: 18px 22px;
       display: flex;
       flex-direction: column;
@@ -310,14 +312,14 @@
     .delta.neg { color: var(--negative); background: var(--negative-bg); }
     .delta.neu { color: var(--text-secondary); background: var(--neutral-bg); }
 
+    /* Ad names wrap to their full text instead of being ellipsised. */
     .ad-name-cell {
-      max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      min-width: 260px; overflow-wrap: anywhere; word-break: break-word; line-height: 1.35;
       font-weight: 500;
     }
     .ad-name-link {
       display: inline-block;
-      max-width: 320px;
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      overflow-wrap: anywhere; word-break: break-word; line-height: 1.35;
       color: var(--text-primary);
       font-weight: 500;
       text-decoration: none;
@@ -342,7 +344,7 @@
       color: #92400e;
     }
     .lp-cell {
-      max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      min-width: 180px; overflow-wrap: anywhere; word-break: break-word; line-height: 1.35;
       color: var(--text-secondary); font-family: ui-monospace, SFMono-Regular, monospace;
       font-size: 0.78rem;
     }
@@ -1926,8 +1928,8 @@ function renderTable() {
   };
 
   tbody.innerHTML = rows.map(r => {
-    const adShort = r.ad_name.length > 42 ? r.ad_name.slice(0, 40) + '…' : r.ad_name;
-    const lpShort = r.landing_page_path.length > 28 ? r.landing_page_path.slice(0, 26) + '…' : r.landing_page_path;
+    const adShort = r.ad_name;                 // cells wrap (CSS); no truncation
+    const lpShort = r.landing_page_path;       // cells wrap (CSS); no truncation
     const secondary = r.secondary_flags.length
       ? r.secondary_flags.map(s => `<span class="chip-secondary" title="${esc(BUCKETS[s]?.label || s)}">${esc(BUCKETS[s]?.short || s)}</span>`).join('')
       : '';
@@ -2068,7 +2070,7 @@ function renderInsufficient() {
   rows.sort((a,b) => b.spend - a.spend);
   tbody.innerHTML = rows.map(r => `
     <tr>
-      <td><div class="ad-name-cell" title="${esc(r.ad_name)}">${esc(r.ad_name.length > 50 ? r.ad_name.slice(0, 48) + '…' : r.ad_name)}</div></td>
+      <td><div class="ad-name-cell" title="${esc(r.ad_name)}">${esc(r.ad_name)}</div></td>
       <td><div class="lp-cell" title="${esc(r.landing_page_path)}">${esc(r.landing_page_path)}</div></td>
       <td class="r">${fmtUSD(r.spend)}</td>
       <td class="r">${fmtN(r.impressions)}</td>
@@ -2404,7 +2406,7 @@ function openDetail(key) {
           ${[...r.per_ad].sort((a, b) => b.spend - a.spend).map(p => `
             <tr>
               <td style="font-family:ui-monospace,SFMono-Regular,monospace;font-size:0.74rem">${esc(p.ad_id || '—')}</td>
-              <td title="${esc(p.adset_name || '')}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc((p.adset_name || '—').slice(0, 30))}</td>
+              <td title="${esc(p.adset_name || '')}" style="min-width:180px;overflow-wrap:anywhere;word-break:break-word;line-height:1.35">${esc(p.adset_name || '—')}</td>
               <td style="font-size:0.74rem;color:var(--text-secondary)">${p.created_time ? esc(p.created_time.slice(0,10)) : '—'}</td>
               <td class="r">${fmtUSD(p.spend)}</td>
               <td class="r">${fmtN(p.impressions)}</td>

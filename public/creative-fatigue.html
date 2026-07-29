@@ -163,9 +163,11 @@
 
     /* Results */
     #results-screen { display: none; }
+    /* Full browser width — ad names are long, so the table gets every pixel
+       available instead of being boxed into a fixed column. */
     .results-wrap {
-      max-width: 1320px;
-      margin: 0 auto;
+      max-width: none;
+      margin: 0;
       padding: 20px 24px;
       display: flex; flex-direction: column; gap: 16px;
     }
@@ -365,11 +367,12 @@
     table.ads-table tr.row-main:hover { background: #f7f9ff; }
     table.ads-table tr.row-main.open { background: #eef3ff; }
     table.ads-table tr.row-detail td { background: #fafbff; padding: 0; }
+    /* Ad name wraps to its full text instead of being ellipsised. */
     .ad-name {
       font-family: ui-monospace, SF Mono, Menlo, monospace;
       font-size: 0.74rem;
-      max-width: 480px;
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      min-width: 300px;
+      overflow-wrap: anywhere; word-break: break-word; line-height: 1.35;
     }
     .ad-meta {
       font-size: 0.7rem; color: var(--text-secondary); margin-top: 1px;

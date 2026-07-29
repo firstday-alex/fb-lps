@@ -98,7 +98,9 @@
 
     /* Results */
     #results-screen { display: none; }
-    .results-wrap { max-width: 1280px; margin: 24px auto; padding: 0 24px; }
+    /* Full browser width — source / landing-page names are long, so the tables
+       get every pixel available instead of being boxed into a fixed column. */
+    .results-wrap { max-width: none; margin: 24px 0; padding: 0 24px; }
 
     .top-bar {
       display: flex; align-items: center; justify-content: space-between;
@@ -137,6 +139,10 @@
          background: #f7f8fa; border-bottom: 1px solid var(--border); white-space: nowrap; }
     th.r { text-align: right; }
     td { padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    /* Label column wraps to the full source / landing-page name; the numeric
+       columns keep their single-line nowrap. */
+    td:first-child { white-space: normal; overflow-wrap: anywhere; word-break: break-word; line-height: 1.35; min-width: 220px; }
+    td:first-child code { white-space: normal; overflow-wrap: anywhere; }
     td.r { text-align: right; font-variant-numeric: tabular-nums; }
     tr:last-child td { border-bottom: none; }
     tfoot td { background: #f7f8fa; font-weight: 600; border-top: 2px solid var(--border); }

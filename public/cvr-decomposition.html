@@ -191,9 +191,11 @@
 
     /* Results */
     #results-screen { display: none; }
+    /* Full browser width — ad / LP names are long, so the tables get every
+       pixel available instead of being boxed into a fixed column. */
     .results-wrap {
-      max-width: 1200px;
-      margin: 0 auto;
+      max-width: none;
+      margin: 0;
       padding: 20px 24px;
       display: flex;
       flex-direction: column;
@@ -395,11 +397,12 @@
       vertical-align: middle;
     }
     .drill-table td.r { text-align: right; font-variant-numeric: tabular-nums; }
+    /* Ad name wraps to its full text instead of being ellipsised. */
     .drill-table td.ad-name {
-      max-width: 380px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      min-width: 300px;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      line-height: 1.35;
       font-family: ui-monospace, SF Mono, Menlo, monospace;
       font-size: 0.74rem;
     }

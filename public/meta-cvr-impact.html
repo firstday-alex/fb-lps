@@ -2458,7 +2458,7 @@ function renderCvrBuckets(rows) {
       <details style="padding:0 0 4px 40px">
         <summary style="font-size:0.72rem;color:var(--fb-blue);cursor:pointer;padding:4px 0;user-select:none">Show ${b.entries.length} campaign${b.entries.length !== 1 ? 's' : ''}</summary>
         <div style="padding:2px 0 4px">
-          <div style="display:grid;grid-template-columns:180px 55px 55px 50px 50px;gap:6px;padding:2px 0;font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);border-bottom:1px solid var(--border)">
+          <div style="display:grid;grid-template-columns:minmax(240px,1fr) 55px 55px 50px 50px;gap:6px;padding:2px 0;font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);border-bottom:1px solid var(--border)">
             <div>Campaign</div><div class="r">Prev</div><div class="r">Curr</div><div class="r">Δ</div><div class="r">CVR</div>
           </div>
           ${entryRows || '<div style="font-size:0.73rem;color:var(--text-secondary);padding:4px 0">—</div>'}

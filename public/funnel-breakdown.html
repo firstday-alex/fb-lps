@@ -62,7 +62,9 @@
     header h1 { font-size: 1.2rem; font-weight: 700; }
     header p { font-size: 0.8rem; opacity: 0.75; }
 
-    .wrap { max-width: 1200px; margin: 0 auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 16px; }
+    /* Full browser width — source names are long, so the table gets every pixel
+       available instead of being boxed into a fixed column. */
+    .wrap { max-width: none; margin: 0; padding: 20px 24px; display: flex; flex-direction: column; gap: 16px; }
 
     /* Control bar */
     .controls {
@@ -188,7 +190,8 @@
     table.breakdown th:hover { color: var(--fb-blue); }
     table.breakdown th.sorted { color: var(--fb-blue); }
     table.breakdown th.col-src, table.breakdown td.col-src { text-align: left; }
-    table.breakdown td.col-src { font-weight: 600; }
+    /* Source label wraps to its full name instead of overflowing. */
+    table.breakdown td.col-src { font-weight: 600; min-width: 220px; white-space: normal; overflow-wrap: anywhere; word-break: break-word; line-height: 1.35; }
     table.breakdown tbody tr { cursor: pointer; }
     table.breakdown tbody tr:hover { background: #f6f8fb; }
     table.breakdown tbody tr.active { background: rgba(24,119,242,0.09); }
