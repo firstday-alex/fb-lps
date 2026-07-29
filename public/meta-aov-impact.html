@@ -107,10 +107,16 @@
 
     /* Results */
     #results-screen { display: none; }
-    /* Full-bleed results: no max-width, just a fixed 40px gutter all round, so
-       the wide decomposition tables get every pixel available and the label
-       column truncates as rarely as possible. */
-    .results-wrap { max-width: none; margin: 0; padding: 40px; }
+    /* Full-bleed results: no max-width, and the 40px gutter is measured to the
+       table itself, not to the card box. The cards carry 20px of their own
+       padding, so the page contributes the other 20px horizontally — anything
+       more and the tables lose width the label column needs. Text-level
+       children below get the matching 20px so they line up with table content
+       at exactly 40px; the card/KPI boxes sit 20px out from that. */
+    .results-wrap { max-width: none; margin: 0; padding: 40px 20px; }
+    .results-wrap > .top-bar,
+    .results-wrap > #scope-note,
+    .results-wrap > .footnote { padding-left: 20px; padding-right: 20px; }
 
     .top-bar {
       display: flex; align-items: center; justify-content: space-between;
@@ -176,7 +182,7 @@
        name would push every metric column off-screen. */
     .dim-cell {
       display: inline-flex; align-items: center;
-      max-width: max(300px, min(1200px, 100vw - 1150px));
+      max-width: max(300px, min(1200px, 100vw - 1110px));
     }
     .dim-cell code {
       font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
