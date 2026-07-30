@@ -3444,9 +3444,9 @@ function renderAdLpDrill(container, campaign) {
       };
     });
 
-    // Sortable columns. Default ranks by |CVR impact| — the biggest movers of this
-    // campaign's CVR regardless of direction — but any column can be clicked, so
-    // e.g. Sessions gives a plain highest-to-lowest traffic view.
+    // Sortable columns. Opens on Sessions highest-first — the volume view people
+    // read first. Click CVR Impact for the biggest movers of this campaign's CVR
+    // (by absolute size the first time, so drags and lifts rank together).
     const SORT_ACCESS = {
       ad:        g => (g.ad || '').toLowerCase(),
       sessions:  g => g.currS,
@@ -3462,7 +3462,7 @@ function renderAdLpDrill(container, campaign) {
       ad: 'asc', sessions: 'desc', sessDelta: 'desc', cvr: 'desc',
       cvrDelta: 'desc', txnDelta: 'desc', cvrImpact: 'asc', absImpact: 'desc',
     };
-    let sortKey = 'absImpact';
+    let sortKey = 'sessions';
     let sortDir = 'desc';
 
     const sortedGroups = () => {
@@ -3533,8 +3533,10 @@ function renderAdLpDrill(container, campaign) {
 
     const paint = () => {
       // Clickable headers — same idiom as the contributors table above.
+      // The CVR Impact header owns two sort modes (|magnitude| and signed), so it
+      // stays highlighted for either.
       const h = (key, label, extraCls, title) => {
-        const active = sortKey === key;
+        const active = sortKey === key || (key === 'cvrImpact' && sortKey === 'absImpact');
         const arrow = active ? `<span class="adrill-sort-arrow">${sortDir === 'asc' ? '▲' : '▼'}</span>` : '';
         return `<div class="${extraCls || ''} adrill-sort${active ? ' adrill-sort--active' : ''}"`
           + ` data-adrill-sort="${key}"${title ? ` title="${title}"` : ''}>${label}${arrow}</div>`;
@@ -3547,7 +3549,7 @@ function renderAdLpDrill(container, campaign) {
           ${h('cvr', 'CVR', 'r', 'Current-period CVR')}
           ${h('cvrDelta', 'CVR Δ', 'r', "This pair's own CVR change in pp")}
           ${h('txnDelta', 'Txns Δ', 'r', 'Transaction change vs the comparison window')}
-          ${h('cvrImpact', 'CVR Impact', 'r', 'Contribution in pp to THIS campaign&apos;s CVR change (own-CVR effect + share-shift effect). Click to sort signed; the default ranking uses absolute size.')}
+          ${h('cvrImpact', 'CVR Impact', 'r', 'Contribution in pp to THIS campaign&apos;s CVR change (own-CVR effect + share-shift effect). First click ranks by absolute size (biggest movers either way); click again for signed order (biggest drags first).')}
         </div>`;
       const ordered = sortedGroups();
       const body = ordered.slice(0, shown).map(rowHtml).join('');
@@ -3599,7 +3601,11 @@ function renderAdLpDrill(container, campaign) {
       container.querySelectorAll('[data-adrill-sort]').forEach(el => {
         el.addEventListener('click', () => {
           const key = el.dataset.adrillSort;
-          if (sortKey === key) {
+          if (key === 'cvrImpact') {
+            // First click: biggest movers by magnitude. Toggle: signed order.
+            sortKey = sortKey === 'absImpact' ? 'cvrImpact' : 'absImpact';
+            sortDir = sortKey === 'absImpact' ? 'desc' : 'asc';
+          } else if (sortKey === key) {
             sortDir = sortDir === 'asc' ? 'desc' : 'asc';
           } else {
             sortKey = key;
