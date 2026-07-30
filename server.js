@@ -2212,12 +2212,45 @@ app.get('/api/meta-ad-index', requireAuth, async (req, res) => {
   }
   try {
     let accountId = req.query.account_id;
+    let accountName = null;
+    let accountsConsidered = 1;
+    let accountPickedBy = 'explicit';
+
     if (!accountId) {
-      const accResp = await fetch(`${META_BASE_URL}/me/adaccounts?fields=id,name&limit=1&${metaParams(req.accessToken)}`);
+      // Don't just grab the first account: a user with several ad accounts would
+      // get an index built from the wrong one, and EVERY ad name would then fail
+      // to match (rendering as "no link"). Pick the account that actually spent
+      // in this window.
+      const accResp = await fetch(`${META_BASE_URL}/me/adaccounts?fields=id,name&limit=100&${metaParams(req.accessToken)}`);
       const accData = await accResp.json();
-      const first = accData.data && accData.data[0];
-      if (!first) return res.status(404).json({ error: 'No ad accounts available for this Facebook user' });
-      accountId = first.id;
+      if (accData.error) {
+        if (accData.error.code === 190) { clearTokenCookie(res); return res.status(401).json({ error: 'Session expired' }); }
+        throw new Error(accData.error.message || 'Could not list ad accounts');
+      }
+      const accounts = accData.data || [];
+      if (accounts.length === 0) return res.status(404).json({ error: 'No ad accounts available for this Facebook user' });
+      accountsConsidered = accounts.length;
+
+      if (accounts.length === 1) {
+        accountId = accounts[0].id;
+        accountName = accounts[0].name;
+        accountPickedBy = 'only-account';
+      } else {
+        // Probe spend per account in parallel (bounded), then take the biggest.
+        const probes = await Promise.all(accounts.slice(0, 25).map(async (a) => {
+          try {
+            const u = `${META_BASE_URL}/${a.id}/insights?fields=spend`
+              + `&time_range=${encodeURIComponent(JSON.stringify({ since: start, until: end }))}`
+              + `&${metaParams(req.accessToken)}`;
+            const j = await (await fetch(u, { signal: AbortSignal.timeout(15000) })).json();
+            return { ...a, spend: parseFloat(j.data?.[0]?.spend) || 0 };
+          } catch { return { ...a, spend: 0 }; }
+        }));
+        probes.sort((x, y) => y.spend - x.spend);
+        accountId = probes[0].id;
+        accountName = probes[0].name;
+        accountPickedBy = probes[0].spend > 0 ? 'highest-spend' : 'fallback-first';
+      }
     }
 
     // Meta's `next` URL keeps access_token but drops appsecret_proof.
@@ -2252,7 +2285,15 @@ app.get('/api/meta-ad-index', requireAuth, async (req, res) => {
       pageCount += 1;
     }
 
-    res.json({ account_id: accountId, range: { start, end }, ads, truncated: !!next });
+    res.json({
+      account_id: accountId,
+      account_name: accountName,
+      accounts_considered: accountsConsidered,
+      account_picked_by: accountPickedBy,
+      range: { start, end },
+      ads,
+      truncated: !!next,
+    });
   } catch (err) {
     console.error('[meta-ad-index] error:', err);
     if (err.status === 401) return res.status(401).json({ error: err.message });

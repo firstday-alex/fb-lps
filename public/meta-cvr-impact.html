@@ -3314,15 +3314,23 @@ function ensureAdIndex() {
   _adIndexPromise = (async () => {
     try {
       const params = new URLSearchParams({ start: ctx.start, end: ctx.end });
+      // Escape hatch: ?ad_account=act_123 on the page URL forces which Meta ad
+      // account the index is built from.
+      const acctOverride = new URLSearchParams(location.search).get('ad_account');
+      if (acctOverride) params.set('account_id', acctOverride);
       const resp = await fetch(`/api/meta-ad-index?${params.toString()}`);
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
-        throw new Error(err.error || `HTTP ${resp.status}`);
+        const e = new Error(err.error || `HTTP ${resp.status}`);
+        e.status = resp.status;
+        throw e;
       }
       const data = await resp.json();
       const map = new Map();
+      const byId = new Map();
       for (const a of (data.ads || [])) {
         if (!a.ad_name || !a.ad_id) continue;
+        byId.set(String(a.ad_id), a);
         const k = normAdName(a.ad_name);
         // Same name can exist in several ad sets; keep the highest-spend id so
         // the link lands on the ad that actually drove the traffic.
@@ -3331,11 +3339,20 @@ function ensureAdIndex() {
           map.set(k, { ad_id: a.ad_id, campaign_name: a.campaign_name, spend: a.spend || 0 });
         }
       }
-      _adIndex = { map, accountId: data.account_id || null, error: null, truncated: !!data.truncated };
+      _adIndex = {
+        map, byId,
+        accountId: data.account_id || null,
+        accountName: data.account_name || null,
+        accountsConsidered: data.accounts_considered || 1,
+        pickedBy: data.account_picked_by || null,
+        adCount: (data.ads || []).length,
+        error: null,
+        truncated: !!data.truncated,
+      };
       return _adIndex;
     } catch (e) {
       // 401 = not logged into Facebook on this page. Not fatal.
-      _adIndex = { map: new Map(), accountId: null, error: e.message };
+      _adIndex = { map: new Map(), byId: new Map(), accountId: null, adCount: 0, error: e.message, status: e.status };
       return _adIndex;
     }
   })();
@@ -3391,6 +3408,20 @@ function renderAdLpDrill(container, campaign) {
 
     const cPrevS = rows.reduce((a, r) => a + r.prevSess, 0);
     const cCurrS = rows.reduce((a, r) => a + r.currS, 0);
+
+    // If the campaign has no traffic at all in the current window, every pair is
+    // trivially "retired" — tagging 100 rows says nothing. State the situation
+    // once instead (a stopped campaign, or Shopify data that hasn't landed yet).
+    if (cCurrS === 0 && cPrevS > 0) {
+      container.innerHTML = `
+        <div class="adrill-note">
+          <strong>No sessions in the current window</strong> for this campaign
+          (${fmtN(Math.round(cPrevS))} in the comparison window, across ${rows.length} ad × landing-page pair${rows.length !== 1 ? 's' : ''}).
+          Every pair stopped, so this campaign's whole contribution is share-shift — there's no per-ad CVR change to break down.
+          If you expected traffic here, the campaign was off in this window, or Shopify analytics hasn't finished landing it yet.
+        </div>`;
+      return;
+    }
     const cPrevT = rows.reduce((a, r) => a + r.prevSess * r.prevCvr, 0);
     const cCurrT = rows.reduce((a, r) => a + r.currS * r.currC, 0);
     const cPrevCvr = cPrevS > 0 ? cPrevT / cPrevS : 0;
@@ -3450,9 +3481,20 @@ function renderAdLpDrill(container, campaign) {
     const PAGE = 25;
     let shown = Math.min(PAGE, groups.length);
 
+    // Exact (normalized) name match first. Some ad names carry the ad id inline
+    // (e.g. "… | 9x16 | 1214201806031151 - TDK 6/15/2026"), so fall back to any
+    // 15-17 digit run that IS a real ad id in the index — exact, never fuzzy, so
+    // it can't produce a wrong link.
     const linkFor = (adName) => {
       const hit = adIdx.map.get(normAdName(adName));
-      return hit ? adsManagerUrl(adIdx.accountId, hit.ad_id) : null;
+      if (hit) return adsManagerUrl(adIdx.accountId, hit.ad_id);
+      if (adIdx.byId && adIdx.byId.size) {
+        const ids = String(adName || '').match(/\d{15,17}/g) || [];
+        for (const id of ids) {
+          if (adIdx.byId.has(id)) return adsManagerUrl(adIdx.accountId, id);
+        }
+      }
+      return null;
     };
 
     const rowHtml = (g) => {
@@ -3515,10 +3557,22 @@ function renderAdLpDrill(container, campaign) {
       const linkedCount = groups.filter(g => linkFor(g.ad)).length;
       const notes = [];
       notes.push(`Impacts are measured against <strong>this campaign</strong>: CVR ${(cPrevCvr * 100).toFixed(2)}% → ${(cCurrCvr * 100).toFixed(2)}% (<span class="${cls(cCvrDelta)}">${fmtPP(cCvrDelta * 100)}</span>) on ${fmtN(Math.round(cPrevS))} → ${fmtN(Math.round(cCurrS))} sessions. The CVR Impact column sums to that ΔCVR.`);
+
+      // Say precisely WHY links are missing — the three causes need different
+      // fixes, and "no link" on every row looks identical in all three.
+      const acctLabel = adIdx.accountName
+        ? `${esc(adIdx.accountName)} (${esc(adIdx.accountId || '')})`
+        : esc(adIdx.accountId || 'unknown account');
       if (adIdx.error) {
-        notes.push(`Ad links unavailable (${esc(adIdx.error)}) — <a href="/auth/facebook" style="color:var(--fb-blue)">log in to Facebook</a> to deep-link each ad into Ads Manager.`);
+        notes.push(adIdx.status === 401
+          ? `⚠ Ad links need Facebook: <a href="/auth/facebook" style="color:var(--fb-blue)">log in</a> to deep-link each ad into Ads Manager.`
+          : `⚠ Ad links unavailable — ${esc(adIdx.error)}`);
+      } else if (adIdx.adCount === 0) {
+        notes.push(`⚠ No ads with spend found in <strong>${acctLabel}</strong> for ${esc(_queryCtx?.start || '')} → ${esc(_queryCtx?.end || '')}${adIdx.accountsConsidered > 1 ? ` (chosen from ${adIdx.accountsConsidered} ad accounts by ${esc(adIdx.pickedBy || 'spend')})` : ''}. If that's the wrong ad account, reload with <code>?ad_account=act_XXXX</code>.`);
+      } else if (linkedCount === 0) {
+        notes.push(`⚠ Indexed ${fmtN(adIdx.adCount)} ads from <strong>${acctLabel}</strong> but <strong>none</strong> matched by name — <code>utm_content</code> probably isn't the Meta ad name (or the ads were renamed after these sessions). Nothing else on this page is affected.`);
       } else if (linkedCount < groups.length) {
-        notes.push(`${linkedCount} of ${groups.length} ad names matched a Meta ad that spent in this window; the rest show <em>no link</em>.`);
+        notes.push(`${linkedCount} of ${groups.length} pairs matched one of ${fmtN(adIdx.adCount)} ads in ${acctLabel}; the rest show <em>no link</em>.`);
       }
       if (truncated) notes.push(`⚠ Shopify returned the maximum 1000 rows for this campaign — the tail is cut off.`);
 
