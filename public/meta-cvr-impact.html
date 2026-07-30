@@ -596,6 +596,26 @@
       font-size: 0.66rem; color: var(--text-secondary); font-weight: 400;
       margin-left: 4px; cursor: help; border-bottom: 1px dotted var(--text-secondary);
     }
+    .adrill-banner {
+      margin: 8px 0 4px;
+      background: #fff8e6;
+      border: 1px solid #f0d999;
+      border-left: 3px solid #e8a33d;
+      border-radius: 5px;
+      padding: 9px 12px;
+      font-size: 0.78rem;
+      line-height: 1.55;
+      color: var(--text-primary);
+    }
+    .adrill-banner code {
+      background: rgba(0,0,0,0.05); padding: 1px 4px; border-radius: 3px; font-size: 0.94em;
+    }
+    .adrill-login {
+      display: inline-block; margin: 4px 2px 0 0; padding: 3px 10px;
+      background: var(--fb-blue); color: #fff; border-radius: 5px;
+      font-weight: 600; text-decoration: none;
+    }
+    .adrill-login:hover { background: var(--fb-blue-dark); }
     .adrill-sort { cursor: pointer; user-select: none; border-radius: 3px; }
     .adrill-sort:hover { background: #eef3ff; color: var(--fb-blue); }
     .adrill-sort--active { color: var(--fb-blue); }
@@ -3560,23 +3580,34 @@ function renderAdLpDrill(container, campaign) {
       const notes = [];
       notes.push(`Impacts are measured against <strong>this campaign</strong>: CVR ${(cPrevCvr * 100).toFixed(2)}% → ${(cCurrCvr * 100).toFixed(2)}% (<span class="${cls(cCvrDelta)}">${fmtPP(cCvrDelta * 100)}</span>) on ${fmtN(Math.round(cPrevS))} → ${fmtN(Math.round(cCurrS))} sessions. The CVR Impact column sums to that ΔCVR.`);
 
-      // Say precisely WHY links are missing — the three causes need different
-      // fixes, and "no link" on every row looks identical in all three.
+      // Say precisely WHY links are missing, ABOVE the table — the causes need
+      // different fixes and "no link" on every row looks identical in all of them.
+      // (Buried in a footnote this went unread, which is how it should have been
+      // surfaced from the start.)
       const acctLabel = adIdx.accountName
         ? `${esc(adIdx.accountName)} (${esc(adIdx.accountId || '')})`
         : esc(adIdx.accountId || 'unknown account');
+      let banner = '';
       if (adIdx.error) {
-        notes.push(adIdx.status === 401
-          ? `⚠ Ad links need Facebook: <a href="/auth/facebook" style="color:var(--fb-blue)">log in</a> to deep-link each ad into Ads Manager.`
-          : `⚠ Ad links unavailable — ${esc(adIdx.error)}`);
+        banner = adIdx.status === 401
+          ? `<strong>Ad links are off because this page isn't signed in to Facebook.</strong>
+             Shopify only records the ad <em>name</em>; matching it to an ad id needs the Meta API.
+             <a class="adrill-login" href="/auth/facebook">Log in with Facebook</a>
+             then reopen this drill — everything else on the page works without it.`
+          : `<strong>Ad links unavailable</strong> — ${esc(adIdx.error)}`;
       } else if (adIdx.adCount === 0) {
-        notes.push(`⚠ No ads with spend found in <strong>${acctLabel}</strong> for ${esc(_queryCtx?.start || '')} → ${esc(_queryCtx?.end || '')}${adIdx.accountsConsidered > 1 ? ` (chosen from ${adIdx.accountsConsidered} ad accounts by ${esc(adIdx.pickedBy || 'spend')})` : ''}. If that's the wrong ad account, reload with <code>?ad_account=act_XXXX</code>.`);
+        banner = `<strong>No ads with spend found in ${acctLabel}</strong> for
+          ${esc(_queryCtx?.start || '')} → ${esc(_queryCtx?.end || '')}${adIdx.accountsConsidered > 1 ? ` (picked from ${adIdx.accountsConsidered} ad accounts by ${esc(adIdx.pickedBy || 'spend')})` : ''}.
+          If that's the wrong ad account, reload this page with <code>?ad_account=act_XXXX</code>.`;
       } else if (linkedCount === 0) {
-        notes.push(`⚠ Indexed ${fmtN(adIdx.adCount)} ads from <strong>${acctLabel}</strong> but <strong>none</strong> matched by name — <code>utm_content</code> probably isn't the Meta ad name (or the ads were renamed after these sessions). Nothing else on this page is affected.`);
+        banner = `<strong>Indexed ${fmtN(adIdx.adCount)} ads from ${acctLabel}, but none matched by name.</strong>
+          <code>utm_content</code> here probably isn't the Meta ad name (or the ads were renamed after these sessions).
+          Only the links are affected — every number below is Shopify data and is unaffected.`;
       } else if (linkedCount < groups.length) {
         notes.push(`${linkedCount} of ${groups.length} pairs matched one of ${fmtN(adIdx.adCount)} ads in ${acctLabel}; the rest show <em>no link</em>.`);
       }
       if (truncated) notes.push(`⚠ Shopify returned the maximum 1000 rows for this campaign — the tail is cut off.`);
+      const bannerHtml = banner ? `<div class="adrill-banner">⚠ ${banner}</div>` : '';
 
       const SORT_LABEL = {
         absImpact: 'sorted by |CVR impact|',
@@ -3591,6 +3622,7 @@ function renderAdLpDrill(container, campaign) {
 
       container.innerHTML = `
         <div class="drill-header">Ad × landing page · ${groups.length} pair${groups.length !== 1 ? 's' : ''} · ${SORT_LABEL[sortKey] || ''}</div>
+        ${bannerHtml}
         <div class="adrill-scroll"><div class="adrill-table">${header}${body}</div></div>
         ${more}
         <div class="adrill-note">${notes.join('<br>')}</div>`;
