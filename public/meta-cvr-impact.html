@@ -561,6 +561,60 @@
     }
     .drill-lp { font-weight: 500; font-size: 0.76rem; color: var(--text-primary); word-break: break-all; }
 
+    /* ── Ad × LP drill (contributors table) ── */
+    .adrill-scroll { overflow-x: auto; }
+    .adrill-table { min-width: 900px; }
+    .adrill-row {
+      display: grid;
+      grid-template-columns: minmax(220px, 2.2fr) 60px 62px 60px 66px 62px 74px;
+      align-items: center;
+      gap: 10px;
+      padding: 5px 0;
+      border-top: 1px solid #e4e8f4;
+      font-size: 0.77rem;
+    }
+    .adrill-row--header {
+      font-size: 0.63rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--text-secondary);
+      border-top: none; border-bottom: 2px solid var(--border); padding-bottom: 5px;
+    }
+    .adrill-row .r { text-align: right; }
+    .adrill-name { min-width: 0; }
+    .adrill-ad {
+      font-weight: 600; font-size: 0.76rem; color: var(--text-primary);
+      word-break: break-all; line-height: 1.35;
+    }
+    .adrill-ad a { color: var(--fb-blue); text-decoration: none; }
+    .adrill-ad a:hover { text-decoration: underline; }
+    .adrill-ad .adrill-ext { font-size: 0.68rem; opacity: 0.75; margin-left: 3px; }
+    .adrill-lp {
+      font-size: 0.71rem; color: var(--text-secondary);
+      word-break: break-all; margin-top: 1px;
+    }
+    .adrill-lp::before { content: '↳ '; }
+    .adrill-noad {
+      font-size: 0.66rem; color: var(--text-secondary); font-weight: 400;
+      margin-left: 4px; cursor: help; border-bottom: 1px dotted var(--text-secondary);
+    }
+    .adrill-tag {
+      display: inline-block; margin-left: 5px; padding: 0 5px;
+      border-radius: 3px; font-size: 0.62rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.04em;
+      vertical-align: 1px; cursor: help;
+    }
+    .adrill-tag--off { background: #f0f1f5; color: #6b7280; }
+    .adrill-tag--new { background: #e8f0fe; color: var(--fb-blue); }
+    .adrill-note {
+      font-size: 0.72rem; color: var(--text-secondary);
+      padding: 7px 0 2px; line-height: 1.5;
+    }
+    .adrill-more {
+      margin-top: 8px; font-size: 0.72rem; color: var(--fb-blue);
+      background: none; border: 1px solid #c5d4f5; border-radius: 5px;
+      cursor: pointer; padding: 3px 10px;
+    }
+    .adrill-more:hover { background: #eef3ff; }
+
     .hidden { display: none !important; }
     .section-label {
       font-size: 0.7rem;
@@ -1310,7 +1364,7 @@
     <!-- Ranked contributors (by campaign) -->
     <div class="card breakdown-card">
       <h3>Top Contributors to Blended CVR Change</h3>
-      <p class="card__sub">Each row is one utm_campaign. <strong>CVR Impact</strong> = this campaign's contribution (in pp) to the total blended CVR change for this data pull. Decomposed into: (a) <strong>own CVR effect</strong> — <em>prevShare × ΔCvr</em> (the campaign's own CVR movement, weighted by its baseline traffic share); plus (b) <strong>share-shift effect</strong> — <em>ΔShare × (currCvr − blended avg)</em> (gaining/losing share at a CVR above or below the blended average). Sums across all campaigns to the overall blended ΔCvr. Negative = dragged blended CVR down. So a below-average campaign whose CVR drops <em>and</em> gains share compounds on both terms. <em>Click a column header to sort.</em></p>
+      <p class="card__sub">Each row is one utm_campaign. <strong>CVR Impact</strong> = this campaign's contribution (in pp) to the total blended CVR change for this data pull. Decomposed into: (a) <strong>own CVR effect</strong> — <em>prevShare × ΔCvr</em> (the campaign's own CVR movement, weighted by its baseline traffic share); plus (b) <strong>share-shift effect</strong> — <em>ΔShare × (currCvr − blended avg)</em> (gaining/losing share at a CVR above or below the blended average). Sums across all campaigns to the overall blended ΔCvr. Negative = dragged blended CVR down. So a below-average campaign whose CVR drops <em>and</em> gains share compounds on both terms. <em>Click a column header to sort. Expand a campaign to break it down by landing page or by <strong>ad × landing page</strong> — the ad view shows session and CVR deltas per pair and links each ad to Ads Manager.</em></p>
       <div class="contrib-header">
         <div class="sort-h" data-sort="campaign">Campaign</div>
         <div class="r sort-h" data-sort="sessions">Sessions</div>
@@ -1526,6 +1580,18 @@ function aggregateBy(rows, keyFn) {
 // ─────────────────────────────────────────────
 let _shopifyTotals = null;
 let _rawRows = [];
+
+// The exact window + filters behind the current pull. The ad × LP drill re-queries
+// Shopify per campaign on demand, so it has to reproduce these verbatim — using
+// anything else would compare the drill against a different baseline than the
+// contributors row the user expanded.
+let _queryCtx = null;   // { start, end, source, medium, compareStart, compareEnd }
+
+// Cache for the lazy per-campaign ad × LP pulls, keyed by campaign name, plus
+// the ad-name → ad_id index used to deep-link into Ads Manager.
+let _adLpDrillCache = new Map();
+let _adIndex = null;    // { map: Map(normName → {ad_id, campaign_name}), accountId, error }
+let _adIndexPromise = null;
 
 // ─────────────────────────────────────────────
 // MAIN RENDER
@@ -3157,6 +3223,33 @@ function renderEffects(container, group, tCvrDelta, tDelta, tPrevConv) {
   });
   container.appendChild(lpBtn);
   container.appendChild(drillDiv);
+
+  // Ad × LP view. Separate query (Shopify has to re-group by utm_content), so
+  // it loads only when opened. '(empty)' isn't a filterable campaign value.
+  const adBtn = document.createElement('button');
+  adBtn.className = 'lp-btn';
+  adBtn.style.marginLeft = '6px';
+  const AD_BTN_LABEL = '↳ Break down by ad × landing page';
+  adBtn.textContent = AD_BTN_LABEL;
+  const adDrillDiv = document.createElement('div');
+  adDrillDiv.className = 'drill-panel';
+  if (group.campaign === '(empty)') {
+    adBtn.disabled = true;
+    adBtn.style.opacity = '0.5';
+    adBtn.style.cursor = 'not-allowed';
+    adBtn.title = 'Rows with no utm_campaign can\'t be re-queried by campaign.';
+  } else {
+    adBtn.addEventListener('click', () => {
+      const open = adDrillDiv.classList.toggle('open');
+      adBtn.textContent = open ? '↑ Hide ads' : AD_BTN_LABEL;
+      if (open && !adDrillDiv.dataset.loaded) {
+        adDrillDiv.dataset.loaded = '1';
+        renderAdLpDrill(adDrillDiv, group.campaign);
+      }
+    });
+  }
+  container.appendChild(adBtn);
+  container.appendChild(adDrillDiv);
 }
 
 function renderDrillDown(container, campaign, tDelta, tPrevConv) {
@@ -3196,6 +3289,206 @@ function renderDrillDown(container, campaign, tDelta, tPrevConv) {
       </div>`;
   }).join('');
   container.innerHTML = `<div class="drill-header">Landing page breakdown · ${contribs.length} row${contribs.length !== 1 ? 's' : ''}</div>${html}`;
+}
+
+// ─────────────────────────────────────────────
+// AD × LP DRILL-DOWN (contributors table)
+// ─────────────────────────────────────────────
+// Shopify only records the ad NAME (utm_content); Ads Manager addresses ads by
+// id. Fetch the range's ad list once and join on name so each drill row can link
+// out. FB-auth-gated and entirely optional: without it rows just render unlinked.
+function normAdName(s) {
+  return String(s || '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function ensureAdIndex() {
+  if (_adIndex) return Promise.resolve(_adIndex);
+  if (_adIndexPromise) return _adIndexPromise;
+  const ctx = _queryCtx;
+  if (!ctx) return Promise.resolve({ map: new Map(), accountId: null, error: 'No query context' });
+
+  _adIndexPromise = (async () => {
+    try {
+      const params = new URLSearchParams({ start: ctx.start, end: ctx.end });
+      const resp = await fetch(`/api/meta-ad-index?${params.toString()}`);
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${resp.status}`);
+      }
+      const data = await resp.json();
+      const map = new Map();
+      for (const a of (data.ads || [])) {
+        if (!a.ad_name || !a.ad_id) continue;
+        const k = normAdName(a.ad_name);
+        // Same name can exist in several ad sets; keep the highest-spend id so
+        // the link lands on the ad that actually drove the traffic.
+        const prev = map.get(k);
+        if (!prev || (a.spend || 0) > (prev.spend || 0)) {
+          map.set(k, { ad_id: a.ad_id, campaign_name: a.campaign_name, spend: a.spend || 0 });
+        }
+      }
+      _adIndex = { map, accountId: data.account_id || null, error: null, truncated: !!data.truncated };
+      return _adIndex;
+    } catch (e) {
+      // 401 = not logged into Facebook on this page. Not fatal.
+      _adIndex = { map: new Map(), accountId: null, error: e.message };
+      return _adIndex;
+    }
+  })();
+  return _adIndexPromise;
+}
+
+function adsManagerUrl(accountId, adId) {
+  if (!accountId || !adId) return null;
+  const act = String(accountId).replace(/^act_/, '');
+  return `https://adsmanager.facebook.com/adsmanager/manage/ads`
+    + `?act=${encodeURIComponent(act)}`
+    + `&selected_ad_ids=${encodeURIComponent(adId)}`;
+}
+
+async function fetchCampaignAdLp(campaign) {
+  if (_adLpDrillCache.has(campaign)) return _adLpDrillCache.get(campaign);
+  const ctx = _queryCtx;
+  if (!ctx) throw new Error('No query context — reload the data first.');
+
+  const params = new URLSearchParams({
+    start: ctx.start, end: ctx.end, campaign,
+    source: ctx.source, medium: ctx.medium,
+  });
+  if (ctx.compareStart && ctx.compareEnd) {
+    params.set('compare_start', ctx.compareStart);
+    params.set('compare_end', ctx.compareEnd);
+  }
+  const resp = await fetch(`/api/meta-campaign-ad-lp-data?${params.toString()}`);
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.error || `HTTP ${resp.status}`);
+  }
+  const data = await resp.json();
+  if (data.query) console.log('[ShopifyQL · ad×LP drill]\n' + data.query);
+  const rows = parseAdLpQL(data);          // reuses the Ad × LP card's parser
+  const out = { rows, truncated: !!data.truncated };
+  _adLpDrillCache.set(campaign, out);
+  return out;
+}
+
+// One row per ad × landing-page pair inside a campaign, carrying the same
+// shift-share decomposition the parent contributors table uses — except the
+// baseline is the CAMPAIGN's blended CVR, so the impacts sum to that campaign's
+// own ΔCVR rather than the account's.
+function renderAdLpDrill(container, campaign) {
+  container.innerHTML = `<div class="adrill-note">Loading ad × landing-page breakdown…</div>`;
+
+  Promise.all([fetchCampaignAdLp(campaign), ensureAdIndex()]).then(([{ rows, truncated }, adIdx]) => {
+    if (rows.length === 0) {
+      container.innerHTML = `<div class="adrill-note">No ad × landing-page rows for this campaign. Shopify records the ad name in <code>utm_content</code> — if the ads don't pass it, this breakdown stays empty.</div>`;
+      return;
+    }
+
+    const cPrevS = rows.reduce((a, r) => a + r.prevSess, 0);
+    const cCurrS = rows.reduce((a, r) => a + r.currS, 0);
+    const cPrevT = rows.reduce((a, r) => a + r.prevSess * r.prevCvr, 0);
+    const cCurrT = rows.reduce((a, r) => a + r.currS * r.currC, 0);
+    const cPrevCvr = cPrevS > 0 ? cPrevT / cPrevS : 0;
+    const cCurrCvr = cCurrS > 0 ? cCurrT / cCurrS : 0;
+    const cCvrDelta = cCurrCvr - cPrevCvr;
+
+    const groups = rows.map(r => {
+      const prevShare = cPrevS > 0 ? r.prevSess / cPrevS : 0;
+      const currShare = cCurrS > 0 ? r.currS / cCurrS : 0;
+      const dCvr = r.currC - r.prevCvr;
+      const within  = prevShare * dCvr;
+      const between = (currShare - prevShare) * (r.currC - cCurrCvr);
+      return {
+        ...r,
+        sessDelta: r.currS - r.prevSess,
+        dCvr,
+        within, between,
+        cvrImpact: within + between,
+        txnDelta: Math.round(r.currS * r.currC) - Math.round(r.prevSess * r.prevCvr),
+      };
+    }).sort((a, b) => Math.abs(b.cvrImpact) - Math.abs(a.cvrImpact));
+
+    const PAGE = 25;
+    let shown = Math.min(PAGE, groups.length);
+
+    const linkFor = (adName) => {
+      const hit = adIdx.map.get(normAdName(adName));
+      return hit ? adsManagerUrl(adIdx.accountId, hit.ad_id) : null;
+    };
+
+    const rowHtml = (g) => {
+      const url = linkFor(g.ad);
+      const adLabel = g.ad || '(no utm_content)';
+      const nameCell = url
+        ? `<a href="${url}" target="_blank" rel="noopener" title="Open in Ads Manager: ${esc(adLabel)}">${esc(adLabel)}<span class="adrill-ext">↗</span></a>`
+        : `${esc(adLabel)}<span class="adrill-noad" title="No Meta ad matched this utm_content for ${esc(_queryCtx?.start || '')} → ${esc(_queryCtx?.end || '')}${adIdx.error ? ' · ad index unavailable: ' + esc(adIdx.error) : ' · the ad name may have changed, or it spent nothing in this window'}">no link</span>`;
+      const sPos = g.sessDelta >= 0;
+
+      // A pair with traffic in only ONE period has no meaningful CVR *change* —
+      // its whole impact is share-shift. Label it so a 0.00% cell doesn't read as
+      // missing data (retired pairs are often the biggest movers).
+      const retired = g.currS === 0 && g.prevSess > 0;
+      const brandNew = g.prevSess === 0 && g.currS > 0;
+      const tag = retired
+        ? `<span class="adrill-tag adrill-tag--off" title="No sessions in the current window — this pair stopped. Its impact is entirely share-shift: ${fmtN(Math.round(g.prevSess))} prior sessions at ${(g.prevCvr * 100).toFixed(2)}% left the mix.">retired</span>`
+        : brandNew
+          ? `<span class="adrill-tag adrill-tag--new" title="No sessions in the comparison window — this pair is new, so there's no prior CVR to compare against. Its impact is entirely share-shift.">new</span>`
+          : '';
+
+      return `
+        <div class="adrill-row">
+          <div class="adrill-name">
+            <div class="adrill-ad">${nameCell}${tag}</div>
+            <div class="adrill-lp" title="${esc(g.lp)}">${esc(g.lp || '(no path)')}</div>
+          </div>
+          <div class="r">${fmtN(Math.round(g.currS))}</div>
+          <div class="r" style="font-weight:600;color:${g.sessDelta === 0 ? 'var(--text-secondary)' : (sPos ? 'var(--positive)' : 'var(--negative)')}" title="${fmtN(Math.round(g.prevSess))} → ${fmtN(Math.round(g.currS))} sessions">${g.sessDelta === 0 ? '0' : (sPos ? '+' : '−') + fmtN(Math.abs(Math.round(g.sessDelta)))}</div>
+          <div class="r"${retired ? ' style="color:var(--text-secondary)" title="No current sessions"' : ''}>${retired ? '—' : (g.currC * 100).toFixed(2) + '%'}</div>
+          <div class="r ${retired || brandNew ? '' : cls(g.dCvr)}" style="font-weight:600${retired || brandNew ? ';color:var(--text-secondary)' : ''}" title="CVR ${(g.prevCvr * 100).toFixed(2)}% → ${retired ? 'no traffic' : (g.currC * 100).toFixed(2) + '%'}">${retired || brandNew ? '—' : fmtPP(g.dCvr * 100)}</div>
+          <div class="r ${cls(g.txnDelta)}">${fmtS(g.txnDelta)}</div>
+          <div class="r contrib-val ${cls(g.cvrImpact)}" style="font-size:0.78rem" title="Own-CVR effect ${fmtPP(g.within * 100)} + share-shift effect ${fmtPP(g.between * 100)} = ${fmtPP(g.cvrImpact * 100)}. Sums across all ad × LP rows to this campaign's ΔCVR of ${fmtPP(cCvrDelta * 100)}.">${fmtPP(g.cvrImpact * 100)}</div>
+        </div>`;
+    };
+
+    const paint = () => {
+      const header = `
+        <div class="adrill-row adrill-row--header">
+          <div>Ad (utm_content) ↳ Landing page</div>
+          <div class="r">Sessions</div>
+          <div class="r" title="Session change vs the comparison window">Sess Δ</div>
+          <div class="r">CVR</div>
+          <div class="r" title="This pair's own CVR change in pp">CVR Δ</div>
+          <div class="r" title="Transaction change vs the comparison window">Txns Δ</div>
+          <div class="r" title="Contribution in pp to THIS campaign's CVR change (own-CVR effect + share-shift effect)">CVR Impact</div>
+        </div>`;
+      const body = groups.slice(0, shown).map(rowHtml).join('');
+      const more = shown < groups.length
+        ? `<button class="adrill-more" type="button">Show all ${groups.length} pairs</button>`
+        : '';
+      const linkedCount = groups.filter(g => linkFor(g.ad)).length;
+      const notes = [];
+      notes.push(`Impacts are measured against <strong>this campaign</strong>: CVR ${(cPrevCvr * 100).toFixed(2)}% → ${(cCurrCvr * 100).toFixed(2)}% (<span class="${cls(cCvrDelta)}">${fmtPP(cCvrDelta * 100)}</span>) on ${fmtN(Math.round(cPrevS))} → ${fmtN(Math.round(cCurrS))} sessions. The CVR Impact column sums to that ΔCVR.`);
+      if (adIdx.error) {
+        notes.push(`Ad links unavailable (${esc(adIdx.error)}) — <a href="/auth/facebook" style="color:var(--fb-blue)">log in to Facebook</a> to deep-link each ad into Ads Manager.`);
+      } else if (linkedCount < groups.length) {
+        notes.push(`${linkedCount} of ${groups.length} ad names matched a Meta ad that spent in this window; the rest show <em>no link</em>.`);
+      }
+      if (truncated) notes.push(`⚠ Shopify returned the maximum 1000 rows for this campaign — the tail is cut off.`);
+
+      container.innerHTML = `
+        <div class="drill-header">Ad × landing page · ${groups.length} pair${groups.length !== 1 ? 's' : ''} · sorted by |CVR impact|</div>
+        <div class="adrill-scroll"><div class="adrill-table">${header}${body}</div></div>
+        ${more}
+        <div class="adrill-note">${notes.join('<br>')}</div>`;
+
+      const moreBtn = container.querySelector('.adrill-more');
+      if (moreBtn) moreBtn.addEventListener('click', () => { shown = groups.length; paint(); });
+    };
+    paint();
+  }).catch(e => {
+    container.innerHTML = `<div class="adrill-note" style="color:var(--negative)">Could not load ad × landing-page breakdown: ${esc(e.message)}</div>`;
+  });
 }
 
 // ─────────────────────────────────────────────
@@ -3961,6 +4254,18 @@ async function loadFromShopify() {
     const data = await resp.json();
     if (data.query) console.log('[ShopifyQL]\n' + data.query);
     if (data.compare_query) console.log('[ShopifyQL · compare]\n' + data.compare_query);
+
+    // Record the window/filters so the per-campaign ad × LP drill re-queries on
+    // exactly the same basis, and drop caches keyed to the previous pull.
+    _queryCtx = {
+      start: startDate, end: endDate, source, medium,
+      compareStart: useCustomCompare ? compareStart : null,
+      compareEnd:   useCustomCompare ? compareEnd   : null,
+    };
+    _adLpDrillCache = new Map();
+    _adIndex = null;
+    _adIndexPromise = null;
+
     status.textContent = 'Parsing response…';
     const rows = parseShopifyQL(data);
     const compareLabel = useCustomCompare

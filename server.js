@@ -1792,6 +1792,16 @@ app.get('/api/meta-cvr-impact-data', async (req, res) => {
   // work, returns the full column shape the frontend parser expects. When a
   // custom compare window is supplied, we run a second query for that range
   // and OVERWRITE the previous_period values in each main row.
+  // ShopifyQL pages at 1000 rows by DEFAULT, and `ORDER BY sessions DESC` keeps
+  // the rows with the most CURRENT sessions — so the dropped tail is dominated by
+  // campaign × LP pairs that had prior-period traffic and little current traffic.
+  // Measured on a 30-day pull: the default cap returned 1000 of 2014 rows and lost
+  // 15% of previous-period sessions while losing only 0.04% of current ones, which
+  // biases every per-campaign CVR delta. An explicit high LIMIT fixes that.
+  // `WITH TOTALS` values are computed over the full dataset either way (verified
+  // identical with and without the LIMIT), so the headline KPIs don't move.
+  const ROW_LIMIT = 5000;
+
   const mainQuery = `FROM sessions
   SHOW sessions, conversion_rate, average_session_duration, sessions_with_cart_additions, sessions_that_reached_checkout, sessions_that_reached_and_completed_checkout
   WHERE utm_source = '${source}' AND utm_medium = '${medium}'
@@ -1799,6 +1809,7 @@ app.get('/api/meta-cvr-impact-data', async (req, res) => {
   SINCE ${start} UNTIL ${end}
   COMPARE TO previous_period
   ORDER BY sessions DESC
+  LIMIT ${ROW_LIMIT}
 VISUALIZE conversion_rate TYPE table`;
 
   const compareQuery = useCustomCompare ? `FROM sessions
@@ -1806,7 +1817,8 @@ VISUALIZE conversion_rate TYPE table`;
   WHERE utm_source = '${source}' AND utm_medium = '${medium}'
   GROUP BY utm_campaign, landing_page_path WITH TOTALS
   SINCE ${cs} UNTIL ${ce}
-  ORDER BY sessions DESC` : null;
+  ORDER BY sessions DESC
+  LIMIT ${ROW_LIMIT}` : null;
 
   // Trailing 7-day window ENDING on the range's End date, for a rolling
   // 7-day-average CVR per campaign+lp. Independent of the compare window;
@@ -1821,7 +1833,8 @@ VISUALIZE conversion_rate TYPE table`;
   WHERE utm_source = '${source}' AND utm_medium = '${medium}'
   GROUP BY utm_campaign, landing_page_path WITH TOTALS
   SINCE ${sevenStart} UNTIL ${end}
-  ORDER BY sessions DESC`;
+  ORDER BY sessions DESC
+  LIMIT ${ROW_LIMIT}`;
 
   console.log('\n[meta-cvr-impact-data] Main query:\n' + mainQuery);
   if (compareQuery) console.log('\n[meta-cvr-impact-data] Compare query:\n' + compareQuery);
@@ -2027,6 +2040,222 @@ VISUALIZE conversion_rate TYPE table`;
     });
   } catch (err) {
     console.error('Meta ad-lp data error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Ad × LP breakdown for ONE campaign (contributors drill-down) ---
+//
+// Powers the "break down by ad × landing page" drill on the Meta CVR page's
+// contributors table. Deliberately scoped to a single utm_campaign and fetched
+// lazily rather than pulling every campaign × ad × LP combination up front:
+// grouping three dimensions across the whole account blows past ShopifyQL's
+// 1000-row default page (a 30-day pull is >5000 combinations), so an upfront
+// query would be both huge and silently truncated. One campaign is ~150 rows.
+//
+// Honours the same custom-compare contract as /api/meta-cvr-impact-data so the
+// drill's Δ values line up with the parent row the user expanded.
+app.get('/api/meta-campaign-ad-lp-data', async (req, res) => {
+  if (!SHOPIFY_URL || !SHOPIFY_TOKEN) {
+    return res.status(500).json({ error: 'Shopify credentials not configured' });
+  }
+
+  const { start, end, campaign } = req.query;
+  if (!start || !end || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+    return res.status(400).json({ error: 'start and end query params required (YYYY-MM-DD)' });
+  }
+  if (typeof campaign !== 'string' || !campaign.trim()) {
+    return res.status(400).json({ error: 'campaign query param required' });
+  }
+
+  const escapeQL = (v) => String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  const source   = escapeQL(req.query.source || 'facebook');
+  const medium   = escapeQL(req.query.medium || 'paid_social');
+  const campQL   = escapeQL(campaign);
+
+  const cs = req.query.compare_start;
+  const ce = req.query.compare_end;
+  const useCustomCompare = cs && ce
+    && /^\d{4}-\d{2}-\d{2}$/.test(cs) && /^\d{4}-\d{2}-\d{2}$/.test(ce);
+
+  // 1000 is ShopifyQL's default page size; a single campaign stays far below it,
+  // but ask explicitly so a pathological campaign truncates predictably and the
+  // response can flag it.
+  const ROW_LIMIT = 1000;
+  const WHERE = `WHERE utm_source = '${source}' AND utm_medium = '${medium}' AND utm_campaign = '${campQL}'`;
+
+  const mainQuery = `FROM sessions
+  SHOW sessions, conversion_rate
+  ${WHERE}
+  GROUP BY utm_content, landing_page_path
+  SINCE ${start} UNTIL ${end}
+  COMPARE TO previous_period
+  ORDER BY sessions DESC
+  LIMIT ${ROW_LIMIT}`;
+
+  const compareQuery = useCustomCompare ? `FROM sessions
+  SHOW sessions, conversion_rate
+  ${WHERE}
+  GROUP BY utm_content, landing_page_path
+  SINCE ${cs} UNTIL ${ce}
+  ORDER BY sessions DESC
+  LIMIT ${ROW_LIMIT}` : null;
+
+  const endpoint = `https://${SHOPIFY_URL}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
+  const gqlQuery = `query RunShopifyQL($q: String!) {
+    shopifyqlQuery(query: $q) {
+      tableData { columns { name dataType } rows }
+      parseErrors
+    }
+  }`;
+
+  const runShopifyQL = async (q) => {
+    const resp = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
+      body: JSON.stringify({ query: gqlQuery, variables: { q } }),
+    });
+    const json = await resp.json();
+    const payload = json.data?.shopifyqlQuery;
+    if (payload?.parseErrors?.length) {
+      const err = new Error('ShopifyQL parse error: ' + JSON.stringify(payload.parseErrors));
+      err.parseErrors = payload.parseErrors;
+      throw err;
+    }
+    if (!payload?.tableData) throw new Error('No data returned from Shopify');
+    return payload.tableData;
+  };
+
+  try {
+    const [main, compare] = await Promise.all([
+      runShopifyQL(mainQuery),
+      compareQuery ? runShopifyQL(compareQuery) : Promise.resolve(null),
+    ]);
+
+    const base = {
+      query: mainQuery,
+      filter: { source, medium, campaign },
+      truncated: main.rows.length >= ROW_LIMIT,
+      row_limit: ROW_LIMIT,
+      columns: main.columns,
+    };
+
+    if (!compare) return res.json({ ...base, rows: main.rows });
+
+    // Same swap-in-place merge as /api/meta-cvr-impact-data: overwrite the
+    // built-in previous_period cells with the custom window's numbers, keyed on
+    // utm_content × landing_page_path, so the column shape stays identical.
+    const mainColNames = main.columns.map(c => c.name);
+    const cmpColNames  = compare.columns.map(c => c.name);
+    const toArray = (row, names) => {
+      if (Array.isArray(row)) return row;
+      if (row && typeof row === 'object') return names.map(n => row[n]);
+      return [];
+    };
+    const cols    = mainColNames.map(n => (n || '').toLowerCase());
+    const cmpCols = cmpColNames.map(n => (n || '').toLowerCase());
+    const idx = (arr, n) => arr.findIndex(s => s === n);
+
+    const iAd          = idx(cols, 'utm_content');
+    const iLp          = idx(cols, 'landing_page_path');
+    const iMainPrevS   = idx(cols, 'comparison_sessions__previous_period');
+    const iMainPrevCvr = idx(cols, 'comparison_conversion_rate__previous_period');
+    const cmpIAd       = idx(cmpCols, 'utm_content');
+    const cmpILp       = idx(cmpCols, 'landing_page_path');
+    const cmpISess     = idx(cmpCols, 'sessions');
+    const cmpICvr      = idx(cmpCols, 'conversion_rate');
+
+    const cmpMap = new Map();
+    for (const row of compare.rows) {
+      const arr = toArray(row, cmpColNames);
+      const a = String(arr[cmpIAd] ?? '').trim();
+      const l = String(arr[cmpILp] ?? '').trim();
+      if (!a && !l) continue;
+      cmpMap.set(a + '||' + l, arr);
+    }
+
+    let matched = 0, unmatched = 0;
+    const newRows = main.rows.map(row => {
+      const arr = toArray(row, mainColNames).slice();
+      const a = String(arr[iAd] ?? '').trim();
+      const l = String(arr[iLp] ?? '').trim();
+      const cmpRow = cmpMap.get(a + '||' + l);
+      if (cmpRow) matched++; else unmatched++;
+      if (iMainPrevS >= 0)   arr[iMainPrevS]   = cmpRow != null && cmpISess >= 0 ? cmpRow[cmpISess] : null;
+      if (iMainPrevCvr >= 0) arr[iMainPrevCvr] = cmpRow != null && cmpICvr  >= 0 ? cmpRow[cmpICvr]  : null;
+      return arr;
+    });
+
+    res.json({
+      ...base,
+      compare_query: compareQuery,
+      compare_window: { start: cs, end: ce },
+      merge_stats: { main_rows: main.rows.length, compare_rows: compare.rows.length, matched_keys: matched, unmatched_keys: unmatched },
+      rows: newRows,
+    });
+  } catch (err) {
+    console.error('[meta-campaign-ad-lp-data] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Ad-name → ad_id index, so dashboards can deep-link a utm_content to Meta ---
+//
+// Shopify only knows the ad NAME (utm_content). Ads Manager needs the ad ID, so
+// this returns a lean {ad_id, ad_name, campaign_name, spend} list for the range
+// and lets the client join on name. Deliberately minimal fields — 4 fields at
+// limit=200 pages fast, unlike /api/diag-meta's full insight payload.
+app.get('/api/meta-ad-index', requireAuth, async (req, res) => {
+  const { start, end } = req.query;
+  if (!start || !end || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+    return res.status(400).json({ error: 'start and end query params required (YYYY-MM-DD)' });
+  }
+  try {
+    let accountId = req.query.account_id;
+    if (!accountId) {
+      const accResp = await fetch(`${META_BASE_URL}/me/adaccounts?fields=id,name&limit=1&${metaParams(req.accessToken)}`);
+      const accData = await accResp.json();
+      const first = accData.data && accData.data[0];
+      if (!first) return res.status(404).json({ error: 'No ad accounts available for this Facebook user' });
+      accountId = first.id;
+    }
+
+    // Meta's `next` URL keeps access_token but drops appsecret_proof.
+    const proof = generateAppSecretProof(req.accessToken);
+    const ensureProof = (u) => u.includes('appsecret_proof=') ? u : (u + `&appsecret_proof=${proof}`);
+
+    let next = `${META_BASE_URL}/${accountId}/insights`
+      + `?fields=ad_id,ad_name,campaign_name,spend`
+      + `&time_range=${encodeURIComponent(JSON.stringify({ since: start, until: end }))}`
+      + `&level=ad&time_increment=all_days`
+      + `&filtering=${encodeURIComponent(JSON.stringify([{ field: 'spend', operator: 'GREATER_THAN', value: 0 }]))}`
+      + `&limit=200`
+      + `&${metaParams(req.accessToken)}`;
+
+    const ads = [];
+    let pageCount = 0;
+    while (next && pageCount < 30) {
+      const data = await (await fetch(ensureProof(next), { signal: AbortSignal.timeout(20000) })).json();
+      if (data.error) {
+        if (data.error.code === 190) { clearTokenCookie(res); return res.status(401).json({ error: 'Session expired' }); }
+        throw new Error(data.error.message || 'Meta insights error');
+      }
+      for (const a of (data.data || [])) {
+        ads.push({
+          ad_id: a.ad_id,
+          ad_name: a.ad_name || '',
+          campaign_name: a.campaign_name || '',
+          spend: parseFloat(a.spend) || 0,
+        });
+      }
+      next = data.paging?.next || null;
+      pageCount += 1;
+    }
+
+    res.json({ account_id: accountId, range: { start, end }, ads, truncated: !!next });
+  } catch (err) {
+    console.error('[meta-ad-index] error:', err);
+    if (err.status === 401) return res.status(401).json({ error: err.message });
     res.status(500).json({ error: err.message });
   }
 });
