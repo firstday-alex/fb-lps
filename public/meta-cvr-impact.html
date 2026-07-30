@@ -592,6 +592,21 @@
       word-break: break-all; margin-top: 1px;
     }
     .adrill-lp::before { content: '↳ '; }
+    .adrill-preview {
+      display: inline-block; margin-left: 5px; padding: 1px 6px;
+      background: #eef3ff; color: var(--fb-blue); border-radius: 3px;
+      font-size: 0.66rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.03em; text-decoration: none; vertical-align: 1px;
+      white-space: nowrap;
+    }
+    .adrill-preview:hover { background: var(--fb-blue); color: #fff; }
+    .adrill-preview--fallback { background: #f3f0e8; color: #8a6d3b; }
+    .adrill-preview--fallback:hover { background: #8a6d3b; color: #fff; }
+    .adrill-pending {
+      display: inline-block; margin-left: 5px; font-size: 0.66rem;
+      color: var(--text-secondary); font-style: italic; white-space: nowrap;
+      opacity: 0.75;
+    }
     .adrill-noad {
       font-size: 0.66rem; color: var(--text-secondary); font-weight: 400;
       margin-left: 4px; cursor: help; border-bottom: 1px dotted var(--text-secondary);
@@ -1611,11 +1626,9 @@ let _rawRows = [];
 // contributors row the user expanded.
 let _queryCtx = null;   // { start, end, source, medium, compareStart, compareEnd }
 
-// Cache for the lazy per-campaign ad × LP pulls, keyed by campaign name, plus
-// the ad-name → ad_id index used to deep-link into Ads Manager.
+// Cache for the lazy per-campaign ad × LP pulls, keyed by campaign name. (Ad
+// preview links have their own persistent caches — see the resolver below.)
 let _adLpDrillCache = new Map();
-let _adIndex = null;    // { map: Map(normName → {ad_id, campaign_name}), accountId, error }
-let _adIndexPromise = null;
 
 // ─────────────────────────────────────────────
 // MAIN RENDER
@@ -3318,73 +3331,190 @@ function renderDrillDown(container, campaign, tDelta, tPrevConv) {
 // ─────────────────────────────────────────────
 // AD × LP DRILL-DOWN (contributors table)
 // ─────────────────────────────────────────────
-// Shopify only records the ad NAME (utm_content); Ads Manager addresses ads by
-// id. Fetch the range's ad list once and join on name so each drill row can link
-// out. FB-auth-gated and entirely optional: without it rows just render unlinked.
+// Shopify only records the ad NAME (utm_content); Meta addresses ads by id. The
+// unfiltered ad-level bulk pull times out chronically, so each row is resolved
+// individually through two reliable calls (name → id → creative preview URL),
+// driven by a small background queue with persistent caches. Rows render
+// immediately with a placeholder and upgrade to real links as they land.
 function normAdName(s) {
   return String(s || '').trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
-function ensureAdIndex() {
-  if (_adIndex) return Promise.resolve(_adIndex);
-  if (_adIndexPromise) return _adIndexPromise;
-  const ctx = _queryCtx;
-  if (!ctx) return Promise.resolve({ map: new Map(), accountId: null, error: 'No query context' });
+// Bump the version whenever the matching logic changes — that drops previously
+// cached (possibly wrong) ids instead of serving them forever.
+const AD_LINK_CACHE_V = 'v1';
+const AD_ID_TTL   = 24 * 60 * 60 * 1000;   // name → ad id
+const AD_PREV_TTL = 20 * 60 * 60 * 1000;   // name → preview URL
 
-  _adIndexPromise = (async () => {
-    try {
-      const params = new URLSearchParams({ start: ctx.start, end: ctx.end });
-      // Escape hatch: ?ad_account=act_123 on the page URL forces which Meta ad
-      // account the index is built from.
-      const acctOverride = new URLSearchParams(location.search).get('ad_account');
-      if (acctOverride) params.set('account_id', acctOverride);
-      const resp = await fetch(`/api/meta-ad-index?${params.toString()}`);
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({}));
-        const e = new Error(err.error || `HTTP ${resp.status}`);
-        e.status = resp.status;
-        throw e;
-      }
-      const data = await resp.json();
-      const map = new Map();
-      const byId = new Map();
-      for (const a of (data.ads || [])) {
-        if (!a.ad_name || !a.ad_id) continue;
-        byId.set(String(a.ad_id), a);
-        const k = normAdName(a.ad_name);
-        // Same name can exist in several ad sets; keep the highest-spend id so
-        // the link lands on the ad that actually drove the traffic.
-        const prev = map.get(k);
-        if (!prev || (a.spend || 0) > (prev.spend || 0)) {
-          map.set(k, { ad_id: a.ad_id, campaign_name: a.campaign_name, spend: a.spend || 0 });
-        }
-      }
-      _adIndex = {
-        map, byId,
-        accountId: data.account_id || null,
-        accountName: data.account_name || null,
-        accountsConsidered: data.accounts_considered || 1,
-        pickedBy: data.account_picked_by || null,
-        adCount: (data.ads || []).length,
-        error: null,
-        truncated: !!data.truncated,
-      };
-      return _adIndex;
-    } catch (e) {
-      // 401 = not logged into Facebook on this page. Not fatal.
-      _adIndex = { map: new Map(), byId: new Map(), accountId: null, adCount: 0, error: e.message, status: e.status };
-      return _adIndex;
-    }
-  })();
-  return _adIndexPromise;
+function _lsGet(key) {
+  try { return JSON.parse(localStorage.getItem(key) || '{}'); } catch { return {}; }
+}
+function _lsSet(key, obj) {
+  try { localStorage.setItem(key, JSON.stringify(obj)); } catch {}
+}
+const _AD_ID_KEY   = `adlink:${AD_LINK_CACHE_V}:id`;
+const _AD_PREV_KEY = `adlink:${AD_LINK_CACHE_V}:preview`;
+
+function cachedAdId(name) {
+  const e = _lsGet(_AD_ID_KEY)[normAdName(name)];
+  return e && (Date.now() - e.ts) < AD_ID_TTL ? e.ad_id : null;
+}
+function cacheAdId(name, adId) {
+  const all = _lsGet(_AD_ID_KEY);
+  all[normAdName(name)] = { ad_id: adId, ts: Date.now() };
+  _lsSet(_AD_ID_KEY, all);
+}
+function invalidateAdId(name) {
+  const all = _lsGet(_AD_ID_KEY);
+  delete all[normAdName(name)];
+  _lsSet(_AD_ID_KEY, all);
+}
+function cachedPreview(name) {
+  const e = _lsGet(_AD_PREV_KEY)[normAdName(name)];
+  return e && (Date.now() - e.ts) < AD_PREV_TTL ? e : null;
+}
+function cachePreview(name, url, adId) {
+  const all = _lsGet(_AD_PREV_KEY);
+  all[normAdName(name)] = { url, ad_id: adId, ts: Date.now() };
+  _lsSet(_AD_PREV_KEY, all);
 }
 
 function adsManagerUrl(accountId, adId) {
-  if (!accountId || !adId) return null;
-  const act = String(accountId).replace(/^act_/, '');
+  if (!adId) return null;
+  const act = String(accountId || '').replace(/^act_/, '');
   return `https://adsmanager.facebook.com/adsmanager/manage/ads`
-    + `?act=${encodeURIComponent(act)}`
-    + `&selected_ad_ids=${encodeURIComponent(adId)}`;
+    + (act ? `?act=${encodeURIComponent(act)}&` : '?')
+    + `selected_ad_ids=${encodeURIComponent(adId)}`;
+}
+
+// A DOM-safe key for an ad name: encodeURIComponent output is safe both as an
+// attribute value and inside an attribute selector.
+function adDomKey(name) {
+  return encodeURIComponent(normAdName(name));
+}
+
+// ── Background resolver ──────────────────────────────────────────────────────
+// Two workers, ~150ms apart. Failures go to the BACK of the queue (max 3 tries)
+// rather than retrying inline, so one 10s timeout can't stall everything behind
+// it. State is module-level so re-renders (e.g. re-sorting) reuse it.
+const _adLink = {
+  queue: [],
+  seen: new Set(),        // names ever enqueued this session
+  attempts: new Map(),    // name → tries
+  // Terminal outcomes, so a repaint (sort click, progress tick, "show all")
+  // doesn't reset a resolved failure back to "resolving…" forever.
+  terminal: new Map(),    // name → { kind: 'adsmanager'|'none', url, adId }
+  running: 0,
+  accountId: null,
+  lastError: null,
+  authFailed: false,
+  resolved: 0,
+  failed: 0,
+  onProgress: null,
+};
+
+function adLinkEnqueue(names) {
+  if (_adLink.authFailed) return;          // no point hammering a 401
+  for (const n of names) {
+    if (!n) continue;
+    const k = normAdName(n);
+    if (_adLink.seen.has(k)) continue;
+    _adLink.seen.add(k);
+    _adLink.queue.push(n);
+  }
+  const workers = Math.min(2, _adLink.queue.length);
+  while (_adLink.running < workers) {
+    _adLink.running++;
+    adLinkWorker().finally(() => { _adLink.running--; });
+  }
+}
+
+async function adLinkWorker() {
+  while (_adLink.queue.length) {
+    const name = _adLink.queue.shift();
+    const tries = (_adLink.attempts.get(normAdName(name)) || 0) + 1;
+    _adLink.attempts.set(normAdName(name), tries);
+    try {
+      const url = await resolveAdPreview(name);
+      if (url) {
+        _adLink.resolved++;
+        applyAdLink(name, url, cachedAdId(name), 'preview');
+      }
+    } catch (e) {
+      if (e.status === 401) {
+        // Auth is a whole-session problem, not a per-row one: stop the queue.
+        _adLink.authFailed = true;
+        _adLink.lastError = e.message;
+        _adLink.queue.length = 0;
+        if (_adLink.onProgress) _adLink.onProgress();
+        return;
+      }
+      _adLink.lastError = e.message;
+      // Grab the id BEFORE invalidating — a failed *preview* call still leaves a
+      // perfectly good id to deep-link Ads Manager with.
+      const knownId = cachedAdId(name);
+      invalidateAdId(name);                       // force a fresh lookup next try
+      if (tries < 3) {
+        _adLink.queue.push(name);                 // back of the queue, not inline
+      } else {
+        _adLink.failed++;
+        // Terminal: if we ever learned an id, deep-link Ads Manager instead of
+        // guessing. Keeps the name so a later pass can still self-heal.
+        applyAdLink(name, knownId ? adsManagerUrl(_adLink.accountId, knownId) : null, knownId, knownId ? 'adsmanager' : 'none');
+      }
+    }
+    if (_adLink.onProgress) _adLink.onProgress();
+    await new Promise(r => setTimeout(r, 150));
+  }
+}
+
+// name → ad id → preview URL, reusing whatever is already cached.
+async function resolveAdPreview(name) {
+  const hit = cachedPreview(name);
+  if (hit) return hit.url;
+
+  let adId = cachedAdId(name);
+  if (!adId) {
+    const params = new URLSearchParams({ name });
+    if (_queryCtx?.end) params.set('end', _queryCtx.end);
+    const acctOverride = new URLSearchParams(location.search).get('ad_account');
+    if (acctOverride) params.set('account_id', acctOverride);
+    const r = await fetch(`/api/meta-ad-lookup?${params.toString()}`);
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw Object.assign(new Error(j.error || `lookup HTTP ${r.status}`), { status: r.status, needle: j.needle });
+    adId = j.ad_id;
+    if (j.account_id) _adLink.accountId = j.account_id;
+    cacheAdId(name, adId);
+  }
+
+  const pr = await fetch(`/api/meta-ad-creative-preview?ad_id=${encodeURIComponent(adId)}`);
+  const pj = await pr.json().catch(() => ({}));
+  if (!pr.ok) throw Object.assign(new Error(pj.error || `preview HTTP ${pr.status}`), { status: pr.status });
+  cachePreview(name, pj.preview_url, adId);
+  return pj.preview_url;
+}
+
+// Swap every placeholder for this ad name (a name can appear on several LP rows).
+function applyAdLink(name, url, adId, kind) {
+  const key = adDomKey(name);
+  // Remember non-preview outcomes so re-renders reproduce them (preview hits are
+  // already persisted in localStorage and picked up by the render path).
+  if (kind === 'preview') _adLink.terminal.delete(normAdName(name));
+  else _adLink.terminal.set(normAdName(name), { kind, url, adId });
+  document.querySelectorAll(`[data-adkey="${key}"]`).forEach(el => {
+    if (kind === 'preview') {
+      el.outerHTML = `<a class="adrill-preview" href="${url}" target="_blank" rel="noopener"`
+        + ` data-adkey="${key}" data-adid="${adId || ''}"`
+        + ` title="Open Meta's creative preview">preview ↗</a>`;
+    } else if (kind === 'adsmanager' && url) {
+      el.outerHTML = `<a class="adrill-preview adrill-preview--fallback" href="${url}" target="_blank" rel="noopener"`
+        + ` data-adkey="${key}" data-adid="${adId || ''}"`
+        + ` title="Creative preview unavailable right now — opens this ad in Ads Manager instead">Ads Manager ↗</a>`;
+    } else {
+      el.outerHTML = `<span class="adrill-noad" data-adkey="${key}"`
+        + ` title="Meta returned no ad matching this utm_content in the lookup window — it may have been renamed, or had no delivery">no link</span>`;
+    }
+  });
 }
 
 async function fetchCampaignAdLp(campaign) {
@@ -3420,7 +3550,7 @@ async function fetchCampaignAdLp(campaign) {
 function renderAdLpDrill(container, campaign) {
   container.innerHTML = `<div class="adrill-note">Loading ad × landing-page breakdown…</div>`;
 
-  Promise.all([fetchCampaignAdLp(campaign), ensureAdIndex()]).then(([{ rows, truncated }, adIdx]) => {
+  fetchCampaignAdLp(campaign).then(({ rows, truncated }) => {
     if (rows.length === 0) {
       container.innerHTML = `<div class="adrill-note">No ad × landing-page rows for this campaign. Shopify records the ad name in <code>utm_content</code> — if the ads don't pass it, this breakdown stays empty.</div>`;
       return;
@@ -3501,28 +3631,35 @@ function renderAdLpDrill(container, campaign) {
     const PAGE = 25;
     let shown = Math.min(PAGE, groups.length);
 
-    // Exact (normalized) name match first. Some ad names carry the ad id inline
-    // (e.g. "… | 9x16 | 1214201806031151 - TDK 6/15/2026"), so fall back to any
-    // 15-17 digit run that IS a real ad id in the index — exact, never fuzzy, so
-    // it can't produce a wrong link.
-    const linkFor = (adName) => {
-      const hit = adIdx.map.get(normAdName(adName));
-      if (hit) return adsManagerUrl(adIdx.accountId, hit.ad_id);
-      if (adIdx.byId && adIdx.byId.size) {
-        const ids = String(adName || '').match(/\d{15,17}/g) || [];
-        for (const id of ids) {
-          if (adIdx.byId.has(id)) return adsManagerUrl(adIdx.accountId, id);
-        }
+    // Anything already cached from a previous visit renders as a live link on the
+    // first paint; the rest get a placeholder the background queue upgrades.
+    const linkCell = (adName) => {
+      const key = adDomKey(adName);
+      const hit = cachedPreview(adName);
+      if (hit) {
+        return `<a class="adrill-preview" href="${hit.url}" target="_blank" rel="noopener"`
+          + ` data-adkey="${key}" data-adid="${hit.ad_id || ''}" title="Open Meta's creative preview">preview ↗</a>`;
       }
-      return null;
+      if (_adLink.authFailed) {
+        return `<span class="adrill-noad" data-adkey="${key}" title="Not signed in to Facebook — sign in to load creative previews">no link</span>`;
+      }
+      // A row that already failed terminally keeps its outcome across repaints.
+      const term = _adLink.terminal.get(normAdName(adName));
+      if (term && term.kind === 'adsmanager' && term.url) {
+        return `<a class="adrill-preview adrill-preview--fallback" href="${term.url}" target="_blank" rel="noopener"`
+          + ` data-adkey="${key}" data-adid="${term.adId || ''}"`
+          + ` title="Creative preview unavailable right now — opens this ad in Ads Manager instead">Ads Manager ↗</a>`;
+      }
+      if (term) {
+        return `<span class="adrill-noad" data-adkey="${key}"`
+          + ` title="Meta returned no ad matching this utm_content in the lookup window — it may have been renamed, or had no delivery">no link</span>`;
+      }
+      return `<span class="adrill-pending" data-adkey="${key}" title="Resolving this ad in Meta…">resolving…</span>`;
     };
 
     const rowHtml = (g) => {
-      const url = linkFor(g.ad);
       const adLabel = g.ad || '(no utm_content)';
-      const nameCell = url
-        ? `<a href="${url}" target="_blank" rel="noopener" title="Open in Ads Manager: ${esc(adLabel)}">${esc(adLabel)}<span class="adrill-ext">↗</span></a>`
-        : `${esc(adLabel)}<span class="adrill-noad" title="No Meta ad matched this utm_content for ${esc(_queryCtx?.start || '')} → ${esc(_queryCtx?.end || '')}${adIdx.error ? ' · ad index unavailable: ' + esc(adIdx.error) : ' · the ad name may have changed, or it spent nothing in this window'}">no link</span>`;
+      const nameCell = `${esc(adLabel)} ${linkCell(g.ad)}`;
       const sPos = g.sessDelta >= 0;
 
       // A pair with traffic in only ONE period has no meaningful CVR *change* —
@@ -3576,35 +3713,28 @@ function renderAdLpDrill(container, campaign) {
       const more = shown < groups.length
         ? `<button class="adrill-more" type="button">Show all ${groups.length} pairs</button>`
         : '';
-      const linkedCount = groups.filter(g => linkFor(g.ad)).length;
       const notes = [];
       notes.push(`Impacts are measured against <strong>this campaign</strong>: CVR ${(cPrevCvr * 100).toFixed(2)}% → ${(cCurrCvr * 100).toFixed(2)}% (<span class="${cls(cCvrDelta)}">${fmtPP(cCvrDelta * 100)}</span>) on ${fmtN(Math.round(cPrevS))} → ${fmtN(Math.round(cCurrS))} sessions. The CVR Impact column sums to that ΔCVR.`);
 
-      // Say precisely WHY links are missing, ABOVE the table — the causes need
-      // different fixes and "no link" on every row looks identical in all of them.
-      // (Buried in a footnote this went unread, which is how it should have been
-      // surfaced from the start.)
-      const acctLabel = adIdx.accountName
-        ? `${esc(adIdx.accountName)} (${esc(adIdx.accountId || '')})`
-        : esc(adIdx.accountId || 'unknown account');
+      // Preview links resolve in the background, so report progress rather than a
+      // verdict — and when auth is the blocker, say so above the table instead of
+      // leaving 25 identical "no link" markers to be interpreted.
       let banner = '';
-      if (adIdx.error) {
-        banner = adIdx.status === 401
-          ? `<strong>Ad links are off because this page isn't signed in to Facebook.</strong>
-             Shopify only records the ad <em>name</em>; matching it to an ad id needs the Meta API.
-             <a class="adrill-login" href="/auth/facebook">Log in with Facebook</a>
-             then reopen this drill — everything else on the page works without it.`
-          : `<strong>Ad links unavailable</strong> — ${esc(adIdx.error)}`;
-      } else if (adIdx.adCount === 0) {
-        banner = `<strong>No ads with spend found in ${acctLabel}</strong> for
-          ${esc(_queryCtx?.start || '')} → ${esc(_queryCtx?.end || '')}${adIdx.accountsConsidered > 1 ? ` (picked from ${adIdx.accountsConsidered} ad accounts by ${esc(adIdx.pickedBy || 'spend')})` : ''}.
-          If that's the wrong ad account, reload this page with <code>?ad_account=act_XXXX</code>.`;
-      } else if (linkedCount === 0) {
-        banner = `<strong>Indexed ${fmtN(adIdx.adCount)} ads from ${acctLabel}, but none matched by name.</strong>
-          <code>utm_content</code> here probably isn't the Meta ad name (or the ads were renamed after these sessions).
-          Only the links are affected — every number below is Shopify data and is unaffected.`;
-      } else if (linkedCount < groups.length) {
-        notes.push(`${linkedCount} of ${groups.length} pairs matched one of ${fmtN(adIdx.adCount)} ads in ${acctLabel}; the rest show <em>no link</em>.`);
+      if (_adLink.authFailed) {
+        banner = `<strong>Creative previews are off because this page isn't signed in to Facebook.</strong>
+          Shopify only records the ad <em>name</em>; turning it into a preview link needs the Meta API.
+          <a class="adrill-login" href="/auth/facebook">Log in with Facebook</a>
+          then reopen this drill — every number below is Shopify data and works without it.`;
+      } else {
+        const pend = Math.max(0, _adLink.seen.size - _adLink.resolved - _adLink.failed);
+        const bits = [];
+        if (_adLink.resolved) bits.push(`${_adLink.resolved} preview link${_adLink.resolved === 1 ? '' : 's'} resolved`);
+        if (pend) bits.push(`${pend} still resolving`);
+        if (_adLink.failed) bits.push(`${_adLink.failed} unresolved`);
+        if (bits.length) {
+          notes.push(`Ad links: ${bits.join(' · ')}${_adLink.lastError ? ` · last error: ${esc(_adLink.lastError)}` : ''}.`
+            + ` Names are matched to Meta one at a time and cached, so repeat visits link instantly.`);
+        }
       }
       if (truncated) notes.push(`⚠ Shopify returned the maximum 1000 rows for this campaign — the tail is cut off.`);
       const bannerHtml = banner ? `<div class="adrill-banner">⚠ ${banner}</div>` : '';
@@ -3646,7 +3776,20 @@ function renderAdLpDrill(container, campaign) {
           paint();
         });
       });
+
+      // Queue only the rows on screen (re-queued after "show all" / re-sorts;
+      // names already seen are skipped, so this is cheap to call every paint).
+      adLinkEnqueue(ordered.slice(0, shown).map(g => g.ad));
     };
+
+    // Refresh the progress line as links land, but don't repaint on every single
+    // one — applyAdLink() has already swapped the anchors in place.
+    let progressTimer = null;
+    _adLink.onProgress = () => {
+      if (progressTimer) return;
+      progressTimer = setTimeout(() => { progressTimer = null; if (container.isConnected) paint(); }, 2500);
+    };
+
     paint();
   }).catch(e => {
     container.innerHTML = `<div class="adrill-note" style="color:var(--negative)">Could not load ad × landing-page breakdown: ${esc(e.message)}</div>`;
@@ -4425,8 +4568,16 @@ async function loadFromShopify() {
       compareEnd:   useCustomCompare ? compareEnd   : null,
     };
     _adLpDrillCache = new Map();
-    _adIndex = null;
-    _adIndexPromise = null;
+    // Let a fresh pull retry ad-link resolution (window changed; auth may now be
+    // in place). The localStorage caches survive — that's the point of them.
+    _adLink.queue.length = 0;
+    _adLink.seen.clear();
+    _adLink.attempts.clear();
+    _adLink.terminal.clear();
+    _adLink.authFailed = false;
+    _adLink.lastError = null;
+    _adLink.resolved = 0;
+    _adLink.failed = 0;
 
     status.textContent = 'Parsing response…';
     const rows = parseShopifyQL(data);

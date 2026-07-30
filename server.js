@@ -2199,105 +2199,166 @@ app.get('/api/meta-campaign-ad-lp-data', async (req, res) => {
   }
 });
 
-// --- Ad-name → ad_id index, so dashboards can deep-link a utm_content to Meta ---
+// ─────────────────────────────────────────────
+// AD NAME → CREATIVE PREVIEW LINK (2-call pipeline)
+// ─────────────────────────────────────────────
+// Shopify only records the ad NAME (utm_content); Meta addresses ads by id. The
+// unfiltered ad-level bulk pull times out chronically on this account, so DON'T
+// try to pre-build a name→id index. Instead resolve one row at a time through two
+// calls that are reliable (~90%):
 //
-// Shopify only knows the ad NAME (utm_content). Ads Manager needs the ad ID, so
-// this returns a lean {ad_id, ad_name, campaign_name, spend} list for the range
-// and lets the client join on name. Deliberately minimal fields — 4 fields at
-// limit=200 pages fast, unlike /api/diag-meta's full insight payload.
-app.get('/api/meta-ad-index', requireAuth, async (req, res) => {
-  const { start, end } = req.query;
-  if (!start || !end || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
-    return res.status(400).json({ error: 'start and end query params required (YYYY-MM-DD)' });
+//   1. /api/meta-ad-lookup           name  → ad id   (insights + ad.name CONTAIN)
+//   2. /api/meta-ad-creative-preview ad id → preview_iframe.php URL
+//
+// The client runs these from a small background queue and caches both layers.
+
+// Pick the ad account to query. Never blindly take the first one: with several
+// accounts the wrong pick makes every lookup fail identically.
+async function resolveAdAccountId(req, start, end) {
+  if (req.query.account_id) {
+    return { accountId: req.query.account_id, accountName: null, considered: 1, pickedBy: 'explicit' };
   }
+  const accResp = await fetch(`${META_BASE_URL}/me/adaccounts?fields=id,name&limit=100&${metaParams(req.accessToken)}`);
+  const accData = await accResp.json();
+  if (accData.error) {
+    const e = new Error(accData.error.message || 'Could not list ad accounts');
+    e.code = accData.error.code;
+    throw e;
+  }
+  const accounts = accData.data || [];
+  if (accounts.length === 0) throw Object.assign(new Error('No ad accounts available for this Facebook user'), { status: 404 });
+  if (accounts.length === 1) {
+    return { accountId: accounts[0].id, accountName: accounts[0].name, considered: 1, pickedBy: 'only-account' };
+  }
+  const probes = await Promise.all(accounts.slice(0, 25).map(async (a) => {
+    try {
+      const u = `${META_BASE_URL}/${a.id}/insights?fields=spend`
+        + `&time_range=${encodeURIComponent(JSON.stringify({ since: start, until: end }))}`
+        + `&${metaParams(req.accessToken)}`;
+      const j = await (await fetch(u, { signal: AbortSignal.timeout(15000) })).json();
+      return { ...a, spend: parseFloat(j.data?.[0]?.spend) || 0 };
+    } catch { return { ...a, spend: 0 }; }
+  }));
+  probes.sort((x, y) => y.spend - x.spend);
+  return {
+    accountId: probes[0].id,
+    accountName: probes[0].name,
+    considered: accounts.length,
+    pickedBy: probes[0].spend > 0 ? 'highest-spend' : 'fallback-first',
+  };
+}
+
+// The most distinctive part of an ad name. A prefix is useless for pipe-style
+// names ("BM | First Day | Video | R1 | …") — it matches dozens of ads and would
+// resolve to a wrong id. The trailing creative/post id is unique, so prefer the
+// longest digit run of 10+ chars and only fall back to a prefix without one.
+function needleForAdName(name) {
+  const runs = String(name || '').match(/\d{10,}/g);
+  if (runs && runs.length) return runs.sort((a, b) => b.length - a.length)[0];
+  return String(name || '').slice(0, 60).replace(/["']/g, '').trim();
+}
+
+app.get('/api/meta-ad-lookup', requireAuth, async (req, res) => {
+  const name = req.query.name;
+  if (!name || !String(name).trim()) return res.status(400).json({ error: 'name query param required' });
+
+  // Anchor the lookup window on the dashboard's end date so historical views
+  // still resolve, and widen once if the ad had no delivery in the first window.
+  const end = /^\d{4}-\d{2}-\d{2}$/.test(req.query.end || '') ? req.query.end : new Date().toISOString().slice(0, 10);
+  const windowFor = (days) => {
+    const e = new Date(end + 'T00:00:00Z');
+    const s = new Date(e);
+    s.setUTCDate(s.getUTCDate() - (days - 1));
+    return { since: s.toISOString().slice(0, 10), until: end };
+  };
+
+  const needle = needleForAdName(name);
+  if (!needle) return res.status(400).json({ error: 'Could not derive a search needle from that ad name' });
+
+  const cacheKey = endpointCacheKey('meta-ad-lookup', { needle, end, acct: req.query.account_id || 'auto' });
+  const cached = getEndpointCache(cacheKey);
+  if (cached) return res.json({ ...cached, cached: true });
+
   try {
-    let accountId = req.query.account_id;
-    let accountName = null;
-    let accountsConsidered = 1;
-    let accountPickedBy = 'explicit';
+    const { accountId, accountName, considered, pickedBy } = await resolveAdAccountId(req, windowFor(28).since, end);
 
-    if (!accountId) {
-      // Don't just grab the first account: a user with several ad accounts would
-      // get an index built from the wrong one, and EVERY ad name would then fail
-      // to match (rendering as "no link"). Pick the account that actually spent
-      // in this window.
-      const accResp = await fetch(`${META_BASE_URL}/me/adaccounts?fields=id,name&limit=100&${metaParams(req.accessToken)}`);
-      const accData = await accResp.json();
-      if (accData.error) {
-        if (accData.error.code === 190) { clearTokenCookie(res); return res.status(401).json({ error: 'Session expired' }); }
-        throw new Error(accData.error.message || 'Could not list ad accounts');
-      }
-      const accounts = accData.data || [];
-      if (accounts.length === 0) return res.status(404).json({ error: 'No ad accounts available for this Facebook user' });
-      accountsConsidered = accounts.length;
+    const lookup = async (days) => {
+      const url = `${META_BASE_URL}/${accountId}/insights`
+        + `?level=ad&fields=ad_id,ad_name,impressions`
+        + `&time_range=${encodeURIComponent(JSON.stringify(windowFor(days)))}`
+        + `&filtering=${encodeURIComponent(JSON.stringify([{ field: 'ad.name', operator: 'CONTAIN', value: needle }]))}`
+        + `&limit=5`
+        + `&${metaParams(req.accessToken)}`;
+      const data = await metaFetchWithBackoff(url, 'ad-lookup', 2);
+      return Array.isArray(data.data) ? data.data : [];
+    };
 
-      if (accounts.length === 1) {
-        accountId = accounts[0].id;
-        accountName = accounts[0].name;
-        accountPickedBy = 'only-account';
-      } else {
-        // Probe spend per account in parallel (bounded), then take the biggest.
-        const probes = await Promise.all(accounts.slice(0, 25).map(async (a) => {
-          try {
-            const u = `${META_BASE_URL}/${a.id}/insights?fields=spend`
-              + `&time_range=${encodeURIComponent(JSON.stringify({ since: start, until: end }))}`
-              + `&${metaParams(req.accessToken)}`;
-            const j = await (await fetch(u, { signal: AbortSignal.timeout(15000) })).json();
-            return { ...a, spend: parseFloat(j.data?.[0]?.spend) || 0 };
-          } catch { return { ...a, spend: 0 }; }
-        }));
-        probes.sort((x, y) => y.spend - x.spend);
-        accountId = probes[0].id;
-        accountName = probes[0].name;
-        accountPickedBy = probes[0].spend > 0 ? 'highest-spend' : 'fallback-first';
-      }
+    let rows = await lookup(28);
+    let windowDays = 28;
+    if (rows.length === 0) { rows = await lookup(90); windowDays = 90; }
+
+    if (rows.length === 0) {
+      // Honest terminal state — the caller falls back to an Ads Manager link.
+      return res.status(404).json({
+        error: 'No Meta ad matched that name in the lookup window',
+        needle, window: windowFor(90), account_id: accountId, account_name: accountName,
+        accounts_considered: considered, account_picked_by: pickedBy,
+      });
     }
 
-    // Meta's `next` URL keeps access_token but drops appsecret_proof.
-    const proof = generateAppSecretProof(req.accessToken);
-    const ensureProof = (u) => u.includes('appsecret_proof=') ? u : (u + `&appsecret_proof=${proof}`);
-
-    let next = `${META_BASE_URL}/${accountId}/insights`
-      + `?fields=ad_id,ad_name,campaign_name,spend`
-      + `&time_range=${encodeURIComponent(JSON.stringify({ since: start, until: end }))}`
-      + `&level=ad&time_increment=all_days`
-      + `&filtering=${encodeURIComponent(JSON.stringify([{ field: 'spend', operator: 'GREATER_THAN', value: 0 }]))}`
-      + `&limit=200`
-      + `&${metaParams(req.accessToken)}`;
-
-    const ads = [];
-    let pageCount = 0;
-    while (next && pageCount < 30) {
-      const data = await (await fetch(ensureProof(next), { signal: AbortSignal.timeout(20000) })).json();
-      if (data.error) {
-        if (data.error.code === 190) { clearTokenCookie(res); return res.status(401).json({ error: 'Session expired' }); }
-        throw new Error(data.error.message || 'Meta insights error');
-      }
-      for (const a of (data.data || [])) {
-        ads.push({
-          ad_id: a.ad_id,
-          ad_name: a.ad_name || '',
-          campaign_name: a.campaign_name || '',
-          spend: parseFloat(a.spend) || 0,
-        });
-      }
-      next = data.paging?.next || null;
-      pageCount += 1;
-    }
-
-    res.json({
+    // One name is often duplicated across ad sets; the one that actually
+    // delivered is the one worth linking.
+    rows.sort((a, b) => (parseFloat(b.impressions) || 0) - (parseFloat(a.impressions) || 0));
+    const best = rows[0];
+    const payload = {
+      ad_id: best.ad_id,
+      ad_name: best.ad_name || '',
+      impressions: parseFloat(best.impressions) || 0,
+      candidates: rows.length,
+      needle,
+      window_days: windowDays,
       account_id: accountId,
       account_name: accountName,
-      accounts_considered: accountsConsidered,
-      account_picked_by: accountPickedBy,
-      range: { start, end },
-      ads,
-      truncated: !!next,
-    });
+      accounts_considered: considered,
+      account_picked_by: pickedBy,
+    };
+    setEndpointCache(cacheKey, payload, 30 * 60 * 1000);
+    res.json(payload);
   } catch (err) {
-    console.error('[meta-ad-index] error:', err);
-    if (err.status === 401) return res.status(401).json({ error: err.message });
-    res.status(500).json({ error: err.message });
+    console.error('[meta-ad-lookup] error:', err.message, '| needle:', needle);
+    if (err.code === 190) { clearTokenCookie(res); return res.status(401).json({ error: 'Session expired' }); }
+    if (err.status === 404) return res.status(404).json({ error: err.message, needle });
+    res.status(500).json({ error: err.message, needle });
+  }
+});
+
+app.get('/api/meta-ad-creative-preview', requireAuth, async (req, res) => {
+  const { ad_id } = req.query;
+  if (!ad_id) return res.status(400).json({ error: 'ad_id required' });
+  const format = /^[A-Z_]+$/.test(req.query.format || '') ? req.query.format : 'DESKTOP_FEED_STANDARD';
+
+  const cacheKey = endpointCacheKey('meta-ad-creative-preview', { ad_id, format });
+  const cached = getEndpointCache(cacheKey);
+  if (cached) return res.json({ ...cached, cached: true });
+
+  try {
+    const url = `${META_BASE_URL}/${ad_id}/previews?ad_format=${format}&${metaParams(req.accessToken)}`;
+    const data = await metaFetchWithBackoff(url, 'ad-preview', 2);
+    // Graph returns the preview as an <iframe> HTML blob, not a bare URL: pull the
+    // src out and unescape it to get the hosted preview_iframe.php link.
+    const body = data.data?.[0]?.body || '';
+    const m = body.match(/src="([^"]+)"/);
+    const previewUrl = m ? m[1].replace(/&amp;/g, '&') : null;
+    if (!previewUrl) {
+      return res.status(404).json({ error: 'Meta returned no preview iframe for this ad', ad_id, format });
+    }
+    const payload = { ad_id, format, preview_url: previewUrl };
+    setEndpointCache(cacheKey, payload, 20 * 60 * 1000);
+    res.json(payload);
+  } catch (err) {
+    console.error('[meta-ad-creative-preview] error:', err.message, '| ad_id:', ad_id);
+    if (err.code === 190) { clearTokenCookie(res); return res.status(401).json({ error: 'Session expired' }); }
+    res.status(500).json({ error: err.message, ad_id });
   }
 });
 
