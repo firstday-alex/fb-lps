@@ -885,10 +885,10 @@
     }
     .seg-dim__desc { font-size: 0.74rem; color: var(--text-secondary); margin-top: 2px; line-height: 1.45; }
     .seg-scroll { overflow-x: auto; }
-    .seg-table { min-width: 760px; }
+    .seg-table { min-width: 830px; }
     .seg-row {
       display: grid;
-      grid-template-columns: minmax(150px, 1.4fr) 46px 62px 62px minmax(110px, 1fr) 66px 52px 52px 52px 50px;
+      grid-template-columns: minmax(150px, 1.4fr) 46px 62px 62px minmax(110px, 1fr) 66px 62px 52px 52px 52px 50px;
       align-items: center;
       gap: 8px;
       padding: 6px 4px;
@@ -921,7 +921,7 @@
     .seg-drill.open { display: block; }
     .seg-drill-row {
       display: grid;
-      grid-template-columns: 1fr 70px 60px 60px;
+      grid-template-columns: 1fr 70px 62px 60px 60px;
       gap: 8px;
       padding: 2px 0;
       color: var(--text-secondary);
@@ -2763,6 +2763,7 @@ function renderCampaignSegments(rows) {
         <div class="r">Curr CVR</div>
         <div style="text-align:center">CVR Change</div>
         <div class="r">Sessions</div>
+        <div class="r" title="Change in sessions vs the previous period — context for whether the CVR move came with more or less traffic">Sess Δ</div>
         <div class="r" title="Share of current-period sessions">Sess %</div>
         <div class="r">Txns</div>
         <div class="r" title="Share of current-period transactions">Txn %</div>
@@ -2779,15 +2780,29 @@ function renderCampaignSegments(rows) {
         : `right:calc(50% + ${barW}% + 4px);color:${barColor}`;
       const idxColor = g.convIndex >= 1.1 ? 'var(--positive)' : g.convIndex <= 0.9 ? 'var(--negative)' : 'var(--text-secondary)';
 
+      // Session change — tells you whether a CVR move came with a traffic swing
+      // (mix / scaling) or held volume steady.
+      const sessDelta = Math.round(g.currS - g.prevS);
+      const sessDeltaColor = sessDelta === 0 ? 'var(--text-secondary)'
+        : sessDelta > 0 ? 'var(--positive)' : 'var(--negative)';
+      const sessDeltaTxt = sessDelta === 0 ? '0'
+        : `${sessDelta > 0 ? '+' : '−'}${fmtN(Math.abs(sessDelta))}`;
+
       const drillRows = [...g.entries]
         .sort((a, b) => b.currS - a.currS)
-        .map(e => `
+        .map(e => {
+          const eSessD = Math.round(e.currS - e.prevSess);
+          const eSessCls = eSessD === 0 ? '' : eSessD > 0 ? 'pos' : 'neg';
+          const eSessTxt = eSessD === 0 ? '0' : `${eSessD > 0 ? '+' : '−'}${fmtN(Math.abs(eSessD))}`;
+          return `
           <div class="seg-drill-row">
             <div><span class="nm">${esc(e.name)}</span></div>
             <div>${fmtN(Math.round(e.currS))}</div>
+            <div class="${eSessCls}" title="${Math.round(e.prevSess).toLocaleString()} → ${Math.round(e.currS).toLocaleString()} sessions">${eSessTxt}</div>
             <div>${(e.currC * 100).toFixed(2)}%</div>
             <div class="${cls(e.currC - e.prevCvr)}">${fmtPP((e.currC - e.prevCvr) * 100)}</div>
-          </div>`).join('');
+          </div>`;
+        }).join('');
 
       rowsHtml += `
         <div class="seg-row seg-row--clickable" data-seg-row="${di}-${gi}">
@@ -2807,6 +2822,7 @@ function renderCampaignSegments(rows) {
             <div class="cvr-bar-label" style="${lblStyle}">${fmtPP(g.cvrDelta * 100)}</div>
           </div>
           <div class="r seg-num">${fmtN(Math.round(g.currS))}</div>
+          <div class="r seg-num" style="font-weight:600;color:${sessDeltaColor}" title="${Math.round(g.prevS).toLocaleString()} → ${Math.round(g.currS).toLocaleString()} sessions${g.prevS > 0 ? ` (${fmtP((g.currS / g.prevS - 1) * 100, 1)})` : ''}">${sessDeltaTxt}</div>
           <div class="r seg-num">${g.sessShare.toFixed(1)}%</div>
           <div class="r seg-num" style="font-weight:600">${fmtN(Math.round(g.currTxns))}</div>
           <div class="r seg-num">${g.txnShare.toFixed(1)}%</div>
@@ -2814,7 +2830,7 @@ function renderCampaignSegments(rows) {
         </div>
         <div class="seg-drill" data-seg-drill="${di}-${gi}">
           <div class="seg-drill-row seg-drill-row--header">
-            <div>Campaign</div><div>Sessions</div><div>CVR</div><div>Δ vs prev</div>
+            <div>Campaign</div><div>Sessions</div><div>Sess Δ</div><div>CVR</div><div>Δ vs prev</div>
           </div>
           ${drillRows}
         </div>`;
@@ -2873,7 +2889,9 @@ function renderCampaignSegments(rows) {
     <p class="card__sub">
       Splits the same utm_campaigns along every dimension encoded in the naming convention
       <code>[Stage | Audience | Structure &amp; Bid | Attribution | Geo | Date]</code> — the Test vs Non-Test
-      comparison generalized. Each bucket shows sessions-weighted CVR for both periods, its share of
+      comparison generalized. Each bucket shows sessions-weighted CVR for both periods,
+      <strong>Sess Δ</strong> (session change vs the previous period, so you can see whether a CVR move
+      came with a traffic swing or held volume flat), its share of
       sessions vs transactions, and a <strong>conversion index</strong> (txn share ÷ session share; above
       1.00× = pulling more than its weight). Buckets are keyword-matched on the campaign name, so a
       campaign appears once per dimension. Totals per dimension always equal the full set of
