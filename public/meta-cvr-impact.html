@@ -870,6 +870,76 @@
     .tvn-campaigns-list.open { display: block; }
     .tvn-campaigns-list div { padding: 2px 0; word-break: break-all; }
 
+    /* ── Campaign-type breakouts (naming-convention dimensions) ── */
+    .seg-card { padding: 20px; }
+    .seg-card h3 {
+      font-size: 0.82rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--text-secondary); margin-bottom: 4px;
+    }
+    .seg-card .card__sub { margin-bottom: 16px; }
+    .seg-dim + .seg-dim { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border); }
+    .seg-dim__head { margin-bottom: 6px; }
+    .seg-dim__title {
+      font-size: 0.78rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--text-primary);
+    }
+    .seg-dim__desc { font-size: 0.74rem; color: var(--text-secondary); margin-top: 2px; line-height: 1.45; }
+    .seg-scroll { overflow-x: auto; }
+    .seg-table { min-width: 760px; }
+    .seg-row {
+      display: grid;
+      grid-template-columns: minmax(150px, 1.4fr) 46px 62px 62px minmax(110px, 1fr) 66px 52px 52px 52px 50px;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 4px;
+      font-size: 0.8rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .seg-row--header {
+      font-size: 0.64rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--text-secondary);
+      border-bottom: 2px solid var(--border); padding-bottom: 6px;
+    }
+    .seg-row .r { text-align: right; }
+    .seg-row--clickable { cursor: pointer; transition: background 0.12s; }
+    .seg-row--clickable:hover { background: #f7f9ff; }
+    .seg-label { display: flex; align-items: center; gap: 7px; font-weight: 600; min-width: 0; }
+    .seg-chev { font-size: 0.55rem; color: var(--text-secondary); transition: transform 0.15s; }
+    .seg-row--open .seg-chev { transform: rotate(90deg); }
+    .seg-swatch { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+    .seg-num { font-size: 0.78rem; }
+    .seg-idx { font-size: 0.78rem; font-weight: 700; }
+    .seg-drill {
+      display: none;
+      background: #fafbfe;
+      border-bottom: 1px solid var(--border);
+      padding: 8px 10px 10px 26px;
+      font-size: 0.74rem;
+      max-height: 240px;
+      overflow-y: auto;
+    }
+    .seg-drill.open { display: block; }
+    .seg-drill-row {
+      display: grid;
+      grid-template-columns: 1fr 70px 60px 60px;
+      gap: 8px;
+      padding: 2px 0;
+      color: var(--text-secondary);
+    }
+    .seg-drill-row > div:not(:first-child) { text-align: right; }
+    .seg-drill-row--header { font-weight: 700; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.04em; }
+    .seg-drill-row span.nm { word-break: break-all; }
+    .seg-insight {
+      margin-top: 10px;
+      background: #f7f9ff;
+      border: 1px solid #dde4f7;
+      border-radius: 6px;
+      padding: 9px 12px;
+      font-size: 0.8rem;
+      line-height: 1.55;
+    }
+    .seg-insight strong { color: var(--text-primary); }
+
     .mix-shift-card { padding: 20px; }
     .mix-shift-card h3 {
       font-size: 0.82rem; font-weight: 700; text-transform: uppercase;
@@ -1215,6 +1285,9 @@
 
     <!-- Test vs Non-Test Campaigns -->
     <div class="card test-vs-nontest-card" id="test-vs-nontest-card"></div>
+
+    <!-- Campaign-Type Breakouts (stage / audience / buying structure / bid / attribution / geo) -->
+    <div class="card seg-card" id="campaign-segments-card"></div>
 
     <!-- CVR Movement by Landing Page -->
     <div class="card cvr-movement-card" id="cvr-movement-lp-card"></div>
@@ -1628,6 +1701,7 @@ function render(rawRows, filename) {
   });
   renderMixShift(campaignRows, tPrevS, tCurrS, tPrevCvr, tCurrCvr);
   renderTestVsNonTest(campaignRows);
+  renderCampaignSegments(campaignRows);
   renderSessionVolume('session-volume-card', campaignRows, {
     title: 'Session Volume by Campaign',
     sub: 'Campaigns ordered by current sessions (highest first). Gray = previous, colored = current.',
@@ -1823,6 +1897,7 @@ function makeCardsCollapsible() {
     'cvr-movement-lp-card':   { title: 'CVR Movement by Landing Page',hint: "How each landing page's CVR shifted" },
     'mix-shift-card':         { title: 'Mix-Shift Counterfactual',    hint: 'Blended CVR if only campaign mix changed' },
     'test-vs-nontest-card':   { title: 'Test vs Non-Test Campaigns',  hint: 'Compares CVR of campaigns whose name contains "test" vs those that don\'t' },
+    'campaign-segments-card': { title: 'Campaign-Type Breakouts',     hint: 'CVR by stage, audience, CBO/ABO, bid strategy, attribution window, geo, and UTM health' },
     'session-volume-card':    { title: 'Session Volume by Campaign',  hint: 'Which campaigns gained or lost traffic' },
     'session-volume-lp-card': { title: 'Session Volume by Landing Page', hint: 'Which landing pages gained or lost traffic' },
     'cvr-bucket-card':        { title: 'CVR Bucket Summary',          hint: 'Campaigns grouped by CVR tier' },
@@ -2351,6 +2426,470 @@ function renderTestVsNonTest(rows) {
       const open = list.classList.toggle('open');
       const count = list.children.length;
       btn.textContent = `${open ? 'Hide' : 'Show'} ${count} campaign${count !== 1 ? 's' : ''} ${open ? '▴' : '▾'}`;
+    });
+  });
+}
+
+// ─────────────────────────────────────────────
+// CAMPAIGN-TYPE BREAKOUTS
+// Parses the campaign naming convention
+//   [Stage | Audience | Buying structure & bid | Attribution | Geo | Date]
+// and buckets campaigns along each dimension — same idea as Test vs Non-Test,
+// but across every axis encoded in the name.
+// ─────────────────────────────────────────────
+const SEG_GRAY = '#9aa4b2';
+const SEG_PALETTE = ['#1877f2', '#f59e0b', '#22c55e', '#a855f7', '#ef4444', '#06b6d4', '#ec4899', '#14b8a6', '#8b5cf6'];
+
+// Campaign names sometimes arrive URL-encoded (%5B…%7C…) or as an unresolved
+// Meta macro ({{campaign.name}}). Decode before classifying, and remember the
+// raw shape so the tracking-health dimension can report on it.
+function parseCampaignName(raw) {
+  const original = String(raw == null ? '' : raw);
+  const wasEncoded = /%[0-9A-Fa-f]{2}/.test(original);
+  // Only treat "+" as an encoded space when the string is actually encoded —
+  // clean names use it literally (e.g. "USA+CA").
+  let name = wasEncoded ? original.replace(/\+/g, ' ') : original;
+  if (wasEncoded) { try { name = decodeURIComponent(name); } catch (e) { /* keep partially decoded */ } }
+  const lower = name.toLowerCase();
+  const segs = lower
+    .replace(/^\s*\[/, '').replace(/\]\s*$/, '')
+    .split('|').map(s => s.trim()).filter(Boolean);
+  return {
+    label: name.trim() || '(empty)',
+    lower,
+    segs,
+    wasEncoded,
+    isMacro: /\{\{|\}\}/.test(original),
+    isEmpty: !original.trim() || original.trim() === '(empty)',
+  };
+}
+
+const SEG_DIMENSIONS = [
+  {
+    key: 'stage',
+    title: 'Funnel Stage / Campaign Intent',
+    desc: 'First name segment — scaling vs the various testing programs. This is the coarsest read on how much traffic sits in learning campaigns vs proven ones.',
+    buckets: [
+      { key: 'scaling',       label: 'Scaling',                  color: '#1877f2' },
+      { key: 'creative_test', label: 'Creative Testing',         color: '#f59e0b' },
+      { key: 'wl_test',       label: 'Whitelist / Creator Test', color: '#a855f7' },
+      { key: 'ab_test',       label: 'A/B Testing',              color: '#14b8a6' },
+      { key: 'retarget',      label: 'Retargeting',              color: '#ec4899' },
+      { key: 'other_test',    label: 'Other Testing',            color: '#fbbf24' },
+      { key: 'other',         label: 'Other / Unlabeled',        color: SEG_GRAY },
+    ],
+    classify: c => {
+      const s = c.segs[0] || c.lower;
+      if (/\bwl\b|whitelist/.test(s) && /test/.test(s)) return 'wl_test';
+      if (/creative[\s-]*test/.test(s)) return 'creative_test';
+      if (/\ba\s*\/?\s*b\b/.test(s) && /test/.test(s)) return 'ab_test';
+      if (/scal/.test(s)) return 'scaling';
+      if (/retarget|remarket|\brmk\b|\bdpa\b|retention/.test(c.lower)) return 'retarget';
+      if (/test/.test(c.lower)) return 'other_test';
+      return 'other';
+    },
+  },
+  {
+    key: 'audience',
+    title: 'Audience / Targeting Segment',
+    desc: 'Second name segment (falls back to a scan of the whole name) — the audience or creator pool the campaign points at.',
+    buckets: [
+      { key: 'core_prospect', label: 'Core Prospecting', color: '#1877f2' },
+      { key: 'broad',         label: 'Broad',            color: '#3b82f6' },
+      { key: 'new',           label: 'NEW',              color: '#22c55e' },
+      { key: 'tapped',        label: 'Tapped',           color: '#f97316' },
+      { key: 'bm',            label: 'BM',               color: '#8b5cf6' },
+      { key: 'attnl',         label: 'ATTNL',            color: '#06b6d4' },
+      { key: 'sip',           label: 'SIP',              color: '#eab308' },
+      { key: 'tqe',           label: 'TQE',              color: '#ef4444' },
+      { key: 'wl_creators',   label: 'WL Creators',      color: '#a855f7' },
+      { key: 'lal',           label: 'Lookalike',        color: '#10b981' },
+      { key: 'interest',      label: 'Interest',         color: '#0ea5e9' },
+      { key: 'unlabeled',     label: 'Unlabeled',        color: SEG_GRAY },
+    ],
+    classify: c => {
+      const match = s => {
+        if (!s) return null;
+        if (/core\s*prospect/.test(s)) return 'core_prospect';
+        if (/\bwl\b.*creator|creators?\b/.test(s)) return 'wl_creators';
+        if (/\bsip\b/.test(s)) return 'sip';
+        if (/\btqe\b/.test(s)) return 'tqe';
+        if (/\battnl\b/.test(s)) return 'attnl';
+        if (/\btapped\b/.test(s)) return 'tapped';
+        if (/\bnew\b/.test(s)) return 'new';
+        if (/\bbm\b/.test(s)) return 'bm';
+        if (/\bbroad\b/.test(s)) return 'broad';
+        if (/\blal\b|look\s*a?\s*like/.test(s)) return 'lal';
+        if (/interest/.test(s)) return 'interest';
+        return null;
+      };
+      return match(c.segs[1]) || match(c.lower) || 'unlabeled';
+    },
+  },
+  {
+    key: 'variant',
+    title: 'Variant Sub-Tag',
+    desc: 'The qualifier after a " - " inside the stage or audience segment (e.g. <em>Creative Testing <strong>- SIP</strong></em>, <em>Core Prospecting <strong>- Women &amp; Men</strong></em>). Buckets are read from the data, not a fixed list.',
+    dynamic: { maxBuckets: 8 },
+    classify: c => {
+      for (const s of [c.segs[0], c.segs[1]]) {
+        if (!s) continue;
+        const i = s.indexOf(' - ');
+        if (i === -1) continue;
+        const tag = s.slice(i + 3).trim();
+        if (!tag) continue;
+        const label = (tag.length <= 5 && !/\s/.test(tag))
+          ? tag.toUpperCase()
+          : tag.replace(/\b[a-z]/g, ch => ch.toUpperCase());
+        return { key: tag, label };
+      }
+      return { key: '__none', label: 'No sub-tag' };
+    },
+  },
+  {
+    key: 'vintage',
+    title: 'Campaign Vintage (name date)',
+    desc: 'Grouped by the launch/version date at the end of the name. Separates freshly launched campaigns from long-running ones still absorbing budget.',
+    dynamic: { maxBuckets: 8 },
+    classify: c => {
+      const m = c.lower.match(/v?(20\d{2})\s*[\/\-.]\s*(\d{1,2})\s*[\/\-.]\s*(\d{1,2})/);
+      if (!m) return { key: '__undated', label: 'Undated' };
+      const y = m[1], mo = String(m[2]).padStart(2, '0');
+      const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      const name = MONTHS[Number(mo) - 1] || mo;
+      return { key: `${y}-${mo}`, label: `${name} ${y}` };
+    },
+  },
+  {
+    key: 'structure',
+    title: 'Budget Structure (CBO vs ABO)',
+    desc: 'Campaign-budget optimization vs ad-set budgets. Isolates whether Meta-level budget allocation converts differently than hand-set ad-set budgets.',
+    buckets: [
+      { key: 'cbo',    label: 'CBO',         color: '#1877f2' },
+      { key: 'abo',    label: 'ABO',         color: '#f59e0b' },
+      { key: 'unspec', label: 'Unspecified', color: SEG_GRAY },
+    ],
+    classify: c => /\bcbo\b/.test(c.lower) ? 'cbo' : /\babo\b/.test(c.lower) ? 'abo' : 'unspec',
+  },
+  {
+    key: 'bid',
+    title: 'Bid Strategy',
+    desc: 'Cost Cap vs TROAS vs Bid Cap, read from the name. Names with no bid tag are grouped as unspecified (typically lowest-cost).',
+    buckets: [
+      { key: 'cost_cap', label: 'Cost Cap',              color: '#1877f2' },
+      { key: 'troas',    label: 'TROAS / ROAS',          color: '#22c55e' },
+      { key: 'bid_cap',  label: 'Bid Cap',               color: '#8b5cf6' },
+      { key: 'lowest',   label: 'Lowest Cost (tagged)',  color: '#14b8a6' },
+      { key: 'unspec',   label: 'Unspecified',           color: SEG_GRAY },
+    ],
+    classify: c => {
+      const l = c.lower;
+      if (/cost\s*cap/.test(l)) return 'cost_cap';
+      if (/\bt?roas\b/.test(l)) return 'troas';
+      if (/bid\s*cap/.test(l)) return 'bid_cap';
+      if (/lowest\s*cost|\blc\b/.test(l)) return 'lowest';
+      return 'unspec';
+    },
+  },
+  {
+    key: 'attribution',
+    title: 'Attribution Window',
+    desc: 'Click window tagged in the name (e.g. <code>1dc-1et</code> vs <code>7dc-1det</code>). Wider windows let Meta optimize on more conversions, which usually changes the traffic it buys.',
+    buckets: [
+      { key: '1dc',    label: '1-day click',  color: '#f59e0b' },
+      { key: '7dc',    label: '7-day click',  color: '#1877f2' },
+      { key: 'other',  label: 'Other window', color: '#8b5cf6' },
+      { key: 'unspec', label: 'Untagged',     color: SEG_GRAY },
+    ],
+    classify: c => {
+      const m = c.lower.match(/(\d+)\s*d(?:ay)?\s*c(?:lick)?\b/);
+      if (!m) return 'unspec';
+      return m[1] === '1' ? '1dc' : m[1] === '7' ? '7dc' : 'other';
+    },
+  },
+  {
+    key: 'geo',
+    title: 'Geo Targeting',
+    desc: 'Country tokens in the name. USA-only vs USA+CA matters because Canadian traffic converts on a different price/shipping experience.',
+    buckets: [
+      { key: 'usa_ca', label: 'USA + CA',    color: '#1877f2' },
+      { key: 'usa',    label: 'USA only',    color: '#22c55e' },
+      { key: 'ca',     label: 'Canada only', color: '#ef4444' },
+      { key: 'other',  label: 'Other / Untagged', color: SEG_GRAY },
+    ],
+    classify: c => {
+      const l = c.lower;
+      const hasUS = /\bus\b|\busa\b|\bunited states\b/.test(l);
+      const hasCA = /\bca\b|\bcan\b|\bcanada\b/.test(l);
+      if (hasUS && hasCA) return 'usa_ca';
+      if (hasUS) return 'usa';
+      if (hasCA) return 'ca';
+      return 'other';
+    },
+  },
+  {
+    key: 'tracking',
+    title: 'UTM Tracking Health',
+    desc: 'Not a media split — a data-quality split. URL-encoded names and unresolved <code>{{campaign.name}}</code> macros are the same campaigns double-counted under broken UTMs, so their sessions are usually stranded with 0 transactions.',
+    buckets: [
+      { key: 'clean',   label: 'Clean name',            color: '#22c55e' },
+      { key: 'encoded', label: 'URL-encoded name',      color: '#f59e0b' },
+      { key: 'macro',   label: 'Unresolved macro',      color: '#ef4444' },
+      { key: 'empty',   label: 'Missing / empty',       color: SEG_GRAY },
+    ],
+    classify: c => c.isEmpty ? 'empty' : c.isMacro ? 'macro' : c.wasEncoded ? 'encoded' : 'clean',
+    // Best-vs-worst CVR is the wrong question here — what matters is how much
+    // traffic is stranded under an unusable campaign name.
+    insight: (groups, t) => {
+      const broken = groups.filter(g => g.key !== 'clean');
+      if (!broken.length) {
+        return `<div class="seg-insight">Every campaign name parsed cleanly — no URL-encoded names, macros, or blanks this period.</div>`;
+      }
+      const bS = broken.reduce((a, g) => a + g.currS, 0);
+      const bT = broken.reduce((a, g) => a + g.currTxns, 0);
+      const bCvr = bS > 0 ? bT / bS : 0;
+      // How much the stranded sessions dilute the blended rate, in pp.
+      const dragPP = (t.totalCurrS - bS) > 0
+        ? ((t.totalCurrT / (t.totalCurrS - bS)) - (t.totalCurrT / t.totalCurrS)) * 100
+        : 0;
+      return `
+        <div class="seg-insight">
+          <strong>${fmtN(Math.round(bS))} sessions (${t.pct(bS, t.totalCurrS).toFixed(1)}% of the period)</strong>
+          arrived under an unusable campaign name — ${broken.map(g => `${esc(g.label.toLowerCase())} (${g.entries.length})`).join(', ')} —
+          and produced <strong>${fmtN(Math.round(bT))}</strong> transactions (${(bCvr * 100).toFixed(2)}% CVR).
+          These are almost certainly the same campaigns as the clean rows, split off by a broken UTM,
+          so every other breakout on this page understates those campaigns by that much.
+          ${bT < 0.5 && dragPP >= 0.01 ? `Since they recorded no transactions, they also drag the blended CVR down by
+            roughly <strong>${dragPP.toFixed(2)}pp</strong>.` : ''}
+        </div>`;
+    },
+  },
+];
+
+function renderCampaignSegments(rows) {
+  const card = document.getElementById('campaign-segments-card');
+  if (!card) return;
+
+  const parsed = rows.map(r => ({ r, c: parseCampaignName(r.key) }));
+
+  if (parsed.length === 0) {
+    card.innerHTML = `<h3>Campaign-Type Breakouts</h3><p class="card__sub">No campaign data.</p>`;
+    return;
+  }
+
+  const totalCurrS = parsed.reduce((a, p) => a + p.r.currS, 0);
+  const totalCurrT = parsed.reduce((a, p) => a + p.r.currS * p.r.currC, 0);
+  const totalPrevS = parsed.reduce((a, p) => a + p.r.prevSess, 0);
+  const totalPrevT = parsed.reduce((a, p) => a + p.r.prevSess * p.r.prevCvr, 0);
+  const blendedCurrCvr = totalCurrS > 0 ? totalCurrT / totalCurrS : 0;
+  const pct = (a, b) => b > 0 ? (a / b * 100) : 0;
+
+  // Buckets need enough traffic before a CVR comparison means anything.
+  const MIN_SESS_FOR_INSIGHT = Math.max(100, totalCurrS * 0.02);
+
+  const dimHtml = SEG_DIMENSIONS.map((dim, di) => {
+    const byKey = new Map();
+    const blank = () => ({ currS: 0, prevS: 0, currWC: 0, prevWC: 0, entries: [] });
+    if (!dim.dynamic) {
+      dim.buckets.forEach(b => byKey.set(b.key, { ...b, ...blank() }));
+    }
+
+    parsed.forEach(({ r, c }) => {
+      const res = dim.classify(c);
+      let k, label;
+      if (dim.dynamic) {
+        k = res.key; label = res.label;
+        if (!byKey.has(k)) byKey.set(k, { key: k, label, color: SEG_GRAY, ...blank() });
+      } else {
+        k = byKey.has(res) ? res : dim.buckets[dim.buckets.length - 1].key;
+      }
+      const g = byKey.get(k);
+      g.currS  += r.currS;
+      g.prevS  += r.prevSess;
+      g.currWC += r.currS    * r.currC;
+      g.prevWC += r.prevSess * r.prevCvr;
+      g.entries.push({ name: c.label, currS: r.currS, currC: r.currC, prevSess: r.prevSess, prevCvr: r.prevCvr });
+    });
+
+    // Data-driven dimensions: keep the biggest buckets, fold the tail into
+    // "Other", and hand out palette colors by size so the legend stays stable.
+    if (dim.dynamic) {
+      const ranked = Array.from(byKey.values()).sort((a, b) => b.currS - a.currS);
+      const cap = dim.dynamic.maxBuckets || 8;
+      const kept = ranked.slice(0, cap);
+      const tail = ranked.slice(cap);
+      byKey.clear();
+      kept.forEach((g, i) => {
+        g.color = /^__/.test(g.key) ? SEG_GRAY : SEG_PALETTE[i % SEG_PALETTE.length];
+        byKey.set(g.key, g);
+      });
+      if (tail.length) {
+        const other = { key: '__other', label: `Other (${tail.length} bucket${tail.length === 1 ? '' : 's'})`, color: SEG_GRAY, ...blank() };
+        tail.forEach(g => {
+          other.currS += g.currS; other.prevS += g.prevS;
+          other.currWC += g.currWC; other.prevWC += g.prevWC;
+          other.entries.push(...g.entries);
+        });
+        byKey.set(other.key, other);
+      }
+    }
+
+    const groups = Array.from(byKey.values())
+      .filter(g => g.entries.length > 0)
+      .map(g => {
+        const currCvr = g.currS > 0 ? g.currWC / g.currS : 0;
+        const prevCvr = g.prevS > 0 ? g.prevWC / g.prevS : 0;
+        const sessShare = pct(g.currS, totalCurrS);
+        const txnShare  = pct(g.currWC, totalCurrT);
+        return {
+          ...g,
+          currCvr, prevCvr,
+          cvrDelta: currCvr - prevCvr,
+          currTxns: g.currWC,
+          prevTxns: g.prevWC,
+          sessShare, txnShare,
+          convIndex: sessShare > 0 ? txnShare / sessShare : 0,
+        };
+      })
+      .sort((a, b) => b.currS - a.currS);
+
+    const maxAbsDelta = Math.max(...groups.map(g => Math.abs(g.cvrDelta)), 0.001);
+
+    let rowsHtml = `
+      <div class="seg-row seg-row--header">
+        <div>Bucket</div>
+        <div class="r" title="Number of utm_campaigns in this bucket">Camps</div>
+        <div class="r">Prev CVR</div>
+        <div class="r">Curr CVR</div>
+        <div style="text-align:center">CVR Change</div>
+        <div class="r">Sessions</div>
+        <div class="r" title="Share of current-period sessions">Sess %</div>
+        <div class="r">Txns</div>
+        <div class="r" title="Share of current-period transactions">Txn %</div>
+        <div class="r" title="Txn share ÷ session share. Above 1.00 = converts better than its traffic share implies.">Index</div>
+      </div>`;
+
+    groups.forEach((g, gi) => {
+      const barW = Math.round(Math.abs(g.cvrDelta) / maxAbsDelta * 45);
+      const posD = g.cvrDelta >= 0;
+      const barColor = posD ? 'var(--positive)' : 'var(--negative)';
+      const barStyle = posD ? `left:50%;width:${barW}%` : `right:50%;width:${barW}%`;
+      const lblStyle = posD
+        ? `left:calc(50% + ${barW}% + 4px);color:${barColor}`
+        : `right:calc(50% + ${barW}% + 4px);color:${barColor}`;
+      const idxColor = g.convIndex >= 1.1 ? 'var(--positive)' : g.convIndex <= 0.9 ? 'var(--negative)' : 'var(--text-secondary)';
+
+      const drillRows = [...g.entries]
+        .sort((a, b) => b.currS - a.currS)
+        .map(e => `
+          <div class="seg-drill-row">
+            <div><span class="nm">${esc(e.name)}</span></div>
+            <div>${fmtN(Math.round(e.currS))}</div>
+            <div>${(e.currC * 100).toFixed(2)}%</div>
+            <div class="${cls(e.currC - e.prevCvr)}">${fmtPP((e.currC - e.prevCvr) * 100)}</div>
+          </div>`).join('');
+
+      rowsHtml += `
+        <div class="seg-row seg-row--clickable" data-seg-row="${di}-${gi}">
+          <div class="seg-label">
+            <span class="seg-chev">▶</span>
+            <span class="seg-swatch" style="background:${g.color}"></span>
+            <span>${esc(g.label)}</span>
+          </div>
+          <div class="r seg-num">${g.entries.length}</div>
+          <div class="r seg-num">${(g.prevCvr * 100).toFixed(2)}%</div>
+          <div class="r seg-num" style="font-weight:600">${(g.currCvr * 100).toFixed(2)}%</div>
+          <div class="cvr-bar-cell">
+            <div class="cvr-divider" style="left:50%"></div>
+            <div class="cvr-bar-track" style="${barStyle}">
+              <div class="cvr-bar-fill" style="width:100%;background:${barColor};border-radius:${posD ? '0 3px 3px 0' : '3px 0 0 3px'}"></div>
+            </div>
+            <div class="cvr-bar-label" style="${lblStyle}">${fmtPP(g.cvrDelta * 100)}</div>
+          </div>
+          <div class="r seg-num">${fmtN(Math.round(g.currS))}</div>
+          <div class="r seg-num">${g.sessShare.toFixed(1)}%</div>
+          <div class="r seg-num" style="font-weight:600">${fmtN(Math.round(g.currTxns))}</div>
+          <div class="r seg-num">${g.txnShare.toFixed(1)}%</div>
+          <div class="r seg-idx" style="color:${idxColor}">${g.convIndex.toFixed(2)}×</div>
+        </div>
+        <div class="seg-drill" data-seg-drill="${di}-${gi}">
+          <div class="seg-drill-row seg-drill-row--header">
+            <div>Campaign</div><div>Sessions</div><div>CVR</div><div>Δ vs prev</div>
+          </div>
+          ${drillRows}
+        </div>`;
+    });
+
+    // ── Insight: best vs worst bucket among those with meaningful traffic ──
+    const material = groups.filter(g => g.currS >= MIN_SESS_FOR_INSIGHT);
+    let insight = '';
+    if (dim.insight) {
+      insight = dim.insight(groups, { totalCurrS, totalCurrT, blendedCurrCvr, pct });
+    } else if (material.length >= 2) {
+      const byCvr = [...material].sort((a, b) => b.currCvr - a.currCvr);
+      const best = byCvr[0];
+      const worst = byCvr[byCvr.length - 1];
+      const gapPP = (best.currCvr - worst.currCvr) * 100;
+      const relPct = worst.currCvr > 0 ? ((best.currCvr / worst.currCvr) - 1) * 100 : 0;
+      const mover = [...material].sort((a, b) => Math.abs(b.cvrDelta) - Math.abs(a.cvrDelta))[0];
+      // Transactions we'd gain if the worst bucket's traffic converted at the blended rate.
+      const worstGap = (blendedCurrCvr - worst.currCvr) * worst.currS;
+      insight = `
+        <div class="seg-insight">
+          <strong>${esc(best.label)}</strong> converts highest at
+          <strong>${(best.currCvr * 100).toFixed(2)}%</strong> vs
+          <strong>${esc(worst.label)}</strong> at <strong>${(worst.currCvr * 100).toFixed(2)}%</strong>
+          — a <strong>${gapPP.toFixed(2)}pp</strong> gap${worst.currCvr > 0 ? ` (${fmtP(relPct, 0)} relative)` : ''}.
+          ${esc(best.label)} holds ${best.sessShare.toFixed(1)}% of sessions and
+          ${best.txnShare.toFixed(1)}% of transactions (index ${best.convIndex.toFixed(2)}×);
+          ${esc(worst.label)} holds ${worst.sessShare.toFixed(1)}% / ${worst.txnShare.toFixed(1)}%
+          (index ${worst.convIndex.toFixed(2)}×).
+          ${worstGap > 0.5 ? `Lifting ${esc(worst.label)} to the ${(blendedCurrCvr * 100).toFixed(2)}% blended rate would add
+            <strong>~${fmtN(Math.round(worstGap))}</strong> transactions.` : ''}
+          ${Math.abs(mover.cvrDelta) > 0.0001 ? `Biggest period-over-period mover: ${esc(mover.label)}
+            <strong class="${cls(mover.cvrDelta)}">${fmtPP(mover.cvrDelta * 100)}</strong>.` : ''}
+        </div>`;
+    } else {
+      insight = `
+        <div class="seg-insight">
+          Only ${material.length} bucket${material.length === 1 ? '' : 's'} cleared the
+          ${fmtN(Math.round(MIN_SESS_FOR_INSIGHT))}-session floor — not enough spread to compare on this axis.
+        </div>`;
+    }
+
+    return `
+      <div class="seg-dim">
+        <div class="seg-dim__head">
+          <div class="seg-dim__title">${esc(dim.title)}</div>
+          <div class="seg-dim__desc">${dim.desc}</div>
+        </div>
+        <div class="seg-scroll"><div class="seg-table">${rowsHtml}</div></div>
+        ${insight}
+      </div>`;
+  }).join('');
+
+  card.innerHTML = `
+    <h3>Campaign-Type Breakouts</h3>
+    <p class="card__sub">
+      Splits the same utm_campaigns along every dimension encoded in the naming convention
+      <code>[Stage | Audience | Structure &amp; Bid | Attribution | Geo | Date]</code> — the Test vs Non-Test
+      comparison generalized. Each bucket shows sessions-weighted CVR for both periods, its share of
+      sessions vs transactions, and a <strong>conversion index</strong> (txn share ÷ session share; above
+      1.00× = pulling more than its weight). Buckets are keyword-matched on the campaign name, so a
+      campaign appears once per dimension. Totals per dimension always equal the full set of
+      ${fmtN(parsed.length)} campaigns · ${fmtN(Math.round(totalCurrS))} sessions ·
+      ${fmtN(Math.round(totalCurrT))} transactions (prev: ${fmtN(Math.round(totalPrevS))} sessions ·
+      ${fmtN(Math.round(totalPrevT))} transactions). <em>Click a bucket to list its campaigns.</em>
+    </p>
+    ${dimHtml}
+  `;
+
+  card.querySelectorAll('.seg-row--clickable').forEach(row => {
+    row.addEventListener('click', () => {
+      const key = row.dataset.segRow;
+      const panel = card.querySelector(`.seg-drill[data-seg-drill="${key}"]`);
+      if (!panel) return;
+      row.classList.toggle('seg-row--open', panel.classList.toggle('open'));
     });
   });
 }
