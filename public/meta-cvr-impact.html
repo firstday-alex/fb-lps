@@ -212,6 +212,32 @@
       font-size: 0.72rem;
       font-weight: 700;
     }
+    /* Trailing 7d / 30d run-rate comparisons under each headline KPI. */
+    .kpi__trails {
+      margin-top: 10px;
+      padding-top: 8px;
+      border-top: 1px solid var(--border);
+      display: grid;
+      gap: 3px;
+    }
+    .kpi__trail {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 10px;
+      font-size: 0.74rem;
+      font-weight: 600;
+      cursor: help;
+    }
+    .kpi__trail-label {
+      color: var(--text-secondary);
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      font-size: 0.68rem;
+    }
+    .kpi__trail-base { color: var(--text-secondary); font-weight: 500; }
+
     .pos { color: var(--positive); }
     .neg { color: var(--negative); }
     .amb { color: var(--amber); }
@@ -1627,6 +1653,9 @@ function aggregateBy(rows, keyFn) {
 // GLOBAL STATE
 // ─────────────────────────────────────────────
 let _shopifyTotals = null;
+// Grand totals over the trailing 7- and 30-day windows ending on the End date,
+// for the KPI row's "vs 7d avg" / "vs 30d avg" baselines. Null on the CSV path.
+let _trailingAvgs = { d7: null, d30: null };
 let _rawRows = [];
 
 // The exact window + filters behind the current pull. The ad × LP drill re-queries
@@ -1638,6 +1667,58 @@ let _queryCtx = null;   // { start, end, source, medium, compareStart, compareEn
 // Cache for the lazy per-campaign ad × LP pulls, keyed by campaign name. (Ad
 // preview links have their own persistent caches — see the resolver below.)
 let _adLpDrillCache = new Map();
+
+// ─────────────────────────────────────────────
+// TRAILING-AVERAGE KPI BASELINES
+// ─────────────────────────────────────────────
+function daysInclusive(start, end) {
+  if (!start || !end) return 0;
+  const a = new Date(start + 'T00:00:00Z'), b = new Date(end + 'T00:00:00Z');
+  if (isNaN(a) || isNaN(b)) return 0;
+  return Math.round((b - a) / 86400000) + 1;
+}
+
+// The "vs 7d avg" / "vs 30d avg" lines under a KPI.
+//
+// Sessions and transactions are compared as PER-DAY rates — the selected period
+// can be one day or ninety, so its total against a fixed 7- or 30-day total
+// would be nonsense. CVR is a rate already and compares directly, in pp.
+//
+// Both windows END on the selected End date (the same convention the campaign
+// table's "7d Avg" column uses), so they overlap the current period rather than
+// sitting before it. The tooltips say so — this is a "vs recent run-rate"
+// reading, not an independent baseline like the compare window.
+function kpiTrailHtml(metric, curr, currDays) {
+  const windows = [
+    { label: 'vs 7d avg',  w: _trailingAvgs.d7  },
+    { label: 'vs 30d avg', w: _trailingAvgs.d30 },
+  ].filter(x => x.w);
+  if (!windows.length) return '';
+
+  const unit = metric === 'sessions' ? 'sessions' : 'transactions';
+  const lines = windows.map(({ label, w }) => {
+    let valueHtml, delta, tip;
+    if (metric === 'cvr') {
+      delta = curr - w.cvr;
+      const pct = w.cvr > 0 ? delta / w.cvr * 100 : 0;
+      valueHtml = `${fmtPP(delta * 100)} <span class="kpi__trail-base">(${fmtP(pct, 1)})</span>`;
+      tip = `Blended CVR over the ${w.days} days ending ${w.end} (${w.start} → ${w.end}) was ${(w.cvr * 100).toFixed(2)}%, vs ${(curr * 100).toFixed(2)}% this period. `
+          + `That window ends on the same date as the current range, so the two overlap.`;
+    } else {
+      const base = metric === 'sessions' ? w.sessPerDay : w.txnPerDay;
+      delta = curr - base;
+      const pct = base > 0 ? delta / base * 100 : 0;
+      valueHtml = `${fmtP(pct, 1)} <span class="kpi__trail-base">(${fmtN(Math.round(base))}/day)</span>`;
+      tip = `This period averages ${fmtN(Math.round(curr))} ${unit}/day over ${currDays} day${currDays === 1 ? '' : 's'}; `
+          + `the ${w.days} days ending ${w.end} averaged ${fmtN(Math.round(base))}/day. `
+          + `That window ends on the same date as the current range, so the two overlap.`;
+    }
+    return `<div class="kpi__trail" title="${esc(tip)}">`
+      + `<span class="kpi__trail-label">${label}</span>`
+      + `<span class="${cls(delta)}">${valueHtml}</span></div>`;
+  });
+  return `<div class="kpi__trails">${lines.join('')}</div>`;
+}
 
 // ─────────────────────────────────────────────
 // MAIN RENDER
@@ -1694,24 +1775,32 @@ function render(rawRows, filename) {
   const cvrPct = kpiPrevCvr > 0 ? cvrDelta / kpiPrevCvr * 100 : 0;
   const txnPct = kpiPrevConv > 0 ? kpiTxnDelta / kpiPrevConv * 100 : 0;
 
+  // Per-day rates for the trailing comparisons — see kpiTrailHtml().
+  const currDays = _queryCtx ? daysInclusive(_queryCtx.start, _queryCtx.end) : 0;
+  const currSessPerDay = currDays > 0 ? kpiCurrS / currDays : 0;
+  const currTxnPerDay  = currDays > 0 ? kpiCurrConv / currDays : 0;
+
   document.getElementById('kpi-row').innerHTML = `
     <div class="kpi">
       <div class="kpi__label">Total Sessions</div>
       <div class="kpi__value">${fmtN(Math.round(kpiCurrS))}</div>
       <div class="kpi__sub">was ${fmtN(Math.round(kpiPrevS))}</div>
       <div class="kpi__badge ${bcls(sessDelta)}">${fmtS(Math.round(sessDelta))} (${fmtP(sessPct,1)})</div>
+      ${currDays > 0 ? kpiTrailHtml('sessions', currSessPerDay, currDays) : ''}
     </div>
     <div class="kpi">
       <div class="kpi__label">Conversion Rate</div>
       <div class="kpi__value">${(kpiCurrCvr*100).toFixed(2)}%</div>
       <div class="kpi__sub">was ${(kpiPrevCvr*100).toFixed(2)}%</div>
       <div class="kpi__badge ${bcls(cvrDelta)}">${fmtPP(cvrDelta*100)} (${fmtP(cvrPct,1)})</div>
+      ${kpiTrailHtml('cvr', kpiCurrCvr, currDays)}
     </div>
     <div class="kpi">
       <div class="kpi__label">Transactions</div>
       <div class="kpi__value">${fmtN(Math.round(kpiCurrConv))}</div>
       <div class="kpi__sub">was ${fmtN(Math.round(kpiPrevConv))}</div>
       <div class="kpi__badge ${bcls(kpiTxnDelta)}">${fmtS(Math.round(kpiTxnDelta))} (${fmtP(txnPct,1)})</div>
+      ${currDays > 0 ? kpiTrailHtml('transactions', currTxnPerDay, currDays) : ''}
     </div>
   `;
 
@@ -3988,6 +4077,38 @@ function renderCorrelation(lpRows) {
 // ─────────────────────────────────────────────
 // SHOPIFY QL PARSING
 // ─────────────────────────────────────────────
+// Grand totals for one trailing-window block (avg7d / avg30d). ShopifyQL's
+// WITH TOTALS repeats the totals on every data row instead of emitting a totals
+// row, and it computes them over the full dataset even when the row list is
+// capped — so reading row[0] is both correct and cap-proof.
+// Sessions and transactions are returned as PER-DAY rates: the current period
+// can be any length, and comparing its total against a 7- or 30-day total would
+// be meaningless. CVR is a rate already, so it passes through.
+function parseTrailingWindow(block) {
+  if (!block || !Array.isArray(block.columns) || !Array.isArray(block.rows) || !block.rows.length) return null;
+  const days = block.window && block.window.days;
+  if (!days) return null;
+  const cols = block.columns.map(c => (c.name || '').toLowerCase());
+  const iS = cols.findIndex(s => s === 'sessions__totals');
+  const iC = cols.findIndex(s => s === 'conversion_rate__totals');
+  if (iS < 0) return null;
+  const row = block.rows[0];
+  const cell = (i) => i < 0 ? 0 : (parseFloat(Array.isArray(row) ? row[i] : row[block.columns[i].name]) || 0);
+  const sessions = cell(iS);
+  if (!(sessions > 0)) return null;
+  const cvr = normCvr(cell(iC)) ?? 0;
+  return {
+    days,
+    start: block.window.start,
+    end: block.window.end,
+    sessions,
+    cvr,
+    txns: sessions * cvr,
+    sessPerDay: sessions / days,
+    txnPerDay: sessions * cvr / days,
+  };
+}
+
 function parseShopifyQL(data) {
   const { columns, rows } = data;
   if (!columns || !rows || !rows.length) throw new Error('No data returned from Shopify.');
@@ -4035,6 +4156,11 @@ function parseShopifyQL(data) {
   } else {
     _shopifyTotals = null;
   }
+
+  _trailingAvgs = {
+    d7:  parseTrailingWindow(data.avg7d),
+    d30: parseTrailingWindow(data.avg30d),
+  };
 
   // Optional trailing-7-day CVR per campaign+lp (window ends on the range End
   // date). Present only on the Shopify API path, not CSV uploads. Keyed

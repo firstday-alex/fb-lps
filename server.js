@@ -1836,9 +1836,22 @@ VISUALIZE conversion_rate TYPE table`;
   ORDER BY sessions DESC
   LIMIT ${ROW_LIMIT}`;
 
+  // Same idea over a trailing 30 days, for the headline KPIs' "vs 30d avg"
+  // baseline. Grouped like the 7d query so the row cap can't distort the
+  // `WITH TOTALS` values, which is all the KPI row actually reads.
+  const thirtyStart = shiftDate(end, -29);
+  const avg30Query = `FROM sessions
+  SHOW sessions, conversion_rate
+  WHERE utm_source = '${source}' AND utm_medium = '${medium}'
+  GROUP BY utm_campaign, landing_page_path WITH TOTALS
+  SINCE ${thirtyStart} UNTIL ${end}
+  ORDER BY sessions DESC
+  LIMIT ${ROW_LIMIT}`;
+
   console.log('\n[meta-cvr-impact-data] Main query:\n' + mainQuery);
   if (compareQuery) console.log('\n[meta-cvr-impact-data] Compare query:\n' + compareQuery);
   console.log('\n[meta-cvr-impact-data] 7d-avg query:\n' + avg7Query);
+  console.log('\n[meta-cvr-impact-data] 30d-avg query:\n' + avg30Query);
 
   const runShopifyQL = async (q) => {
     const resp = await fetch(endpoint, {
@@ -1858,16 +1871,21 @@ VISUALIZE conversion_rate TYPE table`;
   };
 
   try {
-    const [main, compare, avg7] = await Promise.all([
+    const [main, compare, avg7, avg30] = await Promise.all([
       runShopifyQL(mainQuery),
       compareQuery ? runShopifyQL(compareQuery) : Promise.resolve(null),
-      // Resilient: a 7d-window failure must not break the main pull.
+      // Resilient: a trailing-window failure must not break the main pull.
       runShopifyQL(avg7Query).catch(e => {
         console.warn('[meta-cvr-impact-data] 7d-avg query failed:', e.message);
         return null;
       }),
+      runShopifyQL(avg30Query).catch(e => {
+        console.warn('[meta-cvr-impact-data] 30d-avg query failed:', e.message);
+        return null;
+      }),
     ]);
-    const avg7d = avg7 ? { window: { start: sevenStart, end }, columns: avg7.columns, rows: avg7.rows } : null;
+    const avg7d  = avg7  ? { window: { start: sevenStart,  end, days: 7  }, columns: avg7.columns,  rows: avg7.rows }  : null;
+    const avg30d = avg30 ? { window: { start: thirtyStart, end, days: 30 }, columns: avg30.columns, rows: avg30.rows } : null;
 
     // No custom compare → return main as-is (frontend already handles COMPARE
     // TO previous_period output).
@@ -1878,6 +1896,7 @@ VISUALIZE conversion_rate TYPE table`;
         columns: main.columns,
         rows: main.rows,
         avg7d,
+        avg30d,
       });
     }
 
@@ -1977,6 +1996,7 @@ VISUALIZE conversion_rate TYPE table`;
       columns: main.columns,                                  // unchanged shape
       rows: newRows,
       avg7d,
+      avg30d,
     });
   } catch (err) {
     console.error('Meta CVR impact data error:', err);
