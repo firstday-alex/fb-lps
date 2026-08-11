@@ -413,6 +413,9 @@
       background: #eef3ff; color: var(--fb-blue); font-weight: 600;
     }
     .ad-lp-empty { text-align: center; color: var(--text-secondary); padding: 18px; }
+    /* The preview badge sits inside the clickable name cell — inline-block keeps
+       the cell's hover underline from being drawn through it. */
+    .ad-lp-table .adrill-noad { display: inline-block; }
 
     .headline-card {
       padding: 18px 20px;
@@ -1445,6 +1448,12 @@
             <option value="all">all</option>
           </select>
         </label>
+      </div>
+      <div class="adrill-banner" id="ad-lp-auth-banner" style="display:none">⚠
+        <strong>Creative previews are off because this page isn't signed in to Facebook.</strong>
+        Shopify only records the ad <em>name</em>; turning it into a preview link needs the Meta API.
+        <a class="adrill-login" href="/auth/facebook">Log in with Facebook</a>
+        then reload — every number below is Shopify data and works without it.
       </div>
       <div style="overflow-x:auto">
         <table class="breakdown-table ad-lp-table" id="ad-lp-table">
@@ -3410,8 +3419,14 @@ const _adLink = {
   authFailed: false,
   resolved: 0,
   failed: 0,
-  onProgress: null,
+  // Progress subscribers. A Set rather than one slot because both the Ad × LP
+  // card and any open campaign drill want to know when links land.
+  listeners: new Set(),
 };
+
+function adLinkNotify() {
+  _adLink.listeners.forEach(fn => { try { fn(); } catch {} });
+}
 
 function adLinkEnqueue(names) {
   if (_adLink.authFailed) return;          // no point hammering a 401
@@ -3446,7 +3461,7 @@ async function adLinkWorker() {
         _adLink.authFailed = true;
         _adLink.lastError = e.message;
         _adLink.queue.length = 0;
-        if (_adLink.onProgress) _adLink.onProgress();
+        adLinkNotify();
         return;
       }
       _adLink.lastError = e.message;
@@ -3463,7 +3478,7 @@ async function adLinkWorker() {
         applyAdLink(name, knownId ? adsManagerUrl(_adLink.accountId, knownId) : null, knownId, knownId ? 'adsmanager' : 'none');
       }
     }
-    if (_adLink.onProgress) _adLink.onProgress();
+    adLinkNotify();
     await new Promise(r => setTimeout(r, 150));
   }
 }
@@ -3515,6 +3530,34 @@ function applyAdLink(name, url, adId, kind) {
         + ` title="Meta returned no ad matching this utm_content in the lookup window — it may have been renamed, or had no delivery">no link</span>`;
     }
   });
+}
+
+// The link markup for one ad name, in whatever state that name is currently in.
+// Anything already cached from a previous visit renders as a live link on the
+// first paint; the rest get a placeholder the background queue upgrades in
+// place via applyAdLink(). Shared by the Ad × LP card and the campaign drill.
+function adLinkCellHtml(adName) {
+  const key = adDomKey(adName);
+  const hit = cachedPreview(adName);
+  if (hit) {
+    return `<a class="adrill-preview" href="${hit.url}" target="_blank" rel="noopener"`
+      + ` data-adkey="${key}" data-adid="${hit.ad_id || ''}" title="Open Meta's creative preview">preview ↗</a>`;
+  }
+  if (_adLink.authFailed) {
+    return `<span class="adrill-noad" data-adkey="${key}" title="Not signed in to Facebook — sign in to load creative previews">no link</span>`;
+  }
+  // A row that already failed terminally keeps its outcome across repaints.
+  const term = _adLink.terminal.get(normAdName(adName));
+  if (term && term.kind === 'adsmanager' && term.url) {
+    return `<a class="adrill-preview adrill-preview--fallback" href="${term.url}" target="_blank" rel="noopener"`
+      + ` data-adkey="${key}" data-adid="${term.adId || ''}"`
+      + ` title="Creative preview unavailable right now — opens this ad in Ads Manager instead">Ads Manager ↗</a>`;
+  }
+  if (term) {
+    return `<span class="adrill-noad" data-adkey="${key}"`
+      + ` title="Meta returned no ad matching this utm_content in the lookup window — it may have been renamed, or had no delivery">no link</span>`;
+  }
+  return `<span class="adrill-pending" data-adkey="${key}" title="Resolving this ad in Meta…">resolving…</span>`;
 }
 
 async function fetchCampaignAdLp(campaign) {
@@ -3631,35 +3674,9 @@ function renderAdLpDrill(container, campaign) {
     const PAGE = 25;
     let shown = Math.min(PAGE, groups.length);
 
-    // Anything already cached from a previous visit renders as a live link on the
-    // first paint; the rest get a placeholder the background queue upgrades.
-    const linkCell = (adName) => {
-      const key = adDomKey(adName);
-      const hit = cachedPreview(adName);
-      if (hit) {
-        return `<a class="adrill-preview" href="${hit.url}" target="_blank" rel="noopener"`
-          + ` data-adkey="${key}" data-adid="${hit.ad_id || ''}" title="Open Meta's creative preview">preview ↗</a>`;
-      }
-      if (_adLink.authFailed) {
-        return `<span class="adrill-noad" data-adkey="${key}" title="Not signed in to Facebook — sign in to load creative previews">no link</span>`;
-      }
-      // A row that already failed terminally keeps its outcome across repaints.
-      const term = _adLink.terminal.get(normAdName(adName));
-      if (term && term.kind === 'adsmanager' && term.url) {
-        return `<a class="adrill-preview adrill-preview--fallback" href="${term.url}" target="_blank" rel="noopener"`
-          + ` data-adkey="${key}" data-adid="${term.adId || ''}"`
-          + ` title="Creative preview unavailable right now — opens this ad in Ads Manager instead">Ads Manager ↗</a>`;
-      }
-      if (term) {
-        return `<span class="adrill-noad" data-adkey="${key}"`
-          + ` title="Meta returned no ad matching this utm_content in the lookup window — it may have been renamed, or had no delivery">no link</span>`;
-      }
-      return `<span class="adrill-pending" data-adkey="${key}" title="Resolving this ad in Meta…">resolving…</span>`;
-    };
-
     const rowHtml = (g) => {
       const adLabel = g.ad || '(no utm_content)';
-      const nameCell = `${esc(adLabel)} ${linkCell(g.ad)}`;
+      const nameCell = `${esc(adLabel)} ${adLinkCellHtml(g.ad)}`;
       const sPos = g.sessDelta >= 0;
 
       // A pair with traffic in only ONE period has no meaningful CVR *change* —
@@ -3785,10 +3802,17 @@ function renderAdLpDrill(container, campaign) {
     // Refresh the progress line as links land, but don't repaint on every single
     // one — applyAdLink() has already swapped the anchors in place.
     let progressTimer = null;
-    _adLink.onProgress = () => {
+    const onProgress = () => {
       if (progressTimer) return;
-      progressTimer = setTimeout(() => { progressTimer = null; if (container.isConnected) paint(); }, 2500);
+      progressTimer = setTimeout(() => {
+        progressTimer = null;
+        // The drill can be collapsed while links are still resolving — drop the
+        // subscription instead of repainting a detached node forever.
+        if (container.isConnected) paint();
+        else _adLink.listeners.delete(onProgress);
+      }, 2500);
     };
+    _adLink.listeners.add(onProgress);
 
     paint();
   }).catch(e => {
@@ -4081,6 +4105,9 @@ let _adLpSort = { key: 'sessions', dir: 'desc' };
 // free-text. Empty string means "no filter for that key".
 let _adLpAttrFilters = {};
 const _adLpDefaultDir = { ad: 'asc', lp: 'asc', sessions: 'desc', prevSess: 'desc', cvr: 'desc', cvrDelta: 'desc', txns: 'desc' };
+// How many displayed rows get a Meta preview link. "Show all" is unbounded and
+// every name costs two API calls, so the queue is capped rather than the table.
+const AD_LP_LINK_CAP = 150;
 
 // Ad names follow a `key:value_key:value_...` convention, e.g.
 //   2026/02/14_batch:multi#0161a_stage:MOFU_medium:video-midform_style:Influencer_
@@ -4296,6 +4323,19 @@ async function loadAdLpData(start, end, source, medium) {
   }
 }
 
+// The resolver can discover a 401 long after the first paint, so the banner is
+// driven from _adLink state rather than set once at render time.
+let _adLpAuthRepainted = false;
+function syncAdLpAuthBanner() {
+  const banner = document.getElementById('ad-lp-auth-banner');
+  if (!banner) return;
+  banner.style.display = _adLink.authFailed ? '' : 'none';
+  if (_adLink.authFailed && !_adLpAuthRepainted) {
+    _adLpAuthRepainted = true;
+    renderAdLp();   // the queue is dead — swap stuck "resolving…" for "no link"
+  }
+}
+
 function renderAdLp() {
   const tbody = document.getElementById('ad-lp-tbody');
   const tfoot = document.getElementById('ad-lp-tfoot');
@@ -4323,6 +4363,7 @@ function renderAdLp() {
     }
   }
   syncAttrActiveStyles();
+  syncAdLpAuthBanner();
 
   // Sort
   const keyFns = {
@@ -4369,6 +4410,12 @@ function renderAdLp() {
     return;
   }
 
+  // Preview links: each name costs two Meta calls, so only the first slice of
+  // rows gets one. "Show all" can be thousands of rows — queueing every one of
+  // them would run for an hour and rate-limit the account.
+  const linkable = display.slice(0, AD_LP_LINK_CAP).filter(r => r.ad);
+  const linkableNames = new Set(linkable.map(r => normAdName(r.ad)));
+
   // Body rows
   tbody.innerHTML = '';
   display.forEach(r => {
@@ -4379,9 +4426,11 @@ function renderAdLp() {
     const adActive = _adLpFilter && _adLpFilter.type === 'ad' && _adLpFilter.value === r.ad;
     const lpActive = _adLpFilter && _adLpFilter.type === 'lp' && _adLpFilter.value === r.lp;
 
+    const adLink = r.ad && linkableNames.has(normAdName(r.ad)) ? adLinkCellHtml(r.ad) : '';
+
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td class="ad-lp-clickable${adActive ? ' ad-lp-active' : ''}" data-ad="${esc(r.ad)}" title="${esc(adLabel)}">${esc(adLabel)}</td>
+      <td class="ad-lp-clickable${adActive ? ' ad-lp-active' : ''}" data-ad="${esc(r.ad)}" title="${esc(adLabel)}">${esc(adLabel)}${adLink}</td>
       <td class="ad-lp-clickable${lpActive ? ' ad-lp-active' : ''}" data-lp="${esc(r.lp)}" title="${esc(lpLabel)}">${esc(lpLabel)}</td>
       <td class="r">${fmtN(r.currS)}</td>
       <td class="r" style="color:var(--text-secondary)">${fmtN(r.prevSess)}</td>
@@ -4391,6 +4440,10 @@ function renderAdLp() {
     `;
     tbody.appendChild(tr);
   });
+
+  // Names already seen are skipped, so this is cheap to call on every repaint
+  // (sort click, filter change, limit change).
+  adLinkEnqueue(linkable.map(r => r.ad));
 
   // Totals (across what is currently shown)
   let tS = 0, tWC = 0, tPrevS = 0, tPrevWC = 0;
@@ -4408,9 +4461,12 @@ function renderAdLp() {
   const limitNote = !_adLpFilter && sorted.length > display.length
     ? ` <span style="color:var(--text-secondary);font-weight:400">(of ${sorted.length})</span>`
     : '';
+  const linkNote = display.length > AD_LP_LINK_CAP
+    ? ` <span style="color:var(--text-secondary);font-weight:400" title="Each preview link costs two Meta API calls, so only the first ${AD_LP_LINK_CAP} rows resolve one. Sort or filter to bring other rows into range.">· preview links on the first ${AD_LP_LINK_CAP} rows</span>`
+    : '';
   tfoot.innerHTML = `
     <tr>
-      <td colspan="2">Total · ${display.length} row${display.length === 1 ? '' : 's'}${limitNote}</td>
+      <td colspan="2">Total · ${display.length} row${display.length === 1 ? '' : 's'}${limitNote}${linkNote}</td>
       <td class="r">${fmtN(tS)}</td>
       <td class="r" style="color:var(--text-secondary)">${fmtN(tPrevS)}</td>
       <td class="r">${(blendedCvr * 100).toFixed(2)}%</td>
@@ -4425,7 +4481,12 @@ function setupAdLpHandlers() {
   if (!card || card.dataset.adLpWired === '1') return;
   card.dataset.adLpWired = '1';
 
+  _adLink.listeners.add(syncAdLpAuthBanner);
+
   card.addEventListener('click', (e) => {
+    // The preview link lives inside the clickable ad-name cell — following it
+    // shouldn't also toggle the ad filter.
+    if (e.target.closest('a')) return;
     const adCell = e.target.closest('td[data-ad]');
     const lpCell = e.target.closest('td[data-lp]');
     if (adCell) {
