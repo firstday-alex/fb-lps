@@ -1696,6 +1696,9 @@ function kpiTrailHtml(metric, curr, currDays) {
   if (!windows.length) return '';
 
   const unit = metric === 'sessions' ? 'sessions' : 'transactions';
+  // Low-volume scopes can average well under 1/day — rounding those to a bare
+  // "0/day" next to a live percentage reads as broken.
+  const rate = (v) => fmtN(v, v < 10 ? 1 : 0);
   const lines = windows.map(({ label, w }) => {
     let valueHtml, delta, tip;
     if (metric === 'cvr') {
@@ -1708,9 +1711,9 @@ function kpiTrailHtml(metric, curr, currDays) {
       const base = metric === 'sessions' ? w.sessPerDay : w.txnPerDay;
       delta = curr - base;
       const pct = base > 0 ? delta / base * 100 : 0;
-      valueHtml = `${fmtP(pct, 1)} <span class="kpi__trail-base">(${fmtN(Math.round(base))}/day)</span>`;
-      tip = `This period averages ${fmtN(Math.round(curr))} ${unit}/day over ${currDays} day${currDays === 1 ? '' : 's'}; `
-          + `the ${w.days} days ending ${w.end} averaged ${fmtN(Math.round(base))}/day. `
+      valueHtml = `${fmtP(pct, 1)} <span class="kpi__trail-base">(${rate(base)}/day)</span>`;
+      tip = `This period averages ${rate(curr)} ${unit}/day over ${currDays} day${currDays === 1 ? '' : 's'}; `
+          + `the ${w.days} days ending ${w.end} averaged ${rate(base)}/day. `
           + `That window ends on the same date as the current range, so the two overlap.`;
     }
     return `<div class="kpi__trail" title="${esc(tip)}">`

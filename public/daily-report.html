@@ -31,6 +31,10 @@
     .kpi__label { font-size:0.7rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-secondary); font-weight:700; }
     .kpi__value { font-size:1.5rem; font-weight:700; margin-top:2px; }
     .kpi__sub { font-size:0.78rem; color:var(--text-secondary); }
+    .kpi__trails { margin-top:8px; padding-top:6px; border-top:1px solid #e4e8ee; display:grid; gap:2px; }
+    .kpi__trail { display:flex; justify-content:space-between; align-items:baseline; gap:8px; font-size:0.72rem; font-weight:600; cursor:help; }
+    .kpi__trail-label { color:var(--text-secondary); font-weight:500; text-transform:uppercase; letter-spacing:0.04em; font-size:0.66rem; }
+    .kpi__trail-base { color:var(--text-secondary); font-weight:500; }
     .up { color:var(--positive); } .down { color:var(--negative); }
     table.nums { width:100%; border-collapse:collapse; font-size:0.85rem; margin-top:8px; }
     table.nums th, table.nums td { text-align:right; padding:6px 10px; border-bottom:1px solid #eceff3; }
@@ -89,6 +93,33 @@ function mdToHtml(md){
 
 function deltaPct(curr, prev){ return prev>0 ? (curr-prev)/prev*100 : null; }
 
+// "vs 7d avg" / "vs 30d avg" lines under a KPI tile.
+//
+// Day-over-day is mostly day-of-week noise, so the brief also carries run-rate
+// baselines. Unlike the dashboards, these windows END THE DAY BEFORE this one
+// and exclude it — the day is the subject of the report, so letting it sit
+// inside its own baseline would mute the signal.
+//
+// `pick(w)` returns the baseline value for a window; `kind` decides how the
+// delta is expressed: 'pct' for counts, 'pp' for a rate.
+function trailHtml(trailing, curr, pick, kind, fmtBase, unitNote){
+  if(!trailing || curr==null || !isFinite(curr)) return '';
+  const rows = [['vs 7d avg', trailing.d7], ['vs 30d avg', trailing.d30]]
+    .filter(([, w]) => w && isFinite(pick(w)) && pick(w) > 0);
+  if(!rows.length) return '';
+  const lines = rows.map(([label, w]) => {
+    const base = pick(w);
+    const d = curr - base;
+    const pct = base>0 ? d/base*100 : null;
+    const val = kind==='pp'
+      ? `${fmtPP(d*100)} <span class="kpi__trail-base">(${fmtPct(pct)})</span>`
+      : `${fmtPct(pct)} <span class="kpi__trail-base">(${fmtBase(base)})</span>`;
+    const tip = `${w.days}-day baseline: ${w.start} → ${w.end}, ending the day before this report. ${unitNote} ${fmtBase(base)}.`;
+    return `<div class="kpi__trail" title="${esc(tip)}"><span class="kpi__trail-label">${label}</span><span class="${cls(d)}">${val}</span></div>`;
+  });
+  return `<div class="kpi__trails">${lines.join('')}</div>`;
+}
+
 function renderBrief(b){
   if(!b) return '';
   let h = '';
@@ -100,14 +131,14 @@ function renderBrief(b){
     const cvrRel=deltaPct(cvr.curr,cvr.prev);
     const tPct=deltaPct(txn.curr,txn.prev);
     h += `<div class="kpis">
-      <div class="kpi"><div class="kpi__label">Sessions</div><div class="kpi__value">${fmtN(sess.curr)}</div><div class="kpi__sub ${cls(sPct)}">${fmtPct(sPct)} vs prior day</div></div>
-      <div class="kpi"><div class="kpi__label">Conversion Rate</div><div class="kpi__value">${cvr.curr!=null?(cvr.curr*100).toFixed(2)+'%':'—'}</div><div class="kpi__sub ${cls(cvrPP)}">${fmtPP(cvrPP)} (${fmtPct(cvrRel)})</div></div>
-      <div class="kpi"><div class="kpi__label">Transactions</div><div class="kpi__value">${fmtN(txn.curr)}</div><div class="kpi__sub ${cls(tPct)}">${fmtPct(tPct)}</div></div>`;
+      <div class="kpi"><div class="kpi__label">Sessions</div><div class="kpi__value">${fmtN(sess.curr)}</div><div class="kpi__sub ${cls(sPct)}">${fmtPct(sPct)} vs prior day</div>${trailHtml(o.trailing, sess.curr, w=>w.sessionsPerDay, 'pct', v=>(v<10?v.toFixed(1):fmtN(v))+'/day', 'Averaged')}</div>
+      <div class="kpi"><div class="kpi__label">Conversion Rate</div><div class="kpi__value">${cvr.curr!=null?(cvr.curr*100).toFixed(2)+'%':'—'}</div><div class="kpi__sub ${cls(cvrPP)}">${fmtPP(cvrPP)} (${fmtPct(cvrRel)})</div>${trailHtml(o.trailing, cvr.curr, w=>w.cvr, 'pp', v=>(v*100).toFixed(2)+'%', 'Blended CVR')}</div>
+      <div class="kpi"><div class="kpi__label">Transactions</div><div class="kpi__value">${fmtN(txn.curr)}</div><div class="kpi__sub ${cls(tPct)}">${fmtPct(tPct)}</div>${trailHtml(o.trailing, txn.curr, w=>w.transactionsPerDay, 'pct', v=>(v<10?v.toFixed(1):fmtN(v))+'/day', 'Averaged')}</div>`;
     if(b.aov && b.aov.averageOrderValue){
       const a=b.aov.averageOrderValue; const aPct=deltaPct(a.curr,a.prev);
       const scope = b.aov.scope || 'Online Store channel';
       const tip = `AOV = Shopify average_order_value for the ${scope}. Excludes subscription (Stay Ai), POS, and other sales channels so it reflects web store orders. ShopifyQL can't split new vs returning customers, so all customers are included.`;
-      h += `<div class="kpi" title="${esc(tip)}"><div class="kpi__label">Avg Order Value <span style="cursor:help;color:var(--fb-blue,#1877f2)">ⓘ</span></div><div class="kpi__value">${fmtMoney(a.curr)}</div><div class="kpi__sub ${cls(aPct)}">${fmtPct(aPct)}</div><div class="kpi__sub" style="font-size:0.68rem">${esc(scope)}</div></div>`;
+      h += `<div class="kpi" title="${esc(tip)}"><div class="kpi__label">Avg Order Value <span style="cursor:help;color:var(--fb-blue,#1877f2)">ⓘ</span></div><div class="kpi__value">${fmtMoney(a.curr)}</div><div class="kpi__sub ${cls(aPct)}">${fmtPct(aPct)}</div><div class="kpi__sub" style="font-size:0.68rem">${esc(scope)}</div>${trailHtml(b.aov.trailing, a.curr, w=>w.averageOrderValue, 'pct', v=>'$'+v.toFixed(2), 'Average order value')}</div>`;
     }
     h += `</div>`;
     if(o.funnel){

@@ -212,6 +212,32 @@
       font-size: 0.72rem;
       font-weight: 700;
     }
+    /* Trailing 7d / 30d run-rate comparisons under each headline KPI. */
+    .kpi__trails {
+      margin-top: 10px;
+      padding-top: 8px;
+      border-top: 1px solid var(--border);
+      display: grid;
+      gap: 3px;
+    }
+    .kpi__trail {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 10px;
+      font-size: 0.74rem;
+      font-weight: 600;
+      cursor: help;
+    }
+    .kpi__trail-label {
+      color: var(--text-secondary);
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      font-size: 0.68rem;
+    }
+    .kpi__trail-base { color: var(--text-secondary); font-weight: 500; }
+
     .pos { color: var(--positive); }
     .neg { color: var(--negative); }
     .amb { color: var(--amber); }
@@ -1485,6 +1511,10 @@ function aggregateBy(rows, keyFn) {
 // GLOBAL STATE
 // ─────────────────────────────────────────────
 let _shopifyTotals = null;      // grand totals (ALL scope) — fallback only
+// Trailing 7/30-day run-rate baselines per source scope, for the KPI row's
+// "vs 7d avg" / "vs 30d avg" lines: { d7: { days, start, end, scopes }, d30 }.
+let _trailingAvgs = { d7: null, d30: null };
+let _dateRange = null;          // { start, end } behind the current pull
 let _rawRows = [];
 let _sourceTotals = {};         // { ALL:{...}, google:{...}, youtube:{...}, 'demand-gen':{...} }
 let _scopedRows = [];           // _rawRows filtered to the active source
@@ -1525,6 +1555,78 @@ function render(rawRows, filename) {
   _rawRows = rawRows;
   _filename = filename;
   rerender();
+}
+
+// ─────────────────────────────────────────────
+// TRAILING-AVERAGE KPI BASELINES
+// ─────────────────────────────────────────────
+function daysInclusive(start, end) {
+  if (!start || !end) return 0;
+  const a = new Date(start + 'T00:00:00Z'), b = new Date(end + 'T00:00:00Z');
+  if (isNaN(a) || isNaN(b)) return 0;
+  return Math.round((b - a) / 86400000) + 1;
+}
+
+// One trailing window, narrowed to the ACTIVE source scope — comparing
+// youtube's current sessions against an all-Google-family baseline would be
+// wrong, so the server sends the trailing totals at source grain.
+function trailingForScope(bucket) {
+  if (!bucket || !bucket.scopes) return null;
+  const s = bucket.scopes[_activeSource];
+  if (!s || !(s.sessions > 0)) return null;
+  return {
+    days: bucket.days, start: bucket.start, end: bucket.end,
+    sessions: s.sessions,
+    cvr: s.cvr,
+    sessPerDay: s.sessions / bucket.days,
+    txnPerDay: s.sessions * s.cvr / bucket.days,
+  };
+}
+
+// The "vs 7d avg" / "vs 30d avg" lines under a KPI.
+//
+// Sessions and transactions are compared as PER-DAY rates — the selected period
+// can be one day or ninety, so its total against a fixed 7- or 30-day total
+// would be nonsense. CVR is a rate already and compares directly, in pp.
+//
+// Both windows END on the selected End date (the same convention the campaign
+// table's "7d Avg" column uses), so they overlap the current period rather than
+// sitting before it. The tooltips say so — this is a "vs recent run-rate"
+// reading, not an independent baseline like the compare window.
+function kpiTrailHtml(metric, curr, currDays) {
+  const windows = [
+    { label: 'vs 7d avg',  w: trailingForScope(_trailingAvgs.d7)  },
+    { label: 'vs 30d avg', w: trailingForScope(_trailingAvgs.d30) },
+  ].filter(x => x.w);
+  if (!windows.length) return '';
+
+  const scopeNote = _activeSource === 'ALL' ? '' : ` (${_activeSource} only)`;
+  const unit = metric === 'sessions' ? 'sessions' : 'transactions';
+  // Low-volume scopes can average well under 1/day — rounding those to a bare
+  // "0/day" next to a live percentage reads as broken.
+  const rate = (v) => fmtN(v, v < 10 ? 1 : 0);
+  const lines = windows.map(({ label, w }) => {
+    let valueHtml, delta, tip;
+    if (metric === 'cvr') {
+      delta = curr - w.cvr;
+      const pct = w.cvr > 0 ? delta / w.cvr * 100 : 0;
+      valueHtml = `${fmtPP(delta * 100)} <span class="kpi__trail-base">(${fmtP(pct, 1)})</span>`;
+      tip = `Blended CVR over the ${w.days} days ending ${w.end} (${w.start} → ${w.end})${scopeNote} was ${(w.cvr * 100).toFixed(2)}%, vs ${(curr * 100).toFixed(2)}% this period. `
+          + `That window ends on the same date as the current range, so the two overlap.`;
+    } else {
+      const base = metric === 'sessions' ? w.sessPerDay : w.txnPerDay;
+      delta = curr - base;
+      const pct = base > 0 ? delta / base * 100 : 0;
+      valueHtml = `${fmtP(pct, 1)} <span class="kpi__trail-base">(${rate(base)}/day)</span>`;
+      tip = `This period averages ${rate(curr)} ${unit}/day over ${currDays} day${currDays === 1 ? '' : 's'}; `
+          + `the ${w.days} days ending ${w.end}${scopeNote} averaged ${rate(base)}/day. `
+          + `That window ends on the same date as the current range, so the two overlap.`;
+    }
+    return `<div class="kpi__trail" title="${esc(tip)}">`
+      + `<span class="kpi__trail-label">${label}</span>`
+      + `<span class="${cls(delta)}">${valueHtml}</span></div>`;
+  });
+  return `<div class="kpi__trails">${lines.join('')}</div>`;
 }
 
 // Switchable core — re-run on every source / dimension / breakdown change with
@@ -1590,24 +1692,32 @@ function rerender() {
   const cvrPct = kpiPrevCvr > 0 ? cvrDelta / kpiPrevCvr * 100 : 0;
   const txnPct = kpiPrevConv > 0 ? kpiTxnDelta / kpiPrevConv * 100 : 0;
 
+  // Per-day rates for the trailing comparisons — see kpiTrailHtml().
+  const currDays = _dateRange ? daysInclusive(_dateRange.start, _dateRange.end) : 0;
+  const currSessPerDay = currDays > 0 ? kpiCurrS / currDays : 0;
+  const currTxnPerDay  = currDays > 0 ? kpiCurrConv / currDays : 0;
+
   document.getElementById('kpi-row').innerHTML = `
     <div class="kpi">
       <div class="kpi__label">Total Sessions</div>
       <div class="kpi__value">${fmtN(Math.round(kpiCurrS))}</div>
       <div class="kpi__sub">was ${fmtN(Math.round(kpiPrevS))}</div>
       <div class="kpi__badge ${bcls(sessDelta)}">${fmtS(Math.round(sessDelta))} (${fmtP(sessPct,1)})</div>
+      ${currDays > 0 ? kpiTrailHtml('sessions', currSessPerDay, currDays) : ''}
     </div>
     <div class="kpi">
       <div class="kpi__label">Conversion Rate</div>
       <div class="kpi__value">${(kpiCurrCvr*100).toFixed(2)}%</div>
       <div class="kpi__sub">was ${(kpiPrevCvr*100).toFixed(2)}%</div>
       <div class="kpi__badge ${bcls(cvrDelta)}">${fmtPP(cvrDelta*100)} (${fmtP(cvrPct,1)})</div>
+      ${kpiTrailHtml('cvr', kpiCurrCvr, currDays)}
     </div>
     <div class="kpi">
       <div class="kpi__label">Transactions</div>
       <div class="kpi__value">${fmtN(Math.round(kpiCurrConv))}</div>
       <div class="kpi__sub">was ${fmtN(Math.round(kpiPrevConv))}</div>
       <div class="kpi__badge ${bcls(kpiTxnDelta)}">${fmtS(Math.round(kpiTxnDelta))} (${fmtP(txnPct,1)})</div>
+      ${currDays > 0 ? kpiTrailHtml('transactions', currTxnPerDay, currDays) : ''}
     </div>
   `;
 
@@ -2969,6 +3079,10 @@ function parseShopifyQL(data) {
   _sourceTotals = (data.sourceTotals && typeof data.sourceTotals === 'object') ? data.sourceTotals : {};
   if (_shopifyTotals && !_sourceTotals.ALL) _sourceTotals.ALL = _shopifyTotals;
 
+  // Trailing run-rate baselines, also per source scope.
+  _trailingAvgs = (data.trailingAvgs && typeof data.trailingAvgs === 'object')
+    ? data.trailingAvgs : { d7: null, d30: null };
+
   // Optional trailing-7-day CVR keyed campaign||source||medium||lp so it
   // survives aggregation by campaign, source/medium, or landing page.
   const avg7Map = new Map();
@@ -3486,6 +3600,7 @@ async function loadFromShopify() {
     const data = await resp.json();
     if (data.query) console.log('[ShopifyQL]\n' + data.query);
     if (data.compare_query) console.log('[ShopifyQL · compare]\n' + data.compare_query);
+    _dateRange = { start: startDate, end: endDate };   // day count for the KPI run-rates
     status.textContent = 'Parsing response…';
     const rows = parseShopifyQL(data);
     const compareLabel = useCustomCompare

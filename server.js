@@ -1072,6 +1072,18 @@ VISUALIZE conversion_rate TYPE table`;
 
   console.log('\n[conversion-impact-data] Main query:\n' + mainQuery);
   if (compareQuery) console.log('\n[conversion-impact-data] Compare query:\n' + compareQuery);
+  // Trailing 7/30-day windows ending on the End date — the run-rate baselines
+  // behind the headline KPIs' "vs 7d avg" / "vs 30d avg" lines. Grouped like
+  // the main query so `WITH TOTALS` is computed over the full dataset; the KPI
+  // row reads only those totals.
+  const sevenStart  = shiftDate(end, -6);
+  const thirtyStart = shiftDate(end, -29);
+  const trailingQuery = (since) => `FROM sessions
+  SHOW sessions, conversion_rate
+  GROUP BY utm_source, landing_page_path WITH TOTALS
+  SINCE ${since} UNTIL ${end}
+  ORDER BY sessions DESC`;
+
   console.log('\n[conversion-impact-data] Correlation query:\n' + correlationQuery);
 
   const runQuery = async (q) => {
@@ -1092,11 +1104,22 @@ VISUALIZE conversion_rate TYPE table`;
   };
 
   try {
-    const [main, correlation, compare] = await Promise.all([
+    const [main, correlation, compare, trail7, trail30] = await Promise.all([
       runQuery(mainQuery),
       runQuery(correlationQuery),
       compareQuery ? runQuery(compareQuery) : Promise.resolve(null),
+      // Resilient: a trailing-window failure must not break the main pull.
+      runQuery(trailingQuery(sevenStart)).catch(e => {
+        console.warn('[conversion-impact-data] 7d trailing query failed:', e.message);
+        return null;
+      }),
+      runQuery(trailingQuery(thirtyStart)).catch(e => {
+        console.warn('[conversion-impact-data] 30d trailing query failed:', e.message);
+        return null;
+      }),
     ]);
+    const avg7d  = trail7  ? { window: { start: sevenStart,  end, days: 7  }, columns: trail7.columns,  rows: trail7.rows }  : null;
+    const avg30d = trail30 ? { window: { start: thirtyStart, end, days: 30 }, columns: trail30.columns, rows: trail30.rows } : null;
 
     if (!compare) {
       return res.json({
@@ -1108,6 +1131,8 @@ VISUALIZE conversion_rate TYPE table`;
           columns: correlation.columns,
           rows: correlation.rows,
         },
+        avg7d,
+        avg30d,
       });
     }
 
@@ -1218,6 +1243,8 @@ VISUALIZE conversion_rate TYPE table`;
         columns: correlation.columns,
         rows: correlation.rows,
       },
+      avg7d,
+      avg30d,
     });
   } catch (err) {
     console.error('Conversion impact data error:', err);
@@ -2530,6 +2557,19 @@ VISUALIZE conversion_rate TYPE table`;
   COMPARE TO previous_period
   ORDER BY sessions DESC`;
 
+  // Trailing 7/30-day run-rate baselines for the headline KPIs, at SOURCE grain
+  // so the scope switcher (ALL / google / youtube / demand-gen) compares like
+  // with like. Grouped by utm_source rather than reusing the 4-dim avg7 grid
+  // above: that grid can hit Shopify's row cap, and summing a truncated grid
+  // would silently understate every scope.
+  const thirtyStart = shiftDate(end, -29);
+  const trailingQuery = (since) => `FROM sessions
+  SHOW sessions, conversion_rate
+  WHERE ${whereSources}
+  GROUP BY utm_source WITH TOTALS
+  SINCE ${since} UNTIL ${end}
+  ORDER BY sessions DESC`;
+
   console.log('\n[google-cvr-impact-data] Main query:\n' + mainQuery);
   if (compareQuery) console.log('\n[google-cvr-impact-data] Compare query:\n' + compareQuery);
 
@@ -2595,8 +2635,38 @@ VISUALIZE conversion_rate TYPE table`;
     return out;
   };
 
+  // Same shape for a trailing window, minus the previous-period columns:
+  // { ALL: { sessions, cvr }, google: {...}, … }.
+  const buildTrailingScopes = (table) => {
+    if (!table || !Array.isArray(table.rows) || !Array.isArray(table.columns) || !table.rows.length) return null;
+    const names = table.columns.map(c => c.name);
+    const lc = names.map(n => (n || '').toLowerCase());
+    const idx = (n) => lc.findIndex(s => s === n);
+    const get = (row, i) => i < 0 ? undefined : (Array.isArray(row) ? row[i] : row[names[i]]);
+    const norm = (v) => { const n = parseFloat(v); if (!isFinite(n)) return 0; return n > 1 ? n / 100 : n; };
+    const iSrc = idx('utm_source'), iSess = idx('sessions'), iCvr = idx('conversion_rate');
+    const iTotS = idx('sessions__totals'), iTotCvr = idx('conversion_rate__totals');
+
+    const out = {};
+    for (const row of table.rows) {
+      const src = String(get(row, iSrc) ?? '').trim();
+      if (!src) continue;
+      out[src] = {
+        sessions: Math.round(parseFloat(get(row, iSess)) || 0),
+        cvr:      norm(get(row, iCvr)),
+      };
+    }
+    if (iTotS >= 0) {
+      out.ALL = {
+        sessions: Math.round(parseFloat(get(table.rows[0], iTotS)) || 0),
+        cvr:      norm(get(table.rows[0], iTotCvr)),
+      };
+    }
+    return out;
+  };
+
   try {
-    const [main, compare, avg7, srcTot] = await Promise.all([
+    const [main, compare, avg7, srcTot, trail7, trail30] = await Promise.all([
       runShopifyQL(mainQuery),
       compareQuery ? runShopifyQL(compareQuery) : Promise.resolve(null),
       runShopifyQL(avg7Query).catch(e => {
@@ -2607,9 +2677,25 @@ VISUALIZE conversion_rate TYPE table`;
         console.warn('[google-cvr-impact-data] source-totals query failed:', e.message);
         return null;
       }),
+      runShopifyQL(trailingQuery(sevenStart)).catch(e => {
+        console.warn('[google-cvr-impact-data] 7d trailing query failed:', e.message);
+        return null;
+      }),
+      runShopifyQL(trailingQuery(thirtyStart)).catch(e => {
+        console.warn('[google-cvr-impact-data] 30d trailing query failed:', e.message);
+        return null;
+      }),
     ]);
     const avg7d = avg7 ? { window: { start: sevenStart, end }, columns: avg7.columns, rows: avg7.rows } : null;
     const sourceTotals = buildSourceTotals(srcTot);
+    const mkTrail = (table, since, days) => {
+      const scopes = buildTrailingScopes(table);
+      return scopes ? { days, start: since, end, scopes } : null;
+    };
+    const trailingAvgs = {
+      d7:  mkTrail(trail7,  sevenStart,  7),
+      d30: mkTrail(trail30, thirtyStart, 30),
+    };
 
     // No custom compare → return main as-is.
     if (!compare) {
@@ -2620,6 +2706,7 @@ VISUALIZE conversion_rate TYPE table`;
         rows: main.rows,
         avg7d,
         sourceTotals,
+        trailingAvgs,
       });
     }
 
@@ -2707,6 +2794,7 @@ VISUALIZE conversion_rate TYPE table`;
       rows: newRows,
       avg7d,
       sourceTotals,
+      trailingAvgs,
     });
   } catch (err) {
     console.error('Google CVR impact data error:', err);
@@ -3025,13 +3113,63 @@ async function buildDailyBrief(day) {
   SINCE ${day} UNTIL ${day}
   COMPARE TO previous_period`;
 
-  const [overall, channels, google, meta, aov] = await Promise.all([
+  // 5) Trailing run-rate baselines. Day-over-day is the noisiest comparison
+  // there is — a Tuesday-vs-Monday move is mostly day-of-week — so the brief
+  // also carries the 7- and 30-day averages a reader would otherwise have to
+  // reconstruct. These windows END THE DAY BEFORE `day` and exclude it: the day
+  // is the subject of the brief, and letting it sit inside its own baseline
+  // would mute exactly the signal we're measuring. (The dashboards use a
+  // trailing window that includes the current range, because there the range is
+  // user-chosen rather than always one day.)
+  const trailWindows = {
+    d7:  { days: 7,  start: shiftDate(day, -7),  end: shiftDate(day, -1) },
+    d30: { days: 30, start: shiftDate(day, -30), end: shiftDate(day, -1) },
+  };
+  const trailSessQuery = (w) => `FROM sessions
+  SHOW sessions, conversion_rate
+  SINCE ${w.start} UNTIL ${w.end}`;
+  const trailAovQuery = (w) => `FROM sales
+  SHOW average_order_value, total_sales, orders
+  WHERE sales_channel = 'Online Store'
+  SINCE ${w.start} UNTIL ${w.end}`;
+
+  const [overall, channels, google, meta, aov, t7, t30, t7Aov, t30Aov] = await Promise.all([
     runQL(overallQuery).catch(e => { errors.push('overall: ' + e.message); return null; }),
     runQL(channelQuery).catch(e => { errors.push('channels: ' + e.message); return null; }),
     runQL(campaignQuery(googleIn)).catch(e => { errors.push('google: ' + e.message); return null; }),
     runQL(campaignQuery("utm_source = 'facebook' AND utm_medium = 'paid_social'")).catch(e => { errors.push('meta: ' + e.message); return null; }),
     runQL(aovQuery).catch(e => { errors.push('aov: ' + e.message); return null; }),
+    runQL(trailSessQuery(trailWindows.d7)).catch(e => { errors.push('trail7: ' + e.message); return null; }),
+    runQL(trailSessQuery(trailWindows.d30)).catch(e => { errors.push('trail30: ' + e.message); return null; }),
+    runQL(trailAovQuery(trailWindows.d7)).catch(e => { errors.push('trail7aov: ' + e.message); return null; }),
+    runQL(trailAovQuery(trailWindows.d30)).catch(e => { errors.push('trail30aov: ' + e.message); return null; }),
   ]);
+
+  // Sessions/CVR/transactions over a trailing window, as per-day rates so they
+  // compare against a single day.
+  const trailSessions = (table, w) => {
+    if (!table || !table.rows || !table.rows[0]) return null;
+    const g = mkGet(table.columns);
+    const r = table.rows[0];
+    const sess = num(g.get(r, g.idx('sessions')));
+    if (!(sess > 0)) return null;
+    const cvr = normCvr(g.get(r, g.idx('conversion_rate')));
+    return {
+      days: w.days, start: w.start, end: w.end,
+      sessionsPerDay: Math.round(sess / w.days),
+      cvr,
+      transactionsPerDay: Math.round(sess * cvr / w.days),
+    };
+  };
+  // AOV is already an average, so it carries over directly.
+  const trailAov = (table, w) => {
+    if (!table || !table.rows || !table.rows[0]) return null;
+    const g = mkGet(table.columns);
+    const r = table.rows[0];
+    const v = num(g.get(r, g.idx('average_order_value')));
+    if (!(v > 0)) return null;
+    return { days: w.days, start: w.start, end: w.end, averageOrderValue: v };
+  };
 
   // Overall
   if (overall && overall.rows[0]) {
@@ -3050,6 +3188,11 @@ async function buildDailyBrief(day) {
         addToCartRate: currSess > 0 ? cart / currSess : 0,
         reachedCheckoutRate: currSess > 0 ? ck / currSess : 0,
         completedCheckoutRate: currSess > 0 ? done / currSess : 0,
+      },
+      // Run-rate baselines over the 7 and 30 days BEFORE this day (exclusive).
+      trailing: {
+        d7:  trailSessions(t7,  trailWindows.d7),
+        d30: trailSessions(t30, trailWindows.d30),
       },
     };
   }
@@ -3097,6 +3240,10 @@ async function buildDailyBrief(day) {
       averageOrderValue: { curr: num(g.get(r, iAov)), prev: num(g.get(r, g.prior('average_order_value'))) },
       totalSales: { curr: num(g.get(r, iTs)), prev: num(g.get(r, g.prior('total_sales'))) },
       orders: { curr: Math.round(num(g.get(r, iOrd))), prev: Math.round(num(g.get(r, g.prior('orders')))) },
+      trailing: {
+        d7:  trailAov(t7Aov,  trailWindows.d7),
+        d30: trailAov(t30Aov, trailWindows.d30),
+      },
     };
   }
 
@@ -3127,9 +3274,11 @@ async function callClaudeForNarrative(brief) {
 
 CRITICAL RULE: use ONLY numbers present in the BRIEF JSON below. Never invent, estimate, or extrapolate any figure. Cite the actual values (round sensibly). If a section has no data, say so rather than guessing.
 
+CONTEXT ON THE COMPARISONS: every curr/prev pair is this day vs the PRIOR DAY, which is dominated by day-of-week effects. Where \`trailing\` is present (overall.trailing and aov.trailing, holding d7 and d30 over the 7 and 30 days BEFORE this day, excluding it), weigh it more heavily than the prior-day delta — sessionsPerDay and transactionsPerDay are per-day rates directly comparable to this single day, cvr and averageOrderValue compare directly. Call out when the two disagree, e.g. down vs yesterday but above the 7-day run-rate. If \`trailing\` is absent or null, just use the prior-day comparison and don't mention run-rates.
+
 Write markdown with these sections:
 # Daily Analysis — ${brief.date}
-## Headline — what moved in sessions / CVR / transactions vs the prior day and why it matters (2-3 sentences).
+## Headline — what moved in sessions / CVR / transactions vs the prior day AND vs the 7/30-day run-rate, and why it matters (2-3 sentences).
 ## Channels — biggest session and CVR movers among channels[]; name the drags and the bright spots.
 ## Paid campaigns — notable movers in googleCampaigns[] and metaCampaigns[].
 ## AOV & funnel — AOV change and any funnel-step signal.
