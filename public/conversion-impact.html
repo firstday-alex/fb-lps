@@ -428,7 +428,7 @@
     /* Contributors sticky header */
     .contrib-header {
       display: grid;
-      grid-template-columns: minmax(260px, 2.2fr) 50px 50px 58px 50px minmax(120px, 1fr) 84px 72px 18px;
+      grid-template-columns: minmax(260px, 2.2fr) 68px 58px 50px 58px 50px minmax(120px, 1fr) 84px 72px 18px;
       gap: 8px;
       padding: 6px 4px;
       font-size: 0.68rem;
@@ -467,7 +467,7 @@
     .source-wrap:last-child { border-bottom: none; }
     .source-row {
       display: grid;
-      grid-template-columns: minmax(260px, 2.2fr) 50px 50px 58px 50px minmax(120px, 1fr) 84px 72px 18px;
+      grid-template-columns: minmax(260px, 2.2fr) 68px 58px 50px 58px 50px minmax(120px, 1fr) 84px 72px 18px;
       align-items: center;
       gap: 8px;
       padding: 11px 4px;
@@ -1106,6 +1106,7 @@
       <div class="contrib-header">
         <div class="sort-h" data-sort="source">Source</div>
         <div class="r sort-h" data-sort="sessions">Sessions</div>
+        <div class="r sort-h" data-sort="sessDelta" title="Change in sessions vs the comparison period (current − previous)">Sess &Delta;</div>
         <div class="r sort-h" data-sort="cvr">CVR</div>
         <div class="r sort-h" data-sort="cvrDelta" title="Source's own CVR change in pp (current − previous)">CVR Δ</div>
         <div class="r sort-h" data-sort="txns">Txns</div>
@@ -1369,6 +1370,9 @@ function aggregate(rows) {
 // ─────────────────────────────────────────────
 const fmtN  = (n, d=0) => isFinite(n) ? n.toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d}) : '—';
 const fmtK  = n => { if (!isFinite(n)) return '—'; if (Math.abs(n) >= 1000) return (n/1000).toFixed(1).replace(/\.0$/,'')+'K'; return String(Math.round(n)); };
+// Signed compact count for narrow delta columns (uses − U+2212, not a hyphen,
+// so it lines up with the other negative figures in the table).
+const fmtKS = n => { if (!isFinite(n)) return '—'; const r = Math.round(n); if (r === 0) return '0'; return (r > 0 ? '+' : '−') + fmtK(Math.abs(r)); };
 const fmtS  = (n, d=0) => { if(!isFinite(n)) return '—'; return (n>0?'+':'')+fmtN(n,d); };
 const fmtP  = (n, d=1) => { if(!isFinite(n)) return '—'; return (n>0?'+':'')+n.toFixed(d)+'%'; };
 const fmtPP = (n, d=2) => { if(!isFinite(n)) return '—'; return (n>0?'+':'')+n.toFixed(d)+'pp'; };
@@ -1652,13 +1656,14 @@ function render(rawRows, filename) {
   const sortKeyFns = {
     source:    g => g.source.toLowerCase(),
     sessions:  g => g.currS,
+    sessDelta: g => g.currS - g.prevSess,
     cvr:       g => g.currC,
     cvrDelta:  g => Math.abs(g.deltaCvr),
     txns:      g => g.currS * g.currC,
     cvrImpact: g => g.cvrImpact,
   };
   // cvrImpact default 'asc' so the biggest blended-CVR draggers surface at top.
-  const defaultDir = { source: 'asc', sessions: 'desc', cvr: 'desc', cvrDelta: 'desc', txns: 'desc', cvrImpact: 'asc' };
+  const defaultDir = { source: 'asc', sessions: 'desc', sessDelta: 'desc', cvr: 'desc', cvrDelta: 'desc', txns: 'desc', cvrImpact: 'asc' };
   let sortKey = 'cvrImpact';
   let sortDir = 'asc';
 
@@ -1699,6 +1704,7 @@ function render(rawRows, filename) {
           </div>
         </div>
         <div class="contrib-stat"><strong>${esc(fmtK(g.currS))}</strong>sess</div>
+        <div class="contrib-stat ${cls(g.currS - g.prevSess)}" title="Sessions ${fmtN(g.prevSess)} → ${fmtN(g.currS)}${g.prevSess > 0 ? ` (${fmtP((g.currS - g.prevSess) / g.prevSess * 100, 1)})` : ''}"><strong>${fmtKS(g.currS - g.prevSess)}</strong></div>
         <div class="contrib-stat"><strong>${(g.currC*100).toFixed(2)}%</strong>CVR</div>
         <div class="contrib-stat ${cls(g.deltaCvr)}" title="This source's own CVR change (${(g.prevCvr*100).toFixed(2)}% → ${(g.currC*100).toFixed(2)}%)"><strong>${fmtPP(g.deltaCvr*100)}</strong></div>
         <div class="contrib-stat"><strong>${esc(fmtK(Math.round(g.currS * g.currC)))}</strong>txns</div>
