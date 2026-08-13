@@ -178,6 +178,13 @@
       box-shadow: var(--shadow);
     }
 
+    .scope-btn {
+      margin-left: 6px; font-size: 0.74rem; color: var(--fb-blue);
+      background: none; border: 1px solid #c5d4f5; border-radius: 5px;
+      cursor: pointer; padding: 2px 9px;
+    }
+    .scope-btn:hover { background: #eef3ff; }
+
     .kpi-row {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
@@ -1418,7 +1425,7 @@
     </div>
     <div class="filter-row">
       <label>utm_source <input type="text" id="filter-source" value="facebook"></label>
-      <label>utm_medium <input type="text" id="filter-medium" value="paid_social"></label>
+      <label>utm_medium <input type="text" id="filter-medium" value="paid_social,paid" title="Comma-separated list, or * for every medium. Meta traffic arrives tagged both paid_social and paid."></label>
     </div>
     <button class="shopify-load-btn" id="btn-shopify-load">Load from Shopify</button>
     <div class="shopify-status" id="shopify-status"></div>
@@ -1709,6 +1716,48 @@ let _queryCtx = null;   // { start, end, source, medium, compareStart, compareEn
 // Cache for the lazy per-campaign ad × LP pulls, keyed by campaign name. (Ad
 // preview links have their own persistent caches — see the resolver below.)
 let _adLpDrillCache = new Map();
+
+// ─────────────────────────────────────────────
+// SCOPE NOTE
+// ─────────────────────────────────────────────
+// Spells out which utm_mediums this view covers and which it leaves out, with
+// live session counts. Meta traffic is not uniformly tagged `paid_social` — a
+// persistent slice arrives as `paid`, and organic facebook shows up as
+// `social_profile` / `CommentReply`. Leaving that implicit is what let this
+// page and Conversion Impact's source-grouped "facebook" row report opposite
+// CVR directions for the same day.
+function renderScopeNote(data, source, medium) {
+  const el = document.getElementById('scope-note');
+  if (!el) return;
+  const mix = Array.isArray(data.mediumMix) ? data.mediumMix : null;
+  const scopeLabel = (data.filter && data.filter.scope) || `${source} / ${medium}`;
+  const fmtMed = (m) => `<code>${esc(m.medium || '(none)')}</code> ${fmtN(m.sessions)} sess · ${(m.cvr * 100).toFixed(2)}%`;
+
+  if (!mix || !mix.length) {
+    el.innerHTML = `<strong>Scope:</strong> <code>${esc(scopeLabel)}</code>.`;
+    return;
+  }
+  const inc = mix.filter(m => m.included);
+  const out = mix.filter(m => !m.included);
+  const outSess = out.reduce((a, m) => a + m.sessions, 0);
+  const allIn = out.length === 0;
+
+  let html = `<strong>Scope:</strong> <code>${esc(scopeLabel)}</code> — counting ${inc.map(fmtMed).join(' · ')}.`;
+  if (allIn) {
+    html += ` Every <code>${esc(source)}</code> medium is included, so these totals reconcile exactly with the <em>CVR Diagnosis by UTM</em> tab's "${esc(source)}" row.`;
+  } else {
+    html += ` <span style="color:var(--negative)">Excluded: ${out.map(fmtMed).join(' · ')}</span>`
+      + ` — ${fmtN(outSess)} session${outSess === 1 ? '' : 's'} this range. The <em>CVR Diagnosis by UTM</em> tab's "${esc(source)}" row includes them, so its CVR can move the other way.`
+      + ` <button type="button" id="scope-include-all" class="scope-btn">Include all mediums &amp; reload</button>`;
+  }
+  el.innerHTML = html;
+
+  const btn = document.getElementById('scope-include-all');
+  if (btn) btn.addEventListener('click', () => {
+    document.getElementById('filter-medium').value = '*';
+    loadFromShopify();
+  });
+}
 
 // ─────────────────────────────────────────────
 // TRAILING-AVERAGE KPI BASELINES
@@ -5035,8 +5084,7 @@ async function loadFromShopify() {
       ? `${compareStart} → ${compareEnd}`
       : (auto ? `${auto.start} → ${auto.end} (auto · prev period)` : 'previous period');
     render(rows, `Shopify · ${source}/${medium} · ${startDate} → ${endDate} vs ${compareLabel}`);
-    const scopeEl = document.getElementById('scope-note');
-    if (scopeEl) scopeEl.innerHTML = `<strong>Scope:</strong> Meta paid social only — <code>utm_source = "${esc(source)}" AND utm_medium = "${esc(medium)}"</code>. These numbers cover this segment only; the <em>CVR Diagnosis by UTM</em> tab's "${esc(source)}" row blends <em>all</em> mediums, so its CVR will differ.`;
+    renderScopeNote(data, source, medium);
 
     const info = document.getElementById('top-bar-info');
     if (info) {

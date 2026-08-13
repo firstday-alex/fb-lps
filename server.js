@@ -1782,6 +1782,41 @@ app.get('/api/aov-impact-data', async (req, res) => {
 
 // --- Meta Paid Social CVR Impact (by campaign + LP, filtered utm_source/medium) ---
 
+// A utm_source / utm_medium scope that can hold more than one value.
+//
+// Meta traffic does not all arrive tagged `paid_social`: a persistent ~7% of
+// facebook sessions carry `utm_medium = 'paid'`, and those UTMs can't be fixed
+// upstream. A single-value `=` filter therefore silently dropped that traffic,
+// which is why this page and the source-grouped Conversion Impact table could
+// report opposite CVR directions for the same day.
+//
+// Accepts a comma-separated list ("paid_social,paid") → IN (...), a single
+// value → `=`, and empty / "*" / "all" → no condition on that dimension at all,
+// which is what makes an exact match with a source-only view possible.
+function utmScope(sourceParam, mediumParam, defaults) {
+  const esc = (v) => String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  const parse = (raw, fallback) => {
+    const v = raw == null || raw === '' ? fallback : raw;
+    if (v == null) return [];
+    const list = String(v).split(',').map(x => x.trim()).filter(Boolean);
+    if (list.some(x => x === '*' || x.toLowerCase() === 'all')) return [];   // unconstrained
+    return list;
+  };
+  const sources = parse(sourceParam, defaults && defaults.source);
+  const mediums = parse(mediumParam, defaults && defaults.medium);
+  const clause = (col, vals) => !vals.length ? null
+    : vals.length === 1 ? `${col} = '${esc(vals[0])}'`
+    : `${col} IN (${vals.map(v => `'${esc(v)}'`).join(', ')})`;
+  const conds = [clause('utm_source', sources), clause('utm_medium', mediums)].filter(Boolean);
+  return {
+    sources, mediums,
+    // `1 = 1` keeps every caller's `WHERE ${where} AND ...` valid when a
+    // dimension is unconstrained.
+    where: conds.length ? conds.join(' AND ') : '1 = 1',
+    label: `${sources.join(', ') || 'any source'} / ${mediums.join(', ') || 'any medium'}`,
+  };
+}
+
 app.get('/api/meta-cvr-impact-data', async (req, res) => {
   if (!SHOPIFY_URL || !SHOPIFY_TOKEN) {
     return res.status(500).json({ error: 'Shopify credentials not configured' });
@@ -1793,8 +1828,11 @@ app.get('/api/meta-cvr-impact-data', async (req, res) => {
   }
 
   const escapeQL = (v) => String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-  const source = escapeQL(req.query.source || 'facebook');
-  const medium = escapeQL(req.query.medium || 'paid_social');
+  // Multi-value scope — see utmScope(). Replaces the old single-value
+  // `utm_source = X AND utm_medium = Y` pair so `paid_social,paid` works.
+  const scope = utmScope(req.query.source, req.query.medium, { source: 'facebook', medium: 'paid_social' });
+  const source = scope.sources.join(',');
+  const medium = scope.mediums.join(',');
 
   // Optional custom comparison range. When both compare_start + compare_end
   // are valid YYYY-MM-DD, we run a second ShopifyQL query for that window
@@ -1831,7 +1869,7 @@ app.get('/api/meta-cvr-impact-data', async (req, res) => {
 
   const mainQuery = `FROM sessions
   SHOW sessions, conversion_rate, average_session_duration, sessions_with_cart_additions, sessions_that_reached_checkout, sessions_that_reached_and_completed_checkout
-  WHERE utm_source = '${source}' AND utm_medium = '${medium}'
+  WHERE ${scope.where}
   GROUP BY utm_campaign, landing_page_path WITH TOTALS, PERCENT_CHANGE
   SINCE ${start} UNTIL ${end}
   COMPARE TO previous_period
@@ -1841,7 +1879,7 @@ VISUALIZE conversion_rate TYPE table`;
 
   const compareQuery = useCustomCompare ? `FROM sessions
   SHOW sessions, conversion_rate
-  WHERE utm_source = '${source}' AND utm_medium = '${medium}'
+  WHERE ${scope.where}
   GROUP BY utm_campaign, landing_page_path WITH TOTALS
   SINCE ${cs} UNTIL ${ce}
   ORDER BY sessions DESC
@@ -1857,7 +1895,7 @@ VISUALIZE conversion_rate TYPE table`;
   })();
   const avg7Query = `FROM sessions
   SHOW sessions, conversion_rate
-  WHERE utm_source = '${source}' AND utm_medium = '${medium}'
+  WHERE ${scope.where}
   GROUP BY utm_campaign, landing_page_path WITH TOTALS
   SINCE ${sevenStart} UNTIL ${end}
   ORDER BY sessions DESC
@@ -1869,11 +1907,23 @@ VISUALIZE conversion_rate TYPE table`;
   const thirtyStart = shiftDate(end, -29);
   const avg30Query = `FROM sessions
   SHOW sessions, conversion_rate
-  WHERE utm_source = '${source}' AND utm_medium = '${medium}'
+  WHERE ${scope.where}
   GROUP BY utm_campaign, landing_page_path WITH TOTALS
   SINCE ${thirtyStart} UNTIL ${end}
   ORDER BY sessions DESC
   LIMIT ${ROW_LIMIT}`;
+
+  // Every medium present for the scoped SOURCE(s), ignoring the medium filter.
+  // This is what lets the page state exactly which traffic it is leaving out —
+  // the gap that made this view disagree with the source-grouped Conversion
+  // Impact table. One row per medium, so it can never hit the row cap.
+  const srcOnly = utmScope(req.query.source, '*', { source: 'facebook' });
+  const mediumMixQuery = `FROM sessions
+  SHOW sessions, conversion_rate
+  WHERE ${srcOnly.where}
+  GROUP BY utm_medium
+  SINCE ${start} UNTIL ${end}
+  ORDER BY sessions DESC`;
 
   console.log('\n[meta-cvr-impact-data] Main query:\n' + mainQuery);
   if (compareQuery) console.log('\n[meta-cvr-impact-data] Compare query:\n' + compareQuery);
@@ -1898,7 +1948,7 @@ VISUALIZE conversion_rate TYPE table`;
   };
 
   try {
-    const [main, compare, avg7, avg30] = await Promise.all([
+    const [main, compare, avg7, avg30, mediumMixT] = await Promise.all([
       runShopifyQL(mainQuery),
       compareQuery ? runShopifyQL(compareQuery) : Promise.resolve(null),
       // Resilient: a trailing-window failure must not break the main pull.
@@ -1910,7 +1960,37 @@ VISUALIZE conversion_rate TYPE table`;
         console.warn('[meta-cvr-impact-data] 30d-avg query failed:', e.message);
         return null;
       }),
+      runShopifyQL(mediumMixQuery).catch(e => {
+        console.warn('[meta-cvr-impact-data] medium-mix query failed:', e.message);
+        return null;
+      }),
     ]);
+    // [{ medium, sessions, cvr, included }] — `included` marks the mediums the
+    // current filter actually covers.
+    const mediumMix = (() => {
+      if (!mediumMixT || !Array.isArray(mediumMixT.rows)) return null;
+      const names = mediumMixT.columns.map(c => c.name);
+      const lc = names.map(n => (n || '').toLowerCase());
+      const gi = (n) => lc.indexOf(n);
+      const get = (row, i) => i < 0 ? undefined : (Array.isArray(row) ? row[i] : row[names[i]]);
+      const iM = gi('utm_medium'), iS = gi('sessions'), iC = gi('conversion_rate');
+      const out = [];
+      for (const row of mediumMixT.rows) {
+        const raw = get(row, iM);
+        const med = raw == null ? '' : String(raw).trim();
+        const sessions = Math.round(parseFloat(get(row, iS)) || 0);
+        if (!sessions) continue;
+        const c = parseFloat(get(row, iC)) || 0;
+        out.push({
+          medium: med,
+          sessions,
+          cvr: c > 1 ? c / 100 : c,
+          included: scope.mediums.length === 0 || scope.mediums.includes(med),
+        });
+      }
+      return out.sort((a, b) => b.sessions - a.sessions);
+    })();
+
     const avg7d  = avg7  ? { window: { start: sevenStart,  end, days: 7  }, columns: avg7.columns,  rows: avg7.rows }  : null;
     const avg30d = avg30 ? { window: { start: thirtyStart, end, days: 30 }, columns: avg30.columns, rows: avg30.rows } : null;
 
@@ -1919,7 +1999,8 @@ VISUALIZE conversion_rate TYPE table`;
     if (!compare) {
       return res.json({
         query: mainQuery,
-        filter: { source, medium },
+        filter: { source, medium, scope: scope.label },
+        mediumMix,
         columns: main.columns,
         rows: main.rows,
         avg7d,
@@ -2017,7 +2098,8 @@ VISUALIZE conversion_rate TYPE table`;
     res.json({
       query: mainQuery,
       compare_query: compareQuery,
-      filter: { source, medium },
+      filter: { source, medium, scope: scope.label },
+      mediumMix,
       compare_window: { start: cs, end: ce },
       merge_stats: mergeStats,
       columns: main.columns,                                  // unchanged shape
@@ -2044,8 +2126,11 @@ app.get('/api/meta-ad-lp-data', async (req, res) => {
   }
 
   const escapeQL = (v) => String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-  const source = escapeQL(req.query.source || 'facebook');
-  const medium = escapeQL(req.query.medium || 'paid_social');
+  // Multi-value scope — see utmScope(). Replaces the old single-value
+  // `utm_source = X AND utm_medium = Y` pair so `paid_social,paid` works.
+  const scope = utmScope(req.query.source, req.query.medium, { source: 'facebook', medium: 'paid_social' });
+  const source = scope.sources.join(',');
+  const medium = scope.mediums.join(',');
 
   const endpoint = `https://${SHOPIFY_URL}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
   const gqlQuery = `query RunShopifyQL($q: String!) {
@@ -2057,7 +2142,7 @@ app.get('/api/meta-ad-lp-data', async (req, res) => {
 
   const mainQuery = `FROM sessions
   SHOW sessions, conversion_rate
-  WHERE utm_source = '${source}' AND utm_medium = '${medium}'
+  WHERE ${scope.where}
   GROUP BY utm_content, landing_page_path WITH PERCENT_CHANGE
   SINCE ${start} UNTIL ${end}
   COMPARE TO previous_period
@@ -2116,8 +2201,11 @@ app.get('/api/meta-campaign-ad-lp-data', async (req, res) => {
   }
 
   const escapeQL = (v) => String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-  const source   = escapeQL(req.query.source || 'facebook');
-  const medium   = escapeQL(req.query.medium || 'paid_social');
+  // Multi-value scope — see utmScope(). Replaces the old single-value
+  // `utm_source = X AND utm_medium = Y` pair so `paid_social,paid` works.
+  const scope = utmScope(req.query.source, req.query.medium, { source: 'facebook', medium: 'paid_social' });
+  const source = scope.sources.join(',');
+  const medium = scope.mediums.join(',');
   const campQL   = escapeQL(campaign);
 
   const cs = req.query.compare_start;
@@ -2129,7 +2217,7 @@ app.get('/api/meta-campaign-ad-lp-data', async (req, res) => {
   // but ask explicitly so a pathological campaign truncates predictably and the
   // response can flag it.
   const ROW_LIMIT = 1000;
-  const WHERE = `WHERE utm_source = '${source}' AND utm_medium = '${medium}' AND utm_campaign = '${campQL}'`;
+  const WHERE = `WHERE ${scope.where} AND utm_campaign = '${campQL}'`;
 
   const mainQuery = `FROM sessions
   SHOW sessions, conversion_rate
@@ -3853,8 +3941,16 @@ app.get('/api/utm-daily-series', async (req, res) => {
 
   const conds = [];
   if (String(req.query.direct || '') === '1') conds.push('utm_source IS NULL');
-  else if (present(req.query.source)) conds.push(`utm_source = '${esc(req.query.source)}'`);
-  if (present(req.query.medium))   conds.push(`utm_medium = '${esc(req.query.medium)}'`);
+  else if (present(req.query.source)) {
+    const srcs = String(req.query.source).split(',').map(x => x.trim()).filter(Boolean);
+    if (srcs.length === 1) conds.push(`utm_source = '${esc(srcs[0])}'`);
+    else if (srcs.length > 1) conds.push(`utm_source IN (${srcs.map(v => `'${esc(v)}'`).join(', ')})`);
+  }
+  if (present(req.query.medium)) {
+    const meds = String(req.query.medium).split(',').map(x => x.trim()).filter(Boolean);
+    if (meds.length === 1) conds.push(`utm_medium = '${esc(meds[0])}'`);
+    else if (meds.length > 1) conds.push(`utm_medium IN (${meds.map(m => `'${esc(m)}'`).join(', ')})`);
+  }
   if (present(req.query.campaign)) conds.push(`utm_campaign = '${esc(req.query.campaign)}'`);
   if (!conds.length) return res.status(400).json({ error: 'Pass at least one of source / direct / medium / campaign' });
 
