@@ -3831,6 +3831,58 @@ app.get('/api/traffic-quality-series', async (req, res) => {
   }
 });
 
+// --- Daily series for ONE utm_source, all mediums ---
+// Powers the Conversion Impact contributors drilldown: "is this day's number an
+// outlier, or a bounce-back?" needs the distribution of recent days, not just an
+// average. Fetched lazily per expanded row (~37 rows), so it costs nothing until
+// someone actually asks.
+//
+// Deliberately NOT filtered by utm_medium — the contributors table groups by
+// source alone, so adding a medium condition would return a subset of the row
+// the user clicked. (That's the one thing separating this from
+// /api/traffic-quality-series, which is medium-scoped by design.)
+app.get('/api/source-daily-series', async (req, res) => {
+  if (!SHOPIFY_URL || !SHOPIFY_TOKEN) return res.status(500).json({ error: 'Shopify credentials not configured' });
+  const end = ptYesterdayDate(req.query.end);
+  const days = Math.min(120, Math.max(2, parseInt(req.query.days, 10) || 37));
+  const start = shiftDate(end, -(days - 1));
+  const esc = (v) => String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
+  // The dashboard renders a missing utm_source as "(direct / none)"; in Shopify
+  // it is NULL, so an equality test would silently match nothing.
+  const src = req.query.source;
+  const isDirect = src == null || src === '' || src === 'null';
+  const srcCond = isDirect ? 'utm_source IS NULL' : `utm_source = '${esc(src)}'`;
+
+  const q = `FROM sessions
+  SHOW sessions, conversion_rate
+  WHERE ${srcCond}
+  GROUP BY day
+  SINCE ${start} UNTIL ${end}
+  ORDER BY day ASC`;
+
+  try {
+    const t = await runShopifyQLTable(q);
+    const g = qlAccessor(t.columns);
+    const iDay = g.idx('day'), iS = g.idx('sessions'), iC = g.idx('conversion_rate');
+    const series = t.rows.map(row => {
+      const sessions = Math.round(QL_NUM(g.get(row, iS)));
+      const raw = QL_NUM(g.get(row, iC));
+      const cvr = raw > 1 ? raw / 100 : raw;              // same scale guard as the dashboards
+      return {
+        day: String(g.get(row, iDay) ?? '').slice(0, 10),
+        sessions,
+        cvr,
+        transactions: Math.round(sessions * cvr),
+      };
+    }).filter(r => r.day);
+    res.json({ source: isDirect ? null : src, window: { start, end, days }, query: q, series });
+  } catch (err) {
+    console.error('[source-daily-series] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─────────────────────────────────────────────
 // DIAGNOSTIC DASHBOARD — Meta ad-level insights with comparison window
 // ─────────────────────────────────────────────
