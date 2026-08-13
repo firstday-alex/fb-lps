@@ -3831,32 +3831,36 @@ app.get('/api/traffic-quality-series', async (req, res) => {
   }
 });
 
-// --- Daily series for ONE utm_source, all mediums ---
-// Powers the Conversion Impact contributors drilldown: "is this day's number an
-// outlier, or a bounce-back?" needs the distribution of recent days, not just an
-// average. Fetched lazily per expanded row (~37 rows), so it costs nothing until
-// someone actually asks.
+// --- Daily series for one UTM slice ---
+// Powers the contributors drilldowns: "is this day's number an outlier, or a
+// bounce-back?" needs the distribution of recent days, not just an average.
+// Fetched lazily per expanded row (~37 rows), so it costs nothing until someone
+// asks.
 //
-// Deliberately NOT filtered by utm_medium — the contributors table groups by
-// source alone, so adding a medium condition would return a subset of the row
-// the user clicked. (That's the one thing separating this from
-// /api/traffic-quality-series, which is medium-scoped by design.)
-app.get('/api/source-daily-series', async (req, res) => {
+// Any subset of source / medium / campaign may be pinned; omitted dimensions
+// are left unconstrained rather than forced to NULL, which is what lets one
+// endpoint serve both the source-grouped Conversion Impact table (source only)
+// and the campaign-grouped Meta CVR table (campaign within a source+medium
+// scope). Pass `direct=1` to mean "utm_source IS NULL" — the dashboards render
+// that slice as "(direct / none)", and an equality test would match nothing.
+app.get('/api/utm-daily-series', async (req, res) => {
   if (!SHOPIFY_URL || !SHOPIFY_TOKEN) return res.status(500).json({ error: 'Shopify credentials not configured' });
   const end = ptYesterdayDate(req.query.end);
   const days = Math.min(120, Math.max(2, parseInt(req.query.days, 10) || 37));
   const start = shiftDate(end, -(days - 1));
   const esc = (v) => String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  const present = (v) => v != null && v !== '';
 
-  // The dashboard renders a missing utm_source as "(direct / none)"; in Shopify
-  // it is NULL, so an equality test would silently match nothing.
-  const src = req.query.source;
-  const isDirect = src == null || src === '' || src === 'null';
-  const srcCond = isDirect ? 'utm_source IS NULL' : `utm_source = '${esc(src)}'`;
+  const conds = [];
+  if (String(req.query.direct || '') === '1') conds.push('utm_source IS NULL');
+  else if (present(req.query.source)) conds.push(`utm_source = '${esc(req.query.source)}'`);
+  if (present(req.query.medium))   conds.push(`utm_medium = '${esc(req.query.medium)}'`);
+  if (present(req.query.campaign)) conds.push(`utm_campaign = '${esc(req.query.campaign)}'`);
+  if (!conds.length) return res.status(400).json({ error: 'Pass at least one of source / direct / medium / campaign' });
 
   const q = `FROM sessions
   SHOW sessions, conversion_rate
-  WHERE ${srcCond}
+  WHERE ${conds.join(' AND ')}
   GROUP BY day
   SINCE ${start} UNTIL ${end}
   ORDER BY day ASC`;
@@ -3876,9 +3880,9 @@ app.get('/api/source-daily-series', async (req, res) => {
         transactions: Math.round(sessions * cvr),
       };
     }).filter(r => r.day);
-    res.json({ source: isDirect ? null : src, window: { start, end, days }, query: q, series });
+    res.json({ filter: conds, window: { start, end, days }, query: q, series });
   } catch (err) {
-    console.error('[source-daily-series] error:', err);
+    console.error('[utm-daily-series] error:', err);
     res.status(500).json({ error: err.message });
   }
 });

@@ -562,6 +562,48 @@
       margin-top: 3px;
     }
 
+    /* Recent-day context — 7d/30d distribution for one campaign */
+    .ctx-block { margin: 2px 0 10px; }
+    .ctx-head {
+      display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+      font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.07em; color: var(--text-secondary); padding: 4px 0 6px;
+    }
+    .ctx-head__win { font-weight: 500; text-transform: none; letter-spacing: 0; font-size: 0.72rem; }
+    .ctx-grid {
+      display: grid;
+      grid-template-columns: 104px 92px 116px 116px 132px;
+      gap: 4px 10px;
+      font-size: 0.77rem;
+      align-items: baseline;
+    }
+    .ctx-grid__h {
+      font-size: 0.66rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--text-secondary); padding-bottom: 2px;
+      border-bottom: 1px solid #dde4f7;
+    }
+    .ctx-grid__h.r, .ctx-cell.r { text-align: right; }
+    .ctx-metric { font-weight: 600; }
+    .ctx-cell { white-space: nowrap; }
+    .ctx-cell strong { font-weight: 700; }
+    .ctx-cell__sub { color: var(--text-secondary); font-size: 0.72rem; }
+    .ctx-spark { margin-top: 8px; }
+    .ctx-spark svg { display: block; }
+    .ctx-verdict {
+      margin-top: 8px; padding: 7px 11px; border-radius: 5px;
+      background: #eef3ff; font-size: 0.78rem; line-height: 1.4;
+    }
+    .ctx-verdict--out { background: #fdeeee; }
+    .ctx-verdict--hi  { background: #fff6e5; }
+    .ctx-verdict strong { font-weight: 700; }
+    .ctx-flag {
+      display: inline-block; margin-left: 4px; padding: 0 5px; border-radius: 3px;
+      font-size: 0.64rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+    }
+    .ctx-flag--hi { background: var(--positive-bg); color: var(--positive); }
+    .ctx-flag--lo { background: var(--negative-bg); color: var(--negative); }
+    .ctx-note { margin-top: 5px; font-size: 0.71rem; color: var(--text-secondary); line-height: 1.35; }
+
     .lp-btn {
       margin-top: 8px;
       font-size: 0.74rem;
@@ -3316,7 +3358,225 @@ function renderSessionVolume(cardId, rows, opts) {
 // ─────────────────────────────────────────────
 // EFFECTS PANEL + LP DRILL-DOWN
 // ─────────────────────────────────────────────
+// ─────────────────────────────────────────────
+// RECENT-DAY CONTEXT: is this number an outlier, or a bounce-back?
+// ─────────────────────────────────────────────
+// A trailing average alone can't answer that — a day can sit well above the
+// 7-day mean and still be an ordinary day for the month. So this pulls the
+// campaign's DAILY series and compares the selected range against the
+// distribution of the days before it: mean, spread, range, and rank.
+//
+// The comparison windows are EXCLUSIVE — the "previous 7 days" are the 7 days
+// before the range starts, not a trailing window containing it. That's the
+// question being asked ("how does this compare to the previous week?"), and a
+// baseline containing the value under test would drag toward it. Note this
+// differs from the KPI row at the top of the page, whose windows deliberately
+// overlap the range; the panel labels its windows so the two aren't confused.
+const _campSeriesCache = new Map();
+
+async function fetchCampaignSeries(campaign, end, days) {
+  const src = _queryCtx ? _queryCtx.source : '';
+  const med = _queryCtx ? _queryCtx.medium : '';
+  const key = `${campaign}||${src}||${med}||${end}||${days}`;
+  if (_campSeriesCache.has(key)) return _campSeriesCache.get(key);
+  const p = (async () => {
+    // Scoped to the same source/medium the page is filtered to, or the series
+    // would count this campaign's traffic from outside the dashboard's scope.
+    const params = new URLSearchParams({ end, days: String(days), campaign });
+    if (src) params.set('source', src);
+    if (med) params.set('medium', med);
+    const r = await fetch(`/api/utm-daily-series?${params.toString()}`);
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+    return j;
+  })();
+  _campSeriesCache.set(key, p);
+  p.catch(() => _campSeriesCache.delete(key));   // let a failed pull retry
+  return p;
+}
+
+function seriesStats(values) {
+  const n = values.length;
+  if (!n) return null;
+  const mean = values.reduce((a, b) => a + b, 0) / n;
+  // Sample stdev (n−1): these days are a sample of the source's behaviour, not
+  // the whole population.
+  const sd = n > 1 ? Math.sqrt(values.reduce((a, b) => a + (b - mean) ** 2, 0) / (n - 1)) : 0;
+  return { n, mean, sd, min: Math.min(...values), max: Math.max(...values) };
+}
+
+// A 30-ish bar sparkline: prior days in grey, the selected range in blue, with
+// the prior-30 mean drawn as a dashed rule so "above/below normal" is visible
+// without reading a number.
+function ctxSparkline(prior, current, mean) {
+  const all = [...prior, ...current];
+  if (!all.length) return '';
+  const max = Math.max(...all.map(d => d.v), 1);
+  const W = 460, H = 42, gap = 2;
+  const bw = Math.max(2, (W - gap * (all.length - 1)) / all.length);
+  const bars = all.map((d, i) => {
+    const h = Math.max(1, d.v / max * (H - 2));
+    const x = i * (bw + gap);
+    const isCurr = i >= prior.length;
+    return `<rect x="${x.toFixed(1)}" y="${(H - h).toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}"`
+      + ` fill="${isCurr ? 'var(--fb-blue)' : '#c3ccdd'}" rx="1"><title>${esc(d.day)}: ${fmtN(Math.round(d.v))}</title></rect>`;
+  }).join('');
+  const my = H - Math.max(1, mean / max * (H - 2));
+  return `<div class="ctx-spark"><svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img"`
+    + ` aria-label="Daily values, previous days in grey and the selected range in blue">`
+    + bars
+    + `<line x1="0" y1="${my.toFixed(1)}" x2="${W}" y2="${my.toFixed(1)}" stroke="#8a94a6" stroke-width="1" stroke-dasharray="3 3"/>`
+    + `</svg></div>`;
+}
+
+// One metric row: current value vs the previous 7d / 30d means, plus the
+// observed 30-day range.
+function ctxRow(label, curr, p7, p30, fmt, isRate) {
+  const cmp = (base) => {
+    if (base == null || !isFinite(base)) return '<span class="ctx-cell__sub">—</span>';
+    const d = curr - base;
+    const rel = base !== 0 ? d / base * 100 : null;
+    const detail = isRate ? fmtPP(d * 100) : (rel == null ? '—' : fmtP(rel, 1));
+    return `${fmt(base)} <span class="${cls(d)}">${detail}</span>`;
+  };
+  let range = p30 ? `${fmt(p30.min)} – ${fmt(p30.max)}` : '—';
+  if (p30) {
+    if (curr > p30.max)      range += ` <span class="ctx-flag ctx-flag--hi">↑ new high</span>`;
+    else if (curr < p30.min) range += ` <span class="ctx-flag ctx-flag--lo">↓ new low</span>`;
+  }
+  return `<div class="ctx-metric">${label}</div>`
+    + `<div class="ctx-cell r"><strong>${fmt(curr)}</strong></div>`
+    + `<div class="ctx-cell r">${cmp(p7 && p7.mean)}</div>`
+    + `<div class="ctx-cell r">${cmp(p30 && p30.mean)}</div>`
+    + `<div class="ctx-cell r ctx-cell__sub">${range}</div>`;
+}
+
+function renderCampaignContext(container, group, currDays) {
+  if (!_queryCtx) return;
+  const campaign = group.campaign;
+  if (!campaign || campaign === '(empty)') return;   // nothing to filter on
+  // Enough history for 30 prior days plus the selected range itself.
+  const need = Math.min(120, 30 + Math.max(1, currDays));
+
+  const block = document.createElement('div');
+  block.className = 'ctx-block';
+  block.innerHTML = `<div class="ctx-head">Recent-day context <span class="ctx-head__win">loading daily history…</span></div>`;
+  container.appendChild(block);
+
+  fetchCampaignSeries(campaign, _queryCtx.end, need).then(data => {
+    const series = (data.series || []).filter(d => d.day);
+    const inRange = series.filter(d => d.day >= _queryCtx.start && d.day <= _queryCtx.end);
+    const prior   = series.filter(d => d.day < _queryCtx.start);
+    if (prior.length < 3) {
+      block.innerHTML = `<div class="ctx-head">Recent-day context</div>`
+        + `<div class="ctx-note">Only ${prior.length} day${prior.length === 1 ? '' : 's'} of history before ${esc(_queryCtx.start)} — not enough to say what's normal for this campaign.</div>`;
+      return;
+    }
+    const p7days  = prior.slice(-7);
+    const p30days = prior.slice(-30);
+
+    // Current values come from the SAME daily query as the baselines, NOT from
+    // the row above. Two reasons they differ: the contributors grid is capped at
+    // 1000 source × landing-page rows (it drops long tails), and it excludes
+    // checkout/order landing paths. Measuring the range with one definition and
+    // the baseline with another would manufacture a gap that isn't real, which
+    // is exactly the mistake this panel exists to prevent.
+    const daysSeen = inRange.length || Math.max(1, currDays);
+    const rangeSess = inRange.reduce((a, d) => a + d.sessions, 0);
+    const rangeTxn  = inRange.reduce((a, d) => a + d.transactions, 0);
+    const currSessPerDay = inRange.length ? rangeSess / daysSeen : group.currS / Math.max(1, currDays);
+    const currTxnPerDay  = inRange.length ? rangeTxn / daysSeen : (group.currS * group.currC) / Math.max(1, currDays);
+    const currCvr = inRange.length && rangeSess > 0
+      ? inRange.reduce((a, d) => a + d.sessions * d.cvr, 0) / rangeSess
+      : group.currC;
+
+    // Surface the definitional gap rather than letting the two numbers quietly
+    // disagree on screen.
+    const rowGap = rangeSess > 0 ? Math.abs(group.currS - rangeSess) / rangeSess : 0;
+    const mismatchNote = (inRange.length && rowGap > 0.02)
+      ? `<div class="ctx-note">The row above shows ${fmtN(Math.round(group.currS))} sessions for this range; this panel counts ${fmtN(rangeSess)}. The contributors grid excludes checkout/order landing paths, while this daily query counts every session for the campaign. Both figures here — range and baseline — come from the daily query, so the comparison is like-for-like.</div>`
+      : '';
+
+    const st = (arr, pick) => seriesStats(arr.map(pick));
+    const sess7  = st(p7days,  d => d.sessions),  sess30  = st(p30days, d => d.sessions);
+    const cvr7   = st(p7days,  d => d.cvr),       cvr30   = st(p30days, d => d.cvr);
+    const txn7   = st(p7days,  d => d.transactions), txn30 = st(p30days, d => d.transactions);
+
+    const fmtSess = v => fmtN(Math.round(v));
+    const fmtCvr  = v => (v * 100).toFixed(2) + '%';
+
+    // Where the current per-day figure would land among the previous 30 days.
+    const above = p30days.filter(d => d.sessions > currSessPerDay).length;
+    const rank  = above + 1;
+    const z     = sess30.sd > 0 ? (currSessPerDay - sess30.mean) / sess30.sd : 0;
+    const az    = Math.abs(z);
+    const dir   = currSessPerDay >= sess30.mean ? 'above' : 'below';
+
+    // "Bounce-back" = back in line with the month after an unusual week. It is
+    // the interesting middle case between "normal" and "outlier".
+    const weekOffNorm = sess30.sd > 0 ? (sess7.mean - sess30.mean) / sess30.sd : 0;
+    const bounceBack = az < 1 && Math.abs(weekOffNorm) > 0.5
+      && Math.sign(currSessPerDay - sess7.mean) === -Math.sign(weekOffNorm);
+
+    // Ranking a multi-day AVERAGE among single days needs different wording —
+    // and a caveat, because averaging suppresses variance: a 7-day mean sits
+    // closer to the norm than any single day would, so σ measured on single
+    // days makes a sustained run look tamer than it is.
+    const multi = currDays > 1;
+    const rankPhrase = multi
+      ? `and its daily average would rank ${rank} of the previous ${sess30.n} individual days`
+      : `ranking ${rank} of ${sess30.n + 1}`;
+
+    let verdictCls = '', verdict;
+    if (az >= 2) {
+      verdictCls = 'ctx-verdict--out';
+      verdict = `<strong>Outlier.</strong> ${fmtSess(currSessPerDay)} sessions/day is ${az.toFixed(1)}σ ${dir} the previous ${sess30.n}-day mean of ${fmtSess(sess30.mean)} (σ ${fmtSess(sess30.sd)}) — ${rankPhrase}. ${above === 0 ? `No day in the previous ${sess30.n} was higher.` : `Only ${above} of the previous ${sess30.n} days ${above === 1 ? 'was' : 'were'} higher.`}`;
+    } else if (bounceBack) {
+      verdict = `<strong>Bounce-back, not a new level.</strong> The previous 7 days averaged ${fmtSess(sess7.mean)}/day, ${weekOffNorm > 0 ? 'above' : 'below'} the ${sess30.n}-day norm of ${fmtSess(sess30.mean)}; ${fmtSess(currSessPerDay)} is back within normal variation (${az.toFixed(1)}σ), ${rankPhrase}.`;
+    } else if (az >= 1) {
+      verdictCls = 'ctx-verdict--hi';
+      verdict = `<strong>Elevated but not unusual.</strong> ${fmtSess(currSessPerDay)} sessions/day is ${az.toFixed(1)}σ ${dir} the previous ${sess30.n}-day mean of ${fmtSess(sess30.mean)}, ${rankPhrase}. The previous ${sess30.n} days spanned ${fmtSess(sess30.min)}–${fmtSess(sess30.max)}.`;
+    } else {
+      verdict = `<strong>Within normal daily variation.</strong> ${fmtSess(currSessPerDay)} sessions/day is ${az.toFixed(1)}σ ${dir} the previous ${sess30.n}-day mean of ${fmtSess(sess30.mean)} (σ ${fmtSess(sess30.sd)}), ${rankPhrase}.`;
+    }
+
+    const rangeNote = currDays === 1
+      ? `${esc(_queryCtx.end)}`
+      : `${esc(_queryCtx.start)} → ${esc(_queryCtx.end)}, shown per day`;
+
+    block.innerHTML = `
+      <div class="ctx-head">Recent-day context
+        <span class="ctx-head__win">${esc(group.campaign)} · your range: ${rangeNote} · baselines are the ${p7days.length} and ${p30days.length} days <em>before</em> ${esc(_queryCtx.start)}</span>
+      </div>
+      <div class="ctx-grid">
+        <div class="ctx-grid__h">Metric</div>
+        <div class="ctx-grid__h r">Your range</div>
+        <div class="ctx-grid__h r">vs prev ${p7days.length}d avg</div>
+        <div class="ctx-grid__h r">vs prev ${p30days.length}d avg</div>
+        <div class="ctx-grid__h r">Prev ${p30days.length}d range</div>
+        ${ctxRow('Sessions/day', currSessPerDay, sess7, sess30, fmtSess, false)}
+        ${ctxRow('CVR',          currCvr,        cvr7,  cvr30,  fmtCvr,  true)}
+        ${ctxRow('Txns/day',     currTxnPerDay,  txn7,  txn30,  fmtSess, false)}
+      </div>
+      ${ctxSparkline(p30days.map(d => ({ day: d.day, v: d.sessions })),
+                     (inRange.length ? inRange : [{ day: _queryCtx.end, v: currSessPerDay }])
+                       .map(d => ({ day: d.day, v: d.sessions != null ? d.sessions : d.v })),
+                     sess30.mean)}
+      <div class="ctx-verdict ${verdictCls}">${verdict}</div>
+      ${mismatchNote}
+      ${multi ? `<div class="ctx-note">Your range covers ${currDays} days, so its average varies less than any single day does — σ below is the spread of <em>individual</em> days, which makes a multi-day average look closer to normal than a one-day spike would.</div>` : ''}
+      <div class="ctx-note">Daily sessions for this campaign within the page's ${esc((_queryCtx.source || 'any') + ' / ' + (_queryCtx.medium || 'any'))} scope, all landing pages. Grey bars are the previous ${p30days.length} days, blue is your range, dashed line is their mean. σ = standard deviation of those ${p30days.length} daily values. Unlike the KPI row at the top of the page, these baselines <em>exclude</em> your range.</div>
+    `;
+  }).catch(e => {
+    block.innerHTML = `<div class="ctx-head">Recent-day context</div>`
+      + `<div class="ctx-note" style="color:var(--negative)">Could not load daily history: ${esc(e.message)}</div>`;
+  });
+}
+
 function renderEffects(container, group, tCvrDelta, tDelta, tPrevConv) {
+  // "Is this a bounce-back or a real outlier?" comes before the decomposition.
+  renderCampaignContext(container, group, _queryCtx ? daysInclusive(_queryCtx.start, _queryCtx.end) : 1);
+
   const maxEffAbs = group.effects.length > 0 ? Math.abs(group.effects[0].value) : 1e-9;
   group.effects.forEach(e => {
     const barPct = Math.round(Math.abs(e.value) / maxEffAbs * 100);

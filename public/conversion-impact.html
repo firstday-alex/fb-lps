@@ -2456,9 +2456,10 @@ async function fetchSourceSeries(source, end, days) {
   if (_srcSeriesCache.has(key)) return _srcSeriesCache.get(key);
   const p = (async () => {
     const params = new URLSearchParams({ end, days: String(days) });
-    // '' is Direct; the server maps a missing source to `utm_source IS NULL`.
-    if (source) params.set('source', source);
-    const r = await fetch(`/api/source-daily-series?${params.toString()}`);
+    // '' is Direct, which is NULL in Shopify — the server needs to be told that
+    // explicitly, since an omitted source means "don't filter on source".
+    if (source) params.set('source', source); else params.set('direct', '1');
+    const r = await fetch(`/api/utm-daily-series?${params.toString()}`);
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
     return j;
@@ -2602,14 +2603,14 @@ function renderSourceContext(container, group, currDays) {
     let verdictCls = '', verdict;
     if (az >= 2) {
       verdictCls = 'ctx-verdict--out';
-      verdict = `<strong>Outlier.</strong> ${fmtSess(currSessPerDay)} sessions/day is ${az.toFixed(1)}σ ${dir} the previous 30-day mean of ${fmtSess(sess30.mean)} (σ ${fmtSess(sess30.sd)}) — ${rankPhrase}. Only ${above} of the previous ${sess30.n} days were higher.`;
+      verdict = `<strong>Outlier.</strong> ${fmtSess(currSessPerDay)} sessions/day is ${az.toFixed(1)}σ ${dir} the previous ${sess30.n}-day mean of ${fmtSess(sess30.mean)} (σ ${fmtSess(sess30.sd)}) — ${rankPhrase}. ${above === 0 ? `No day in the previous ${sess30.n} was higher.` : `Only ${above} of the previous ${sess30.n} days ${above === 1 ? 'was' : 'were'} higher.`}`;
     } else if (bounceBack) {
-      verdict = `<strong>Bounce-back, not a new level.</strong> The previous 7 days averaged ${fmtSess(sess7.mean)}/day, ${weekOffNorm > 0 ? 'above' : 'below'} the 30-day norm of ${fmtSess(sess30.mean)}; ${fmtSess(currSessPerDay)} is back within normal variation (${az.toFixed(1)}σ), ${rankPhrase}.`;
+      verdict = `<strong>Bounce-back, not a new level.</strong> The previous 7 days averaged ${fmtSess(sess7.mean)}/day, ${weekOffNorm > 0 ? 'above' : 'below'} the ${sess30.n}-day norm of ${fmtSess(sess30.mean)}; ${fmtSess(currSessPerDay)} is back within normal variation (${az.toFixed(1)}σ), ${rankPhrase}.`;
     } else if (az >= 1) {
       verdictCls = 'ctx-verdict--hi';
-      verdict = `<strong>Elevated but not unusual.</strong> ${fmtSess(currSessPerDay)} sessions/day is ${az.toFixed(1)}σ ${dir} the previous 30-day mean of ${fmtSess(sess30.mean)}, ${rankPhrase}. The previous 30 days spanned ${fmtSess(sess30.min)}–${fmtSess(sess30.max)}.`;
+      verdict = `<strong>Elevated but not unusual.</strong> ${fmtSess(currSessPerDay)} sessions/day is ${az.toFixed(1)}σ ${dir} the previous ${sess30.n}-day mean of ${fmtSess(sess30.mean)}, ${rankPhrase}. The previous ${sess30.n} days spanned ${fmtSess(sess30.min)}–${fmtSess(sess30.max)}.`;
     } else {
-      verdict = `<strong>Within normal daily variation.</strong> ${fmtSess(currSessPerDay)} sessions/day is ${az.toFixed(1)}σ ${dir} the previous 30-day mean of ${fmtSess(sess30.mean)} (σ ${fmtSess(sess30.sd)}), ${rankPhrase}.`;
+      verdict = `<strong>Within normal daily variation.</strong> ${fmtSess(currSessPerDay)} sessions/day is ${az.toFixed(1)}σ ${dir} the previous ${sess30.n}-day mean of ${fmtSess(sess30.mean)} (σ ${fmtSess(sess30.sd)}), ${rankPhrase}.`;
     }
 
     const rangeNote = currDays === 1
@@ -2623,9 +2624,9 @@ function renderSourceContext(container, group, currDays) {
       <div class="ctx-grid">
         <div class="ctx-grid__h">Metric</div>
         <div class="ctx-grid__h r">Your range</div>
-        <div class="ctx-grid__h r">vs prev 7d avg</div>
-        <div class="ctx-grid__h r">vs prev 30d avg</div>
-        <div class="ctx-grid__h r">Prev 30d range</div>
+        <div class="ctx-grid__h r">vs prev ${p7days.length}d avg</div>
+        <div class="ctx-grid__h r">vs prev ${p30days.length}d avg</div>
+        <div class="ctx-grid__h r">Prev ${p30days.length}d range</div>
         ${ctxRow('Sessions/day', currSessPerDay, sess7, sess30, fmtSess, false)}
         ${ctxRow('CVR',          currCvr,        cvr7,  cvr30,  fmtCvr,  true)}
         ${ctxRow('Txns/day',     currTxnPerDay,  txn7,  txn30,  fmtSess, false)}
@@ -2637,7 +2638,7 @@ function renderSourceContext(container, group, currDays) {
       <div class="ctx-verdict ${verdictCls}">${verdict}</div>
       ${mismatchNote}
       ${multi ? `<div class="ctx-note">Your range covers ${currDays} days, so its average varies less than any single day does — σ below is the spread of <em>individual</em> days, which makes a multi-day average look closer to normal than a one-day spike would.</div>` : ''}
-      <div class="ctx-note">Daily sessions for this source, all mediums and all landing pages. Grey bars are the previous 30 days, blue is your range, dashed line is the 30-day mean. σ = standard deviation of those 30 daily values. Unlike the KPI row at the top of the page, these baselines <em>exclude</em> your range.</div>
+      <div class="ctx-note">Daily sessions for this source, all mediums and all landing pages. Grey bars are the previous ${p30days.length} days, blue is your range, dashed line is their mean. σ = standard deviation of those ${p30days.length} daily values. Unlike the KPI row at the top of the page, these baselines <em>exclude</em> your range.</div>
     `;
   }).catch(e => {
     block.innerHTML = `<div class="ctx-head">Recent-day context</div>`
