@@ -2384,6 +2384,8 @@ const DEFAULT_OPEN = new Set(['contributors-card']);
 // people return to daily, and re-opening the same four cards every morning is
 // the kind of friction that makes a page feel unusable.
 const CARD_STATE_KEY = 'mcvr:cardsOpen:v1';
+// Which section the nav is filtered to ('all' or a section id).
+const SECTION_VIEW_KEY = 'mcvr:sectionView:v1';
 function cardOpenState() {
   try { return JSON.parse(localStorage.getItem(CARD_STATE_KEY) || '{}'); } catch { return {}; }
 }
@@ -2459,9 +2461,10 @@ function organizeSections() {
     sync();
   });
 
-  nav.innerHTML = built.map(s =>
-    `<a class="section-nav__link" href="#${s.id}" data-sec="${s.id}">${esc(s.label)}</a>`
-  ).join('') + `
+  nav.innerHTML = `<a class="section-nav__link" href="#" data-sec="all">Everything</a>`
+    + built.map(s =>
+      `<a class="section-nav__link" href="#${s.id}" data-sec="${s.id}">${esc(s.label)}</a>`
+    ).join('') + `
     <span class="section-nav__spacer"></span>
     <button type="button" class="section-nav__all" id="nav-expand-all">Expand all</button>
     <button type="button" class="section-nav__all" id="nav-collapse-all">Collapse all</button>`;
@@ -2479,17 +2482,38 @@ function organizeSections() {
   requestAnimationFrame(syncNavHeight);   // again once the results screen paints
   window.addEventListener('resize', syncNavHeight);
 
-  nav.querySelectorAll('.section-nav__link').forEach(a => {
+  // The chips FILTER to one section rather than scrolling to it. Scrolling was
+  // the first cut and it was effectively broken: with cards collapsed the page
+  // barely exceeds one screen, so the browser has nothing left to scroll and
+  // clicking "Ads" or "Raw tables" moved nothing at all. Filtering always does
+  // something visible, and works the same whether cards are open or closed.
+  const links = [...nav.querySelectorAll('.section-nav__link')];
+  const showSection = (secId, opts = {}) => {
+    const all = secId === 'all';
+    built.forEach(s => { s.el.style.display = (all || s.id === secId) ? '' : 'none'; });
+    links.forEach(l => l.classList.toggle('section-nav__link--active', l.dataset.sec === secId));
+    try { localStorage.setItem(SECTION_VIEW_KEY, secId); } catch { /* ignore */ }
+    if (opts.scroll) {
+      // Only scroll UP, and only if the nav has been scrolled past — the KPI +
+      // headline block above the nav is permanent context worth keeping in view,
+      // and scrolling down toward a section that's already on screen just jars.
+      const navDocTop = Math.max(0, nav.getBoundingClientRect().top + window.scrollY - 8);
+      if (window.scrollY > navDocTop) window.scrollTo({ top: navDocTop, behavior: 'smooth' });
+    }
+    syncNavHeight();
+  };
+
+  links.forEach(a => {
     a.addEventListener('click', e => {
       e.preventDefault();
-      const sec = document.getElementById(a.dataset.sec);
-      const head = sec && sec.querySelector('.dash-section__head');
-      (head || sec).scrollIntoView({ behavior: 'smooth', block: 'start' });
+      showSection(a.dataset.sec, { scroll: true });
     });
   });
 
   const setAll = open => {
-    document.querySelectorAll('#dash-sections .card.collapsible').forEach(c => {
+    // Only what's on screen — collapsing sections the viewer has filtered out
+    // would silently rewrite their remembered state.
+    document.querySelectorAll('#dash-sections .dash-section:not([style*="none"]) .card.collapsible').forEach(c => {
       c.classList.toggle('collapsed', !open);
       saveCardOpen(c.id, open);
     });
@@ -2498,15 +2522,10 @@ function organizeSections() {
   nav.querySelector('#nav-expand-all').addEventListener('click', () => setAll(true));
   nav.querySelector('#nav-collapse-all').addEventListener('click', () => setAll(false));
 
-  // Highlight the section currently in view.
-  const links = [...nav.querySelectorAll('.section-nav__link')];
-  const spy = new IntersectionObserver(entries => {
-    entries.forEach(en => {
-      if (!en.isIntersecting) return;
-      links.forEach(l => l.classList.toggle('section-nav__link--active', l.dataset.sec === en.target.id));
-    });
-  }, { rootMargin: '-45px 0px -70% 0px' });
-  built.forEach(s => spy.observe(s.el));
+  let startView = 'all';
+  try { startView = localStorage.getItem(SECTION_VIEW_KEY) || 'all'; } catch { /* ignore */ }
+  if (startView !== 'all' && !built.some(s => s.id === startView)) startView = 'all';
+  showSection(startView);
 
   host.dataset.built = '1';
 }
