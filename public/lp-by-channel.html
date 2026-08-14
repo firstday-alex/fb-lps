@@ -637,12 +637,6 @@ function renderTable() {
   document.querySelectorAll('#tbody .col-label--drill').forEach(td => {
     td.addEventListener('click', () => toggleDrill(td.dataset.drill));
   });
-
-  // Resolve previews for the ad names now on screen. Names already seen are
-  // skipped inside the resolver, so calling this on every paint is cheap.
-  if (drillable) {
-    AdLink.enqueue(rows.map(r => r.label).filter(l => l && l !== '(none)'));
-  }
 }
 
 function escapeHtml(s) { return String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
