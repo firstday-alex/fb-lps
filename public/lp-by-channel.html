@@ -94,6 +94,10 @@
     td.col-label--drill.open .chev { color: var(--fb-blue); }
     tr.parent-open td { background: #eef3ff; }
     tr.drill-row td { background: #fafbfd; border-bottom-color: #eef1f6; }
+    /* Depth 2 sits a shade darker than depth 1. Indentation alone stops carrying the
+       hierarchy once an ad name wraps to three lines, which they do. */
+    tr.drill-row--2 td { background: #f3f5fa; }
+    table.heat td.drill-label--2 { padding-left: 48px; }
     table.heat td.drill-label {
       font-weight: 500; font-family: Menlo, Monaco, monospace; font-size: 0.76rem;
       padding-left: 26px; color: var(--text-secondary);
@@ -103,6 +107,7 @@
       background: #fafbfd; text-align: left; font-size: 0.74rem;
       color: var(--text-secondary); padding-left: 26px; font-style: italic;
     }
+    tr.drill-note--2 td { background: #f3f5fa; padding-left: 48px; }
     tr.drill-note--err td { color: var(--negative); font-style: normal; }
     .cell-val { display: block; }
     .cell-delta { display: block; font-size: 0.7rem; font-weight: 600; }
@@ -216,10 +221,31 @@ let _cmpTag = 'prev';
 
 const GROUP_LABEL = { lp: 'Landing page', ad: 'Ad name', campaign: 'Campaign' };
 
-// Ad-name rows expand into that ad's landing pages, fetched per ad on demand
-// (group=lp + ad_exact). Keyed by ad label; cleared on every fresh load so a
-// drill can never show numbers from a different window or filter set.
-let _drill = new Map();   // label → { state:'loading'|'ready'|'error', rows, totals, error }
+// Rows expand into the next dimension down, fetched on demand and cleared on every
+// fresh load so a drill can never show numbers from a different window or filter set.
+// Two chains, both ending at the landing page:
+//
+//   Campaign → Ad name → Landing page
+//   Ad name  → Landing page
+//
+// Keyed by the PATH, not the label, because the same ad name legitimately runs under
+// several campaigns. Keying on the label alone would make those rows share one cache
+// entry and show each other's landing pages.
+const DRILL = {
+  campaign: { child: 'ad', childDrillable: true  },
+  ad:       { child: 'lp', childDrillable: false },
+};
+// Hard stop on nesting depth, independent of DRILL. The chain happens to bottom out at
+// the landing page anyway, but a bound means adding a dimension can't accidentally make
+// the table recurse further than anyone intended.
+const MAX_DEPTH = 2;
+// NUL as the separator: ad names contain spaces, pipes, slashes and dashes, but a NUL
+// cannot occur in a UTM value. So a key can never collide with another path, and the
+// prefix test that closes descendants cannot false-positive on a sibling.
+const SEP = '\u0000';
+const drillKey = (path) => path.map(p => p.dim + SEP + p.label).join(SEP);
+let _drill = new Map();      // drillKey → { state, rows, totals, error }
+let _pathByKey = new Map();  // drillKey → path; rebuilt each paint so a click resolves its path
 
 // Columns. heat=true → funnel-rate cell gets the color-coded background.
 const COLS = [
@@ -354,18 +380,28 @@ function populateChannels() {
   sel.value = want;
 }
 
-// ── Ad → landing-page drill ──
-// Re-queries with the SAME window and filters the loaded table used (read off
-// the echoed response, not the inputs, which may have been edited since), and
-// with ad_exact so only this ad's traffic is counted.
-async function fetchAdLandingPages(adLabel) {
+// ── Drill: campaign → ad name → landing page ──
+// Re-queries with the SAME window and filters the loaded table used -- read off the
+// echoed response, not the inputs, which may have been edited since the load.
+//
+// Every level of the path is pinned with an EXACT filter, not just the deepest one. A
+// landing-page row two levels down has to be constrained by its campaign AND its ad;
+// pinning only the ad would report that ad's pages across every campaign it ran in --
+// a plausible-looking number that doesn't belong to the row above it.
+async function fetchDrill(path) {
+  const cfg = DRILL[path[path.length - 1].dim];
   const params = new URLSearchParams({
-    start: _data.start, end: _data.end, group: 'lp',
+    start: _data.start, end: _data.end, group: cfg.child,
     channel: _data.channel || '',
-    campaign: _data.campaign || '',
-    ad_exact: adLabel,
     limit: String(_data.limit || 50),
   });
+  path.forEach(p => {
+    if (p.dim === 'campaign') params.set('campaign_exact', p.label);
+    if (p.dim === 'ad') params.set('ad_exact', p.label);
+  });
+  // The table's own free-text filters still apply at any level the path hasn't pinned.
+  if (!params.has('campaign_exact') && _data.campaign) params.set('campaign', _data.campaign);
+  if (!params.has('ad_exact') && _data.ad) params.set('ad', _data.ad);
   if (_data.compare.mode === 'custom') {
     params.set('compare_start', _data.compare.start);
     params.set('compare_end', _data.compare.end);
@@ -375,15 +411,24 @@ async function fetchAdLandingPages(adLabel) {
   return resp.json();
 }
 
-async function toggleDrill(adLabel) {
-  if (_drill.has(adLabel)) { _drill.delete(adLabel); renderTable(); return; }
-  _drill.set(adLabel, { state: 'loading' });
+async function toggleDrill(key) {
+  const path = _pathByKey.get(key);
+  if (!path) return;
+  if (_drill.has(key)) {
+    // Closing a parent drops its descendants too. Leaving them cached means reopening
+    // the parent silently restores children the user had closed, under numbers that
+    // may since have been refetched.
+    [..._drill.keys()].forEach(k => { if (k === key || k.startsWith(key + SEP)) _drill.delete(k); });
+    renderTable();
+    return;
+  }
+  _drill.set(key, { state: 'loading' });
   renderTable();
   try {
-    const data = await fetchAdLandingPages(adLabel);
-    _drill.set(adLabel, { state: 'ready', rows: data.rows || [], totals: data.totals });
+    const data = await fetchDrill(path);
+    _drill.set(key, { state: 'ready', rows: data.rows || [], totals: data.totals });
   } catch (err) {
-    _drill.set(adLabel, { state: 'error', error: err.message });
+    _drill.set(key, { state: 'error', error: err.message });
   }
   renderTable();
 }
@@ -398,9 +443,12 @@ function render() {
 
 function renderGroupHint() {
   const el = document.getElementById('group-hint');
-  if (_data.group !== 'ad') { el.innerHTML = ''; return; }
+  if (!DRILL[_data.group]) { el.innerHTML = ''; return; }
 
-  const bits = ['▶ Click an ad to break it down by landing page.'];
+  const chain = _data.group === 'campaign'
+    ? '▶ Click a campaign to break it down by ad name, then an ad to break it down by landing page.'
+    : '▶ Click an ad to break it down by landing page.';
+  const bits = [chain];
   const s = AdLink.state;
   if (s.authFailed) {
     // Every number on the page is Shopify data and works without Facebook —
@@ -442,6 +490,10 @@ function renderTopInfo() {
 }
 
 function renderTable() {
+  // Rebuilt from scratch each paint. A key left over from a previous grouping would
+  // otherwise still resolve, and a click on it would fetch a path that is no longer
+  // on screen.
+  _pathByKey = new Map();
   const agg = computeFunnel(_data.totals.current);        // filtered-average baseline for heat coloring
   const aggPrev = computeFunnel(_data.totals.previous);
 
@@ -471,11 +523,13 @@ function renderTable() {
     return `<td style="${style}"><span class="cell-val">${valStr}</span><span class="cell-delta ${d.cls}">${d.text || '&nbsp;'}</span></td>`;
   };
 
-  // Ad rows are expandable; '(none)' can't be, since there's no ad name to
-  // filter on — say so rather than offering a click that returns nothing.
-  const drillable = _data.group === 'ad';
-  // Drill rows follow the table's own sort, so a click on "CVR" reorders the
-  // landing pages under each ad too.
+  // A row is expandable when its dimension has a child dimension and the row is a real
+  // value. '(none)' means the UTM was absent on those sessions, so there is nothing to
+  // filter on -- say so in the tooltip rather than offering a click that returns nothing.
+  const topDim = _data.group;
+  const canExpand = (dim, label) => !!DRILL[dim] && label !== '(none)';
+
+  // Drill rows follow the table's own sort, so a click on "CVR" reorders every level.
   const sortRows = (list) => [...list].sort((a, b) => {
     if (_sort.key === 'label') return _sort.dir * a.label.localeCompare(b.label);
     const av = a.cur[_sort.key], bv = b.cur[_sort.key];
@@ -483,63 +537,102 @@ function renderTable() {
   });
   const rows = sortRows(_data.rows.map(r => ({ label: r.label, cur: computeFunnel(r.current), prev: computeFunnel(r.previous) })));
 
-  const drillRowsHtml = (adLabel, parentSessions) => {
-    const d = _drill.get(adLabel);
+  // Ad names get a Meta creative-preview link and a copy button wherever they appear --
+  // as top-level rows when grouping by ad, and as drill children under a campaign.
+  // They run past 100 characters; copying one out of a table cell by hand is miserable.
+  const adTools = (dim, label) => (dim === 'ad' && label !== '(none)')
+    ? AdLink.cellHtml(label, { copy: true })
+    : '';
+
+  // Every ad name on screen at any depth, so previews resolve for nested rows too.
+  const adNamesOnScreen = [];
+
+  // One level of children, and — if those children can themselves expand — their
+  // children under them. Depth is only used for indentation and shading; the path is
+  // what identifies a row.
+  const drillRowsHtml = (path, parentSessions) => {
+    const key = drillKey(path);
+    const d = _drill.get(key);
     if (!d) return '';
+    const depth = path.length;                 // 1 = children of a top-level row
+    const cfg = DRILL[path[path.length - 1].dim];
+    const childDim = cfg.child;
     const span = COLS.length;
+    const noteCls = 'drill-note' + (depth > 1 ? ' drill-note--2' : '');
+    const childName = (GROUP_LABEL[childDim] || childDim).toLowerCase();
+
     if (d.state === 'loading') {
-      return `<tr class="drill-note"><td colspan="${span}">Loading landing pages for this ad…</td></tr>`;
+      return `<tr class="${noteCls}"><td colspan="${span}">Loading ${escapeHtml(childName)}s...</td></tr>`;
     }
     if (d.state === 'error') {
-      return `<tr class="drill-note drill-note--err"><td colspan="${span}">Could not load landing pages: ${escapeHtml(d.error)}</td></tr>`;
+      return `<tr class="${noteCls} drill-note--err"><td colspan="${span}">Could not load ${escapeHtml(childName)}s: ${escapeHtml(d.error)}</td></tr>`;
     }
     if (!d.rows.length) {
-      return `<tr class="drill-note"><td colspan="${span}">No landing pages recorded for this ad in this window.</td></tr>`;
+      return `<tr class="${noteCls}"><td colspan="${span}">No ${escapeHtml(childName)}s recorded here in this window.</td></tr>`;
     }
+
     const sub = sortRows(d.rows.map(r => ({ label: r.label, cur: computeFunnel(r.current), prev: computeFunnel(r.previous) })));
     const body = sub.map(r => {
+      if (childDim === 'ad') adNamesOnScreen.push(r.label);
+      const childPath = path.concat([{ dim: childDim, label: r.label }]);
+      const childKey = drillKey(childPath);
+      _pathByKey.set(childKey, childPath);
+      const expandable = cfg.childDrillable && canExpand(childDim, r.label) && depth < MAX_DEPTH;
+      const open = _drill.has(childKey);
       const share = parentSessions > 0 ? (r.cur.sessions / parentSessions * 100) : null;
+      const shareHtml = share != null ? `<span class="drill-share">${share.toFixed(0)}%</span>` : '';
+      const labelCls = 'col-label drill-label' + (depth > 1 ? ' drill-label--2' : '')
+        + (expandable ? ' col-label--drill' : '') + (open ? ' open' : '');
+      const drillAttr = expandable ? ` data-drill="${escapeAttr(childKey)}"` : '';
+      const chev = expandable ? `<span class="chev">${open ? '&#9660;' : '&#9654;'}</span>` : '';
       const tds = COLS.map(c => c.kind === 'label'
-        ? `<td class="col-label drill-label" title="${escapeAttr(r.label)}">↳ ${escapeHtml(r.label)}${share != null ? `<span class="drill-share">${share.toFixed(0)}%</span>` : ''}</td>`
+        ? `<td class="${labelCls}"${drillAttr} title="${escapeAttr(r.label)}">${chev}&#8627; ${escapeHtml(r.label)}${shareHtml}${adTools(childDim, r.label)}</td>`
         : cell(c, r.cur, r.prev, true)).join('');
-      return `<tr class="drill-row">${tds}</tr>`;
+      return `<tr class="drill-row${depth > 1 ? ' drill-row--2' : ''}${open ? ' parent-open' : ''}">${tds}</tr>`
+        + (expandable ? drillRowsHtml(childPath, r.cur.sessions) : '');
     }).join('');
-    // The per-ad query has its own ONLY TOP cap, so its rows can sum to less
-    // than the ad row above. State it instead of letting the two quietly differ.
+
+    // Each level's query has its own ONLY TOP cap, so children can sum to less than the
+    // row above them. State it rather than letting the two quietly differ.
     const sum = sub.reduce((a, r) => a + (r.cur.sessions || 0), 0);
     const gap = parentSessions - sum;
     const notes = [];
     if (sub.length >= (_data.limit || 50)) {
-      notes.push(`capped at the top ${_data.limit} by sessions — raise "Show top" for the tail`);
+      notes.push(`capped at the top ${_data.limit} by sessions -- raise "Show top" for the tail`);
     }
     if (Math.abs(gap) > Math.max(1, parentSessions * 0.01)) {
-      notes.push(`covers ${fmtInt(sum)} of the ad's ${fmtInt(parentSessions)} sessions (${fmtInt(Math.abs(gap))} elsewhere)`);
+      notes.push(`covers ${fmtInt(sum)} of the ${fmtInt(parentSessions)} sessions above (${fmtInt(Math.abs(gap))} elsewhere)`);
     }
-    return body + `<tr class="drill-note"><td colspan="${span}">${sub.length} landing page${sub.length === 1 ? '' : 's'} for this ad${notes.length ? ' · ' + notes.join(' · ') : ''}</td></tr>`;
+    return body + `<tr class="${noteCls}"><td colspan="${span}">${sub.length} ${escapeHtml(childName)}${sub.length === 1 ? '' : 's'}${notes.length ? ' - ' + notes.join(' - ') : ''}</td></tr>`;
   };
 
-  // Ad names get a Meta creative-preview link and a copy button (they run past
-  // 100 characters — copying one out of a table cell by hand is miserable).
-  const adTools = (label) => (drillable && label !== '(none)')
-    ? AdLink.cellHtml(label, { copy: true })
-    : '';
-
   const bodyRows = rows.map(r => {
-    const open = _drill.has(r.label);
-    const canDrill = drillable && r.label !== '(none)';
-    const labelCell = canDrill
-      ? `<td class="col-label col-label--drill${open ? ' open' : ''}" data-drill="${escapeAttr(r.label)}" title="${escapeAttr(r.label)}"><span class="chev">${open ? '▼' : '▶'}</span>${escapeHtml(r.label)}${adTools(r.label)}</td>`
-      : `<td class="col-label" title="${escapeAttr(drillable ? 'No ad name recorded on these sessions, so there is no ad to break down' : r.label)}">${escapeHtml(r.label)}</td>`;
+    if (topDim === 'ad') adNamesOnScreen.push(r.label);
+    const path = [{ dim: topDim, label: r.label }];
+    const key = drillKey(path);
+    _pathByKey.set(key, path);
+    const expandable = canExpand(topDim, r.label);
+    const open = _drill.has(key);
+    const labelCell = expandable
+      ? `<td class="col-label col-label--drill${open ? ' open' : ''}" data-drill="${escapeAttr(key)}" title="${escapeAttr(r.label)}"><span class="chev">${open ? '&#9660;' : '&#9654;'}</span>${escapeHtml(r.label)}${adTools(topDim, r.label)}</td>`
+      : `<td class="col-label" title="${escapeAttr(DRILL[topDim] ? 'No ' + (GROUP_LABEL[topDim] || topDim).toLowerCase() + ' recorded on these sessions, so there is nothing to break down' : r.label)}">${escapeHtml(r.label)}${adTools(topDim, r.label)}</td>`;
     const tds = COLS.map(c => c.kind === 'label' ? labelCell : cell(c, r.cur, r.prev, true)).join('');
-    return `<tr${open ? ' class="parent-open"' : ''}>${tds}</tr>` + (canDrill ? drillRowsHtml(r.label, r.cur.sessions) : '');
+    return `<tr${open ? ' class="parent-open"' : ''}>${tds}</tr>`
+      + (expandable ? drillRowsHtml(path, r.cur.sessions) : '');
   }).join('');
 
-  // Totals row (filtered aggregate; no heat — it IS the baseline)
+  // Totals row (filtered aggregate; no heat -- it IS the baseline)
   const totTds = COLS.map(c => c.kind === 'label'
-    ? `<td class="col-label">All — filtered (${_data.rows.length})</td>`
-    : (agg ? cell(c, agg, aggPrev, false) : '<td>—</td>')).join('');
+    ? `<td class="col-label">All - filtered (${_data.rows.length})</td>`
+    : (agg ? cell(c, agg, aggPrev, false) : '<td>&mdash;</td>')).join('');
 
   document.getElementById('tbody').innerHTML = `<tr class="totals-row">${totTds}</tr>` + bodyRows;
+
+  // Resolve previews for every ad name now on screen, at any depth. Names already seen
+  // are skipped inside the resolver, so calling this on each paint is cheap.
+  if (adNamesOnScreen.length) {
+    AdLink.enqueue(adNamesOnScreen.filter(l => l && l !== '(none)'));
+  }
 
   document.querySelectorAll('#tbody .col-label--drill').forEach(td => {
     td.addEventListener('click', () => toggleDrill(td.dataset.drill));

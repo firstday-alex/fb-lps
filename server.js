@@ -1485,6 +1485,10 @@ app.get('/api/lp-by-channel-data', async (req, res) => {
   // Exact utm_content — powers the ad-name row drill, which needs THAT ad's
   // landing pages, not every ad whose name contains it. Wins over `ad`.
   const adExact = (req.query.ad_exact || '').trim();
+  // Exact utm_campaign — same reasoning one level up, for the campaign → ad-name
+  // drill. CONTAINS would fold "Prospecting" and "Prospecting-Retarget" into one
+  // row's children and silently overstate it. Wins over `campaign`.
+  const campaignExact = (req.query.campaign_exact || '').trim();
   let limit = parseInt(req.query.limit, 10);
   if (!Number.isFinite(limit) || limit < 1) limit = 50;
   limit = Math.min(limit, 200);
@@ -1506,7 +1510,8 @@ app.get('/api/lp-by-channel-data', async (req, res) => {
   const esc = (v) => String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
   const conds = [];
   if (channel) conds.push(`utm_source = '${esc(channel)}'`);
-  if (campaign) conds.push(`utm_campaign CONTAINS '${esc(campaign)}'`);
+  if (campaignExact) conds.push(`utm_campaign = '${esc(campaignExact)}'`);
+  else if (campaign) conds.push(`utm_campaign CONTAINS '${esc(campaign)}'`);
   if (adExact) conds.push(`utm_content = '${esc(adExact)}'`);
   else if (ad) conds.push(`utm_content CONTAINS '${esc(ad)}'`);
   const whereClause = conds.length ? `\n  WHERE ${conds.join(' AND ')}` : '';
@@ -1619,7 +1624,7 @@ app.get('/api/lp-by-channel-data', async (req, res) => {
 
     res.json({
       start, end, group,
-      channel, campaign, ad, ad_exact: adExact, limit,
+      channel, campaign, ad, ad_exact: adExact, campaign_exact: campaignExact, limit,
       compare: { mode: useCustomCompare ? 'custom' : 'previous_period', start: cs || null, end: ce || null },
       query: mainQuery,
       compare_query: compareQuery,
