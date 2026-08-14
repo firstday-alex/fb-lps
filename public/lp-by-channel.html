@@ -69,10 +69,38 @@
       cursor: pointer; user-select: none; position: sticky; top: 0; background: var(--surface); z-index: 2; }
     table.heat th:hover { color: var(--fb-blue); }
     table.heat th.sorted { color: var(--fb-blue); }
-    th.col-label, td.col-label { text-align: left; }
-    /* Landing-page label wraps to its full path instead of being ellipsised. */
-    td.col-label { font-weight: 600; min-width: 280px; white-space: normal; overflow-wrap: anywhere; word-break: break-word; line-height: 1.35; }
+    /* Scoped under table.heat deliberately: the generic `table.heat th, table.heat td`
+       rule above is MORE specific than a bare `td.col-label`, so the unscoped
+       versions of these two rules never applied — the label column rendered
+       right-aligned and nowrap, which pushed short labels far from the left edge
+       and stretched the table past 2,700px. */
+    table.heat th.col-label, table.heat td.col-label { text-align: left; }
+    /* Label wraps to its full path / ad name instead of being ellipsised, and is
+       width-capped so the numbers don't end up a screen away from it. */
+    table.heat td.col-label {
+      font-weight: 600; width: 460px; min-width: 280px; max-width: 460px;
+      white-space: normal; overflow-wrap: anywhere; word-break: break-word; line-height: 1.35;
+    }
     tr.totals-row td { font-weight: 700; border-top: 2px solid var(--border); border-bottom: none; background: #f9fafc; }
+
+    /* Ad-name rows expand into that ad's landing pages */
+    .group-hint { font-size: 0.76rem; color: var(--fb-blue); align-self: center; }
+    td.col-label--drill { cursor: pointer; user-select: none; }
+    td.col-label--drill:hover { color: var(--fb-blue); }
+    td.col-label--drill .chev { display: inline-block; width: 12px; font-size: 0.62rem; color: var(--text-secondary); }
+    td.col-label--drill.open .chev { color: var(--fb-blue); }
+    tr.parent-open td { background: #eef3ff; }
+    tr.drill-row td { background: #fafbfd; border-bottom-color: #eef1f6; }
+    table.heat td.drill-label {
+      font-weight: 500; font-family: Menlo, Monaco, monospace; font-size: 0.76rem;
+      padding-left: 26px; color: var(--text-secondary);
+    }
+    .drill-share { margin-left: 7px; font-family: inherit; font-size: 0.7rem; color: var(--text-secondary); opacity: 0.8; }
+    tr.drill-note td {
+      background: #fafbfd; text-align: left; font-size: 0.74rem;
+      color: var(--text-secondary); padding-left: 26px; font-style: italic;
+    }
+    tr.drill-note--err td { color: var(--negative); font-style: normal; }
     .cell-val { display: block; }
     .cell-delta { display: block; font-size: 0.7rem; font-weight: 600; }
     .delta-pos { color: var(--positive); } .delta-neg { color: var(--negative); } .delta-flat { color: var(--text-secondary); }
@@ -146,9 +174,9 @@
         <button data-group="lp" class="on">Landing Page</button>
         <button data-group="ad">Ad Name</button>
         <button data-group="campaign">Campaign</button>
-        <button data-group="adset">Ad Set</button>
       </div>
     </div>
+    <div class="group-hint" id="group-hint"></div>
   </div>
 
   <div class="status" id="status"></div>
@@ -182,7 +210,12 @@ let _sort = { key: 'sessions', dir: -1 };
 let _compareManualOverride = false;
 let _cmpTag = 'prev';
 
-const GROUP_LABEL = { lp: 'Landing page', ad: 'Ad name', campaign: 'Campaign', adset: 'Ad set' };
+const GROUP_LABEL = { lp: 'Landing page', ad: 'Ad name', campaign: 'Campaign' };
+
+// Ad-name rows expand into that ad's landing pages, fetched per ad on demand
+// (group=lp + ad_exact). Keyed by ad label; cleared on every fresh load so a
+// drill can never show numbers from a different window or filter set.
+let _drill = new Map();   // label → { state:'loading'|'ready'|'error', rows, totals, error }
 
 // Columns. heat=true → funnel-rate cell gets the color-coded background.
 const COLS = [
@@ -297,6 +330,7 @@ async function loadData() {
     const resp = await fetch(`/api/lp-by-channel-data?${params.toString()}`);
     if (!resp.ok) { const e = await resp.json().catch(() => ({})); throw new Error(e.error || `HTTP ${resp.status}`); }
     _data = await resp.json();
+    _drill = new Map();
     status.textContent = '';
     populateChannels();
     render();
@@ -315,11 +349,53 @@ function populateChannels() {
   sel.value = want;
 }
 
+// ── Ad → landing-page drill ──
+// Re-queries with the SAME window and filters the loaded table used (read off
+// the echoed response, not the inputs, which may have been edited since), and
+// with ad_exact so only this ad's traffic is counted.
+async function fetchAdLandingPages(adLabel) {
+  const params = new URLSearchParams({
+    start: _data.start, end: _data.end, group: 'lp',
+    channel: _data.channel || '',
+    campaign: _data.campaign || '',
+    ad_exact: adLabel,
+    limit: String(_data.limit || 50),
+  });
+  if (_data.compare.mode === 'custom') {
+    params.set('compare_start', _data.compare.start);
+    params.set('compare_end', _data.compare.end);
+  }
+  const resp = await fetch(`/api/lp-by-channel-data?${params.toString()}`);
+  if (!resp.ok) { const e = await resp.json().catch(() => ({})); throw new Error(e.error || `HTTP ${resp.status}`); }
+  return resp.json();
+}
+
+async function toggleDrill(adLabel) {
+  if (_drill.has(adLabel)) { _drill.delete(adLabel); renderTable(); return; }
+  _drill.set(adLabel, { state: 'loading' });
+  renderTable();
+  try {
+    const data = await fetchAdLandingPages(adLabel);
+    _drill.set(adLabel, { state: 'ready', rows: data.rows || [], totals: data.totals });
+  } catch (err) {
+    _drill.set(adLabel, { state: 'error', error: err.message });
+  }
+  renderTable();
+}
+
 // ── Render ──
 function render() {
   _cmpTag = _data.compare.mode === 'custom' ? 'cmp' : 'prev';
   renderTopInfo();
+  renderGroupHint();
   renderTable();
+}
+
+function renderGroupHint() {
+  const el = document.getElementById('group-hint');
+  el.innerHTML = _data.group === 'ad'
+    ? '▶ Click an ad to break it down by landing page.'
+    : '';
 }
 
 function renderTopInfo() {
@@ -356,14 +432,6 @@ function renderTable() {
     renderTable();
   }));
 
-  // Rows
-  const rows = _data.rows.map(r => ({ label: r.label, cur: computeFunnel(r.current), prev: computeFunnel(r.previous) }));
-  rows.sort((a, b) => {
-    if (_sort.key === 'label') return _sort.dir * a.label.localeCompare(b.label);
-    const av = a.cur[_sort.key], bv = b.cur[_sort.key];
-    return _sort.dir * ((av == null ? -Infinity : av) - (bv == null ? -Infinity : bv));
-  });
-
   const cell = (col, cur, prev, useHeat) => {
     const v = cur[col.key];
     let valStr;
@@ -375,11 +443,61 @@ function renderTable() {
     return `<td style="${style}"><span class="cell-val">${valStr}</span><span class="cell-delta ${d.cls}">${d.text || '&nbsp;'}</span></td>`;
   };
 
+  // Ad rows are expandable; '(none)' can't be, since there's no ad name to
+  // filter on — say so rather than offering a click that returns nothing.
+  const drillable = _data.group === 'ad';
+  // Drill rows follow the table's own sort, so a click on "CVR" reorders the
+  // landing pages under each ad too.
+  const sortRows = (list) => [...list].sort((a, b) => {
+    if (_sort.key === 'label') return _sort.dir * a.label.localeCompare(b.label);
+    const av = a.cur[_sort.key], bv = b.cur[_sort.key];
+    return _sort.dir * ((av == null ? -Infinity : av) - (bv == null ? -Infinity : bv));
+  });
+  const rows = sortRows(_data.rows.map(r => ({ label: r.label, cur: computeFunnel(r.current), prev: computeFunnel(r.previous) })));
+
+  const drillRowsHtml = (adLabel, parentSessions) => {
+    const d = _drill.get(adLabel);
+    if (!d) return '';
+    const span = COLS.length;
+    if (d.state === 'loading') {
+      return `<tr class="drill-note"><td colspan="${span}">Loading landing pages for this ad…</td></tr>`;
+    }
+    if (d.state === 'error') {
+      return `<tr class="drill-note drill-note--err"><td colspan="${span}">Could not load landing pages: ${escapeHtml(d.error)}</td></tr>`;
+    }
+    if (!d.rows.length) {
+      return `<tr class="drill-note"><td colspan="${span}">No landing pages recorded for this ad in this window.</td></tr>`;
+    }
+    const sub = sortRows(d.rows.map(r => ({ label: r.label, cur: computeFunnel(r.current), prev: computeFunnel(r.previous) })));
+    const body = sub.map(r => {
+      const share = parentSessions > 0 ? (r.cur.sessions / parentSessions * 100) : null;
+      const tds = COLS.map(c => c.kind === 'label'
+        ? `<td class="col-label drill-label" title="${escapeAttr(r.label)}">↳ ${escapeHtml(r.label)}${share != null ? `<span class="drill-share">${share.toFixed(0)}%</span>` : ''}</td>`
+        : cell(c, r.cur, r.prev, true)).join('');
+      return `<tr class="drill-row">${tds}</tr>`;
+    }).join('');
+    // The per-ad query has its own ONLY TOP cap, so its rows can sum to less
+    // than the ad row above. State it instead of letting the two quietly differ.
+    const sum = sub.reduce((a, r) => a + (r.cur.sessions || 0), 0);
+    const gap = parentSessions - sum;
+    const notes = [];
+    if (sub.length >= (_data.limit || 50)) {
+      notes.push(`capped at the top ${_data.limit} by sessions — raise "Show top" for the tail`);
+    }
+    if (Math.abs(gap) > Math.max(1, parentSessions * 0.01)) {
+      notes.push(`covers ${fmtInt(sum)} of the ad's ${fmtInt(parentSessions)} sessions (${fmtInt(Math.abs(gap))} elsewhere)`);
+    }
+    return body + `<tr class="drill-note"><td colspan="${span}">${sub.length} landing page${sub.length === 1 ? '' : 's'} for this ad${notes.length ? ' · ' + notes.join(' · ') : ''}</td></tr>`;
+  };
+
   const bodyRows = rows.map(r => {
-    const tds = COLS.map(c => c.kind === 'label'
-      ? `<td class="col-label" title="${escapeAttr(r.label)}">${escapeHtml(r.label)}</td>`
-      : cell(c, r.cur, r.prev, true)).join('');
-    return `<tr>${tds}</tr>`;
+    const open = _drill.has(r.label);
+    const canDrill = drillable && r.label !== '(none)';
+    const labelCell = canDrill
+      ? `<td class="col-label col-label--drill${open ? ' open' : ''}" data-drill="${escapeAttr(r.label)}" title="${escapeAttr(r.label)}"><span class="chev">${open ? '▼' : '▶'}</span>${escapeHtml(r.label)}</td>`
+      : `<td class="col-label" title="${escapeAttr(drillable ? 'No ad name recorded on these sessions, so there is no ad to break down' : r.label)}">${escapeHtml(r.label)}</td>`;
+    const tds = COLS.map(c => c.kind === 'label' ? labelCell : cell(c, r.cur, r.prev, true)).join('');
+    return `<tr${open ? ' class="parent-open"' : ''}>${tds}</tr>` + (canDrill ? drillRowsHtml(r.label, r.cur.sessions) : '');
   }).join('');
 
   // Totals row (filtered aggregate; no heat — it IS the baseline)
@@ -388,6 +506,10 @@ function renderTable() {
     : (agg ? cell(c, agg, aggPrev, false) : '<td>—</td>')).join('');
 
   document.getElementById('tbody').innerHTML = `<tr class="totals-row">${totTds}</tr>` + bodyRows;
+
+  document.querySelectorAll('#tbody .col-label--drill').forEach(td => {
+    td.addEventListener('click', () => toggleDrill(td.dataset.drill));
+  });
 }
 
 function escapeHtml(s) { return String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }

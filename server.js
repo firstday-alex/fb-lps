@@ -1472,14 +1472,19 @@ app.get('/api/lp-by-channel-data', async (req, res) => {
     return res.status(400).json({ error: 'start and end query params required (YYYY-MM-DD)' });
   }
 
-  // Group dimension: which UTM/LP field the rows break down by.
-  const DIM = { lp: 'landing_page_path', ad: 'utm_content', campaign: 'utm_campaign', adset: 'utm_term' };
+  // Group dimension: which UTM/LP field the rows break down by. An unknown or
+  // retired value (e.g. the removed `adset`) falls back to landing page, so an
+  // old bookmark still renders something sensible.
+  const DIM = { lp: 'landing_page_path', ad: 'utm_content', campaign: 'utm_campaign' };
   const group = DIM[req.query.group] ? req.query.group : 'lp';
   const dimCol = DIM[group];
 
   const channel = (req.query.channel || '').trim();     // exact utm_source
   const campaign = (req.query.campaign || '').trim();   // utm_campaign CONTAINS
   const ad = (req.query.ad || '').trim();               // utm_content CONTAINS
+  // Exact utm_content — powers the ad-name row drill, which needs THAT ad's
+  // landing pages, not every ad whose name contains it. Wins over `ad`.
+  const adExact = (req.query.ad_exact || '').trim();
   let limit = parseInt(req.query.limit, 10);
   if (!Number.isFinite(limit) || limit < 1) limit = 50;
   limit = Math.min(limit, 200);
@@ -1502,7 +1507,8 @@ app.get('/api/lp-by-channel-data', async (req, res) => {
   const conds = [];
   if (channel) conds.push(`utm_source = '${esc(channel)}'`);
   if (campaign) conds.push(`utm_campaign CONTAINS '${esc(campaign)}'`);
-  if (ad) conds.push(`utm_content CONTAINS '${esc(ad)}'`);
+  if (adExact) conds.push(`utm_content = '${esc(adExact)}'`);
+  else if (ad) conds.push(`utm_content CONTAINS '${esc(ad)}'`);
   const whereClause = conds.length ? `\n  WHERE ${conds.join(' AND ')}` : '';
 
   const mainQuery = `FROM sessions
@@ -1613,7 +1619,7 @@ app.get('/api/lp-by-channel-data', async (req, res) => {
 
     res.json({
       start, end, group,
-      channel, campaign, ad, limit,
+      channel, campaign, ad, ad_exact: adExact, limit,
       compare: { mode: useCustomCompare ? 'custom' : 'previous_period', start: cs || null, end: ce || null },
       query: mainQuery,
       compare_query: compareQuery,
