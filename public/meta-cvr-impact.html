@@ -1674,6 +1674,7 @@
   </div>
 </div>
 
+<script src="/ad-preview-link.js"></script>
 <script>
 // ─────────────────────────────────────────────
 // FLOATING TOOLTIP
@@ -4148,220 +4149,13 @@ function renderDrillDown(container, campaign, tDelta, tPrevConv) {
 // individually through two reliable calls (name → id → creative preview URL),
 // driven by a small background queue with persistent caches. Rows render
 // immediately with a placeholder and upgrade to real links as they land.
-function normAdName(s) {
-  return String(s || '').trim().replace(/\s+/g, ' ').toLowerCase();
-}
-
-// Bump the version whenever the matching logic changes — that drops previously
-// cached (possibly wrong) ids instead of serving them forever.
-const AD_LINK_CACHE_V = 'v1';
-const AD_ID_TTL   = 24 * 60 * 60 * 1000;   // name → ad id
-const AD_PREV_TTL = 20 * 60 * 60 * 1000;   // name → preview URL
-
-function _lsGet(key) {
-  try { return JSON.parse(localStorage.getItem(key) || '{}'); } catch { return {}; }
-}
-function _lsSet(key, obj) {
-  try { localStorage.setItem(key, JSON.stringify(obj)); } catch {}
-}
-const _AD_ID_KEY   = `adlink:${AD_LINK_CACHE_V}:id`;
-const _AD_PREV_KEY = `adlink:${AD_LINK_CACHE_V}:preview`;
-
-function cachedAdId(name) {
-  const e = _lsGet(_AD_ID_KEY)[normAdName(name)];
-  return e && (Date.now() - e.ts) < AD_ID_TTL ? e.ad_id : null;
-}
-function cacheAdId(name, adId) {
-  const all = _lsGet(_AD_ID_KEY);
-  all[normAdName(name)] = { ad_id: adId, ts: Date.now() };
-  _lsSet(_AD_ID_KEY, all);
-}
-function invalidateAdId(name) {
-  const all = _lsGet(_AD_ID_KEY);
-  delete all[normAdName(name)];
-  _lsSet(_AD_ID_KEY, all);
-}
-function cachedPreview(name) {
-  const e = _lsGet(_AD_PREV_KEY)[normAdName(name)];
-  return e && (Date.now() - e.ts) < AD_PREV_TTL ? e : null;
-}
-function cachePreview(name, url, adId) {
-  const all = _lsGet(_AD_PREV_KEY);
-  all[normAdName(name)] = { url, ad_id: adId, ts: Date.now() };
-  _lsSet(_AD_PREV_KEY, all);
-}
-
-function adsManagerUrl(accountId, adId) {
-  if (!adId) return null;
-  const act = String(accountId || '').replace(/^act_/, '');
-  return `https://adsmanager.facebook.com/adsmanager/manage/ads`
-    + (act ? `?act=${encodeURIComponent(act)}&` : '?')
-    + `selected_ad_ids=${encodeURIComponent(adId)}`;
-}
-
-// A DOM-safe key for an ad name: encodeURIComponent output is safe both as an
-// attribute value and inside an attribute selector.
-function adDomKey(name) {
-  return encodeURIComponent(normAdName(name));
-}
-
-// ── Background resolver ──────────────────────────────────────────────────────
-// Two workers, ~150ms apart. Failures go to the BACK of the queue (max 3 tries)
-// rather than retrying inline, so one 10s timeout can't stall everything behind
-// it. State is module-level so re-renders (e.g. re-sorting) reuse it.
-const _adLink = {
-  queue: [],
-  seen: new Set(),        // names ever enqueued this session
-  attempts: new Map(),    // name → tries
-  // Terminal outcomes, so a repaint (sort click, progress tick, "show all")
-  // doesn't reset a resolved failure back to "resolving…" forever.
-  terminal: new Map(),    // name → { kind: 'adsmanager'|'none', url, adId }
-  running: 0,
-  accountId: null,
-  lastError: null,
-  authFailed: false,
-  resolved: 0,
-  failed: 0,
-  // Progress subscribers. A Set rather than one slot because both the Ad × LP
-  // card and any open campaign drill want to know when links land.
-  listeners: new Set(),
-};
-
-function adLinkNotify() {
-  _adLink.listeners.forEach(fn => { try { fn(); } catch {} });
-}
-
-function adLinkEnqueue(names) {
-  if (_adLink.authFailed) return;          // no point hammering a 401
-  for (const n of names) {
-    if (!n) continue;
-    const k = normAdName(n);
-    if (_adLink.seen.has(k)) continue;
-    _adLink.seen.add(k);
-    _adLink.queue.push(n);
-  }
-  const workers = Math.min(2, _adLink.queue.length);
-  while (_adLink.running < workers) {
-    _adLink.running++;
-    adLinkWorker().finally(() => { _adLink.running--; });
-  }
-}
-
-async function adLinkWorker() {
-  while (_adLink.queue.length) {
-    const name = _adLink.queue.shift();
-    const tries = (_adLink.attempts.get(normAdName(name)) || 0) + 1;
-    _adLink.attempts.set(normAdName(name), tries);
-    try {
-      const url = await resolveAdPreview(name);
-      if (url) {
-        _adLink.resolved++;
-        applyAdLink(name, url, cachedAdId(name), 'preview');
-      }
-    } catch (e) {
-      if (e.status === 401) {
-        // Auth is a whole-session problem, not a per-row one: stop the queue.
-        _adLink.authFailed = true;
-        _adLink.lastError = e.message;
-        _adLink.queue.length = 0;
-        adLinkNotify();
-        return;
-      }
-      _adLink.lastError = e.message;
-      // Grab the id BEFORE invalidating — a failed *preview* call still leaves a
-      // perfectly good id to deep-link Ads Manager with.
-      const knownId = cachedAdId(name);
-      invalidateAdId(name);                       // force a fresh lookup next try
-      if (tries < 3) {
-        _adLink.queue.push(name);                 // back of the queue, not inline
-      } else {
-        _adLink.failed++;
-        // Terminal: if we ever learned an id, deep-link Ads Manager instead of
-        // guessing. Keeps the name so a later pass can still self-heal.
-        applyAdLink(name, knownId ? adsManagerUrl(_adLink.accountId, knownId) : null, knownId, knownId ? 'adsmanager' : 'none');
-      }
-    }
-    adLinkNotify();
-    await new Promise(r => setTimeout(r, 150));
-  }
-}
-
-// name → ad id → preview URL, reusing whatever is already cached.
-async function resolveAdPreview(name) {
-  const hit = cachedPreview(name);
-  if (hit) return hit.url;
-
-  let adId = cachedAdId(name);
-  if (!adId) {
-    const params = new URLSearchParams({ name });
-    if (_queryCtx?.end) params.set('end', _queryCtx.end);
-    const acctOverride = new URLSearchParams(location.search).get('ad_account');
-    if (acctOverride) params.set('account_id', acctOverride);
-    const r = await fetch(`/api/meta-ad-lookup?${params.toString()}`);
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw Object.assign(new Error(j.error || `lookup HTTP ${r.status}`), { status: r.status, needle: j.needle });
-    adId = j.ad_id;
-    if (j.account_id) _adLink.accountId = j.account_id;
-    cacheAdId(name, adId);
-  }
-
-  const pr = await fetch(`/api/meta-ad-creative-preview?ad_id=${encodeURIComponent(adId)}`);
-  const pj = await pr.json().catch(() => ({}));
-  if (!pr.ok) throw Object.assign(new Error(pj.error || `preview HTTP ${pr.status}`), { status: pr.status });
-  cachePreview(name, pj.preview_url, adId);
-  return pj.preview_url;
-}
-
-// Swap every placeholder for this ad name (a name can appear on several LP rows).
-function applyAdLink(name, url, adId, kind) {
-  const key = adDomKey(name);
-  // Remember non-preview outcomes so re-renders reproduce them (preview hits are
-  // already persisted in localStorage and picked up by the render path).
-  if (kind === 'preview') _adLink.terminal.delete(normAdName(name));
-  else _adLink.terminal.set(normAdName(name), { kind, url, adId });
-  document.querySelectorAll(`[data-adkey="${key}"]`).forEach(el => {
-    if (kind === 'preview') {
-      el.outerHTML = `<a class="adrill-preview" href="${url}" target="_blank" rel="noopener"`
-        + ` data-adkey="${key}" data-adid="${adId || ''}"`
-        + ` title="Open Meta's creative preview">preview ↗</a>`;
-    } else if (kind === 'adsmanager' && url) {
-      el.outerHTML = `<a class="adrill-preview adrill-preview--fallback" href="${url}" target="_blank" rel="noopener"`
-        + ` data-adkey="${key}" data-adid="${adId || ''}"`
-        + ` title="Creative preview unavailable right now — opens this ad in Ads Manager instead">Ads Manager ↗</a>`;
-    } else {
-      el.outerHTML = `<span class="adrill-noad" data-adkey="${key}"`
-        + ` title="Meta returned no ad matching this utm_content in the lookup window — it may have been renamed, or had no delivery">no link</span>`;
-    }
-  });
-}
-
-// The link markup for one ad name, in whatever state that name is currently in.
-// Anything already cached from a previous visit renders as a live link on the
-// first paint; the rest get a placeholder the background queue upgrades in
-// place via applyAdLink(). Shared by the Ad × LP card and the campaign drill.
-function adLinkCellHtml(adName) {
-  const key = adDomKey(adName);
-  const hit = cachedPreview(adName);
-  if (hit) {
-    return `<a class="adrill-preview" href="${hit.url}" target="_blank" rel="noopener"`
-      + ` data-adkey="${key}" data-adid="${hit.ad_id || ''}" title="Open Meta's creative preview">preview ↗</a>`;
-  }
-  if (_adLink.authFailed) {
-    return `<span class="adrill-noad" data-adkey="${key}" title="Not signed in to Facebook — sign in to load creative previews">no link</span>`;
-  }
-  // A row that already failed terminally keeps its outcome across repaints.
-  const term = _adLink.terminal.get(normAdName(adName));
-  if (term && term.kind === 'adsmanager' && term.url) {
-    return `<a class="adrill-preview adrill-preview--fallback" href="${term.url}" target="_blank" rel="noopener"`
-      + ` data-adkey="${key}" data-adid="${term.adId || ''}"`
-      + ` title="Creative preview unavailable right now — opens this ad in Ads Manager instead">Ads Manager ↗</a>`;
-  }
-  if (term) {
-    return `<span class="adrill-noad" data-adkey="${key}"`
-      + ` title="Meta returned no ad matching this utm_content in the lookup window — it may have been renamed, or had no delivery">no link</span>`;
-  }
-  return `<span class="adrill-pending" data-adkey="${key}" title="Resolving this ad in Meta…">resolving…</span>`;
-}
+// The resolver itself lives in /ad-preview-link.js so this page and Landing
+// Pages by Channel share one implementation of the caches, retry policy and
+// auth handling. These aliases keep the call sites below unchanged.
+const _adLink = AdLink.state;
+const normAdName = AdLink.norm;
+const adLinkEnqueue = (names) => AdLink.enqueue(names);
+const adLinkCellHtml = (adName) => AdLink.cellHtml(adName);
 
 async function fetchCampaignAdLp(campaign) {
   if (_adLpDrillCache.has(campaign)) return _adLpDrillCache.get(campaign);
@@ -5728,6 +5522,7 @@ async function loadFromShopify() {
     };
     _adLpDrillCache = new Map();
     _lpAdDrillCache = new Map();
+    AdLink.setLookupEnd(endDate);
     // Let a fresh pull retry ad-link resolution (window changed; auth may now be
     // in place). The localStorage caches survive — that's the point of them.
     _adLink.queue.length = 0;

@@ -85,6 +85,9 @@
 
     /* Ad-name rows expand into that ad's landing pages */
     .group-hint { font-size: 0.76rem; color: var(--fb-blue); align-self: center; }
+    .group-hint .hint-muted { color: var(--text-secondary); margin-left: 8px; }
+    .group-hint .hint-warn { color: #8a6d3b; margin-left: 8px; }
+    .group-hint .hint-warn a { color: var(--fb-blue); }
     td.col-label--drill { cursor: pointer; user-select: none; }
     td.col-label--drill:hover { color: var(--fb-blue); }
     td.col-label--drill .chev { display: inline-block; width: 12px; font-size: 0.62rem; color: var(--text-secondary); }
@@ -202,6 +205,7 @@
 
 <div id="tooltip" class="tooltip"></div>
 
+<script src="/ad-preview-link.js"></script>
 <script>
 // ── State ──
 let _data = null;
@@ -331,6 +335,7 @@ async function loadData() {
     if (!resp.ok) { const e = await resp.json().catch(() => ({})); throw new Error(e.error || `HTTP ${resp.status}`); }
     _data = await resp.json();
     _drill = new Map();
+    AdLink.setLookupEnd(_data.end);
     status.textContent = '';
     populateChannels();
     render();
@@ -393,10 +398,33 @@ function render() {
 
 function renderGroupHint() {
   const el = document.getElementById('group-hint');
-  el.innerHTML = _data.group === 'ad'
-    ? '▶ Click an ad to break it down by landing page.'
-    : '';
+  if (_data.group !== 'ad') { el.innerHTML = ''; return; }
+
+  const bits = ['▶ Click an ad to break it down by landing page.'];
+  const s = AdLink.state;
+  if (s.authFailed) {
+    // Every number on the page is Shopify data and works without Facebook —
+    // only the preview links need it, so say that rather than alarming.
+    bits.push(`<span class="hint-warn">Creative previews need Facebook —
+      <a href="/auth/facebook">log in</a> and reload. All numbers below work without it.</span>`);
+  } else {
+    const pending = Math.max(0, s.seen.size - s.resolved - s.failed);
+    const parts = [];
+    if (s.resolved) parts.push(`${s.resolved} preview link${s.resolved === 1 ? '' : 's'}`);
+    if (pending) parts.push(`${pending} resolving`);
+    if (s.failed) parts.push(`${s.failed} unresolved`);
+    if (parts.length) bits.push(`<span class="hint-muted">${parts.join(' · ')}</span>`);
+  }
+  el.innerHTML = bits.join(' ');
 }
+
+// Links swap themselves in place as they land; this only refreshes the counts
+// on the hint line, so it can be lazy about it.
+let _adLinkTick = null;
+AdLink.onProgress(() => {
+  if (_adLinkTick) return;
+  _adLinkTick = setTimeout(() => { _adLinkTick = null; if (_data) renderGroupHint(); }, 2500);
+});
 
 function renderTopInfo() {
   const c = _data.compare;
@@ -490,11 +518,17 @@ function renderTable() {
     return body + `<tr class="drill-note"><td colspan="${span}">${sub.length} landing page${sub.length === 1 ? '' : 's'} for this ad${notes.length ? ' · ' + notes.join(' · ') : ''}</td></tr>`;
   };
 
+  // Ad names get a Meta creative-preview link and a copy button (they run past
+  // 100 characters — copying one out of a table cell by hand is miserable).
+  const adTools = (label) => (drillable && label !== '(none)')
+    ? AdLink.cellHtml(label, { copy: true })
+    : '';
+
   const bodyRows = rows.map(r => {
     const open = _drill.has(r.label);
     const canDrill = drillable && r.label !== '(none)';
     const labelCell = canDrill
-      ? `<td class="col-label col-label--drill${open ? ' open' : ''}" data-drill="${escapeAttr(r.label)}" title="${escapeAttr(r.label)}"><span class="chev">${open ? '▼' : '▶'}</span>${escapeHtml(r.label)}</td>`
+      ? `<td class="col-label col-label--drill${open ? ' open' : ''}" data-drill="${escapeAttr(r.label)}" title="${escapeAttr(r.label)}"><span class="chev">${open ? '▼' : '▶'}</span>${escapeHtml(r.label)}${adTools(r.label)}</td>`
       : `<td class="col-label" title="${escapeAttr(drillable ? 'No ad name recorded on these sessions, so there is no ad to break down' : r.label)}">${escapeHtml(r.label)}</td>`;
     const tds = COLS.map(c => c.kind === 'label' ? labelCell : cell(c, r.cur, r.prev, true)).join('');
     return `<tr${open ? ' class="parent-open"' : ''}>${tds}</tr>` + (canDrill ? drillRowsHtml(r.label, r.cur.sessions) : '');
@@ -510,6 +544,12 @@ function renderTable() {
   document.querySelectorAll('#tbody .col-label--drill').forEach(td => {
     td.addEventListener('click', () => toggleDrill(td.dataset.drill));
   });
+
+  // Resolve previews for the ad names now on screen. Names already seen are
+  // skipped inside the resolver, so calling this on every paint is cheap.
+  if (drillable) {
+    AdLink.enqueue(rows.map(r => r.label).filter(l => l && l !== '(none)'));
+  }
 }
 
 function escapeHtml(s) { return String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
