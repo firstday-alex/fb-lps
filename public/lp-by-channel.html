@@ -245,7 +245,11 @@ const MAX_DEPTH = 2;
 const SEP = '\u0000';
 const drillKey = (path) => path.map(p => p.dim + SEP + p.label).join(SEP);
 let _drill = new Map();      // drillKey → { state, rows, totals, error }
-let _pathByKey = new Map();  // drillKey → path; rebuilt each paint so a click resolves its path
+// Paths for the rows currently painted, addressed by index. The index is what goes into
+// data-drill, NOT the key: a key contains a NUL, and the HTML parser rewrites U+0000 in
+// markup to U+FFFD, so a key read back out of an attribute never matched the one that was
+// written and every click was a silent no-op. An integer survives the round trip.
+let _paths = [];             // index → path, rebuilt each paint
 
 // Columns. heat=true → funnel-rate cell gets the color-coded background.
 const COLS = [
@@ -411,9 +415,9 @@ async function fetchDrill(path) {
   return resp.json();
 }
 
-async function toggleDrill(key) {
-  const path = _pathByKey.get(key);
-  if (!path) return;
+async function toggleDrill(path) {
+  if (!path || !path.length) return;
+  const key = drillKey(path);
   if (_drill.has(key)) {
     // Closing a parent drops its descendants too. Leaving them cached means reopening
     // the parent silently restores children the user had closed, under numbers that
@@ -490,10 +494,9 @@ function renderTopInfo() {
 }
 
 function renderTable() {
-  // Rebuilt from scratch each paint. A key left over from a previous grouping would
-  // otherwise still resolve, and a click on it would fetch a path that is no longer
-  // on screen.
-  _pathByKey = new Map();
+  // Rebuilt from scratch each paint, so an index left over from a previous grouping can
+  // never resolve to a row that is no longer on screen.
+  _paths = [];
   const agg = computeFunnel(_data.totals.current);        // filtered-average baseline for heat coloring
   const aggPrev = computeFunnel(_data.totals.previous);
 
@@ -576,14 +579,14 @@ function renderTable() {
       if (childDim === 'ad') adNamesOnScreen.push(r.label);
       const childPath = path.concat([{ dim: childDim, label: r.label }]);
       const childKey = drillKey(childPath);
-      _pathByKey.set(childKey, childPath);
+      const childIdx = _paths.push(childPath) - 1;
       const expandable = cfg.childDrillable && canExpand(childDim, r.label) && depth < MAX_DEPTH;
       const open = _drill.has(childKey);
       const share = parentSessions > 0 ? (r.cur.sessions / parentSessions * 100) : null;
       const shareHtml = share != null ? `<span class="drill-share">${share.toFixed(0)}%</span>` : '';
       const labelCls = 'col-label drill-label' + (depth > 1 ? ' drill-label--2' : '')
         + (expandable ? ' col-label--drill' : '') + (open ? ' open' : '');
-      const drillAttr = expandable ? ` data-drill="${escapeAttr(childKey)}"` : '';
+      const drillAttr = expandable ? ` data-drill="${childIdx}"` : '';
       const chev = expandable ? `<span class="chev">${open ? '&#9660;' : '&#9654;'}</span>` : '';
       const tds = COLS.map(c => c.kind === 'label'
         ? `<td class="${labelCls}"${drillAttr} title="${escapeAttr(r.label)}">${chev}&#8627; ${escapeHtml(r.label)}${shareHtml}${adTools(childDim, r.label)}</td>`
@@ -610,11 +613,11 @@ function renderTable() {
     if (topDim === 'ad') adNamesOnScreen.push(r.label);
     const path = [{ dim: topDim, label: r.label }];
     const key = drillKey(path);
-    _pathByKey.set(key, path);
+    const idx = _paths.push(path) - 1;
     const expandable = canExpand(topDim, r.label);
     const open = _drill.has(key);
     const labelCell = expandable
-      ? `<td class="col-label col-label--drill${open ? ' open' : ''}" data-drill="${escapeAttr(key)}" title="${escapeAttr(r.label)}"><span class="chev">${open ? '&#9660;' : '&#9654;'}</span>${escapeHtml(r.label)}${adTools(topDim, r.label)}</td>`
+      ? `<td class="col-label col-label--drill${open ? ' open' : ''}" data-drill="${idx}" title="${escapeAttr(r.label)}"><span class="chev">${open ? '&#9660;' : '&#9654;'}</span>${escapeHtml(r.label)}${adTools(topDim, r.label)}</td>`
       : `<td class="col-label" title="${escapeAttr(DRILL[topDim] ? 'No ' + (GROUP_LABEL[topDim] || topDim).toLowerCase() + ' recorded on these sessions, so there is nothing to break down' : r.label)}">${escapeHtml(r.label)}${adTools(topDim, r.label)}</td>`;
     const tds = COLS.map(c => c.kind === 'label' ? labelCell : cell(c, r.cur, r.prev, true)).join('');
     return `<tr${open ? ' class="parent-open"' : ''}>${tds}</tr>`
@@ -635,7 +638,7 @@ function renderTable() {
   }
 
   document.querySelectorAll('#tbody .col-label--drill').forEach(td => {
-    td.addEventListener('click', () => toggleDrill(td.dataset.drill));
+    td.addEventListener('click', () => toggleDrill(_paths[Number(td.dataset.drill)]));
   });
 }
 
