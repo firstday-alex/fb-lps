@@ -428,7 +428,7 @@
     /* Contributors sticky header */
     .contrib-header {
       display: grid;
-      grid-template-columns: minmax(260px, 2.2fr) 68px 58px 50px 58px 50px minmax(120px, 1fr) 84px 72px 18px;
+      grid-template-columns: minmax(260px, 2.2fr) 68px 58px 50px 58px 50px 56px minmax(120px, 1fr) 84px 72px 18px;
       gap: 8px;
       padding: 6px 4px;
       font-size: 0.68rem;
@@ -467,7 +467,7 @@
     .source-wrap:last-child { border-bottom: none; }
     .source-row {
       display: grid;
-      grid-template-columns: minmax(260px, 2.2fr) 68px 58px 50px 58px 50px minmax(120px, 1fr) 84px 72px 18px;
+      grid-template-columns: minmax(260px, 2.2fr) 68px 58px 50px 58px 50px 56px minmax(120px, 1fr) 84px 72px 18px;
       align-items: center;
       gap: 8px;
       padding: 11px 4px;
@@ -1152,6 +1152,7 @@
         <div class="r sort-h" data-sort="cvr">CVR</div>
         <div class="r sort-h" data-sort="cvrDelta" title="Source's own CVR change in pp (current − previous)">CVR Δ</div>
         <div class="r sort-h" data-sort="txns">Txns</div>
+        <div class="r sort-h" data-sort="txnDelta" title="Change in transactions vs the comparison period (current − previous)">Txn &Delta;</div>
         <div>Impact</div>
         <div class="r sort-h" data-sort="cvrImpact" title="Contribution to blended CVR change (pp). Own CVR effect + share-shift effect. Sums to total blended ΔCvr. Negative = dragged blended CVR down.">CVR Impact ⓘ</div>
         <div class="r">% of ΔCvr</div>
@@ -1702,10 +1703,11 @@ function render(rawRows, filename) {
     cvr:       g => g.currC,
     cvrDelta:  g => Math.abs(g.deltaCvr),
     txns:      g => g.currS * g.currC,
+    txnDelta:  g => g.txnDelta,
     cvrImpact: g => g.cvrImpact,
   };
   // cvrImpact default 'asc' so the biggest blended-CVR draggers surface at top.
-  const defaultDir = { source: 'asc', sessions: 'desc', sessDelta: 'desc', cvr: 'desc', cvrDelta: 'desc', txns: 'desc', cvrImpact: 'asc' };
+  const defaultDir = { source: 'asc', sessions: 'desc', sessDelta: 'desc', cvr: 'desc', cvrDelta: 'desc', txns: 'desc', txnDelta: 'desc', cvrImpact: 'asc' };
   let sortKey = 'cvrImpact';
   let sortDir = 'asc';
 
@@ -1750,6 +1752,7 @@ function render(rawRows, filename) {
         <div class="contrib-stat"><strong>${(g.currC*100).toFixed(2)}%</strong>CVR</div>
         <div class="contrib-stat ${cls(g.deltaCvr)}" title="This source's own CVR change (${(g.prevCvr*100).toFixed(2)}% → ${(g.currC*100).toFixed(2)}%)"><strong>${fmtPP(g.deltaCvr*100)}</strong></div>
         <div class="contrib-stat"><strong>${esc(fmtK(Math.round(g.currS * g.currC)))}</strong>txns</div>
+        <div class="contrib-stat ${cls(g.txnDelta)}" title="Transactions ${fmtN(Math.round(g.prevSess * g.prevCvr))} → ${fmtN(Math.round(g.currS * g.currC))}${g.prevSess * g.prevCvr > 0 ? ` (${fmtP(g.txnDelta / (g.prevSess * g.prevCvr) * 100, 1)})` : ''}"><strong>${fmtKS(g.txnDelta)}</strong></div>
         <div>
           <div class="contrib-bar-wrap">
             <div class="contrib-bar" style="width:${barPct}%;background:${impactColor}"></div>
