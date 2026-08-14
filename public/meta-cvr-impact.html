@@ -472,6 +472,16 @@
     .contrib-val { text-align: right; font-weight: 700; font-size: 0.9rem; }
     .contrib-pct { text-align: right; font-size: 0.74rem; color: var(--text-secondary); }
     .contrib-chevron { font-size: 0.65rem; color: var(--text-secondary); text-align: right; }
+    .contrib-more {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      padding: 10px 4px 2px; font-size: 0.76rem; color: var(--text-secondary);
+    }
+    .contrib-more button {
+      font-size: 0.76rem; font-weight: 600; color: var(--fb-blue);
+      background: #eef3ff; border: 1px solid #c5d4f5; border-radius: 6px;
+      cursor: pointer; padding: 4px 12px;
+    }
+    .contrib-more button:hover { background: #dfe9fd; }
 
     .contrib-header {
       display: grid;
@@ -485,7 +495,9 @@
       color: var(--text-secondary);
       border-bottom: 2px solid var(--border);
       position: sticky;
-      top: 0;
+      /* Sits below the sticky section nav rather than under it. --nav-h is
+         measured from the nav itself (it wraps taller on narrow screens). */
+      top: var(--nav-h, 52px);
       background: var(--surface);
       z-index: 10;
     }
@@ -1328,6 +1340,67 @@
       white-space: nowrap;
     }
 
+    /* ── Section grouping ──────────────────────────────────────────────
+       The page is ~14 cards. Grouped into labelled sections (what moved →
+       campaigns → landing pages → ads → raw tables) with a sticky jump nav,
+       so the reading order is obvious and long scrolls are skippable. */
+    .section-nav {
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 7px 10px;
+      background: rgba(255,255,255,0.94);
+      backdrop-filter: blur(6px);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+    .section-nav__link {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+    .section-nav__link:hover { background: #eef3ff; color: var(--fb-blue); }
+    .section-nav__link--active {
+      background: #e7effe; color: var(--fb-blue); border-color: #c5d4f5;
+    }
+    .section-nav__spacer { flex: 1; }
+    .section-nav__all {
+      font-size: 0.74rem; color: var(--text-secondary);
+      background: none; border: 1px solid var(--border); border-radius: 6px;
+      cursor: pointer; padding: 3px 10px; white-space: nowrap;
+    }
+    .section-nav__all:hover { background: var(--bg); color: var(--fb-blue); }
+
+    .dash-section { display: flex; flex-direction: column; gap: 10px; }
+    .dash-section + .dash-section { margin-top: 14px; }
+    /* Anchor offset so the sticky nav doesn't cover a jumped-to heading. */
+    .dash-section__head {
+      display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+      padding: 2px 2px 0;
+      scroll-margin-top: calc(var(--nav-h, 52px) + 10px);
+    }
+    .dash-section__label {
+      font-size: 0.72rem; font-weight: 800; text-transform: uppercase;
+      letter-spacing: 0.1em; color: var(--text-primary);
+    }
+    .dash-section__hint { font-size: 0.76rem; color: var(--text-secondary); flex: 1; }
+    .dash-section__toggle {
+      font-size: 0.72rem; color: var(--text-secondary);
+      background: none; border: 1px solid var(--border); border-radius: 6px;
+      cursor: pointer; padding: 3px 9px; white-space: nowrap;
+    }
+    .dash-section__toggle:hover { background: var(--bg); color: var(--fb-blue); }
+
     .card.collapsible { padding: 0; }
     .card-toggle {
       cursor: pointer;
@@ -1462,7 +1535,15 @@
          API when the viewer is FB-authenticated; hidden otherwise. -->
     <div class="kpi-row" id="spend-kpi-row" style="display:none"></div>
 
-    <div class="card headline-card" id="headline-card"></div>
+    <!-- Always visible: the one-line answer shouldn't be behind a click. -->
+    <div class="card headline-card" id="headline-card" data-no-collapse="1"></div>
+
+    <!-- Section nav + section wrappers are built at render time by
+         organizeSections() (see SECTIONS), which MOVES the cards below into
+         them. Card order on this page is therefore defined by that array, not
+         by the source order here. -->
+    <div class="section-nav" id="section-nav" style="display:none"></div>
+    <div id="dash-sections"></div>
 
     <!-- CVR Movement by Campaign -->
     <div class="card cvr-movement-card" id="cvr-movement-card"></div>
@@ -1492,7 +1573,7 @@
     <div class="card cvr-movement-card" id="correlation-card"></div>
 
     <!-- Ranked contributors (by campaign) -->
-    <div class="card breakdown-card">
+    <div class="card breakdown-card" id="contributors-card">
       <h3>Top Contributors to Blended CVR Change</h3>
       <p class="card__sub">Each row is one utm_campaign. <strong>CVR Impact</strong> = this campaign's contribution (in pp) to the total blended CVR change for this data pull. Decomposed into: (a) <strong>own CVR effect</strong> — <em>prevShare × ΔCvr</em> (the campaign's own CVR movement, weighted by its baseline traffic share); plus (b) <strong>share-shift effect</strong> — <em>ΔShare × (currCvr − blended avg)</em> (gaining/losing share at a CVR above or below the blended average). Sums across all campaigns to the overall blended ΔCvr. Negative = dragged blended CVR down. So a below-average campaign whose CVR drops <em>and</em> gains share compounds on both terms. <em>Click a column header to sort. Expand a campaign to break it down by landing page or by <strong>ad × landing page</strong> — the ad view shows session and CVR deltas per pair and links each ad to Ads Manager.</em></p>
       <div class="contrib-header">
@@ -1563,7 +1644,7 @@
     </div>
 
     <!-- Campaign breakdown table -->
-    <div class="card breakdown-card">
+    <div class="card breakdown-card" id="campaign-breakdown-card">
       <h3>Campaign Breakdown</h3>
       <div style="overflow-x:auto">
         <table class="breakdown-table" id="breakdown-table">
@@ -2057,6 +2138,12 @@ function render(rawRows, filename) {
   let sortKey = 'cvrImpact';
   let sortDir = 'asc';
 
+  // This table used to print every campaign — 130+ rows, which pushed every
+  // section below it thousands of pixels down. The top of a sorted list is the
+  // part that answers the question, so show that and let the rest be asked for.
+  const CONTRIB_PAGE = 25;
+  let contribShown = CONTRIB_PAGE;
+
   const renderContributorsList = () => {
     const keyFn = sortKeyFns[sortKey] || sortKeyFns.cvrImpact;
     const dirMul = sortDir === 'desc' ? -1 : 1;
@@ -2066,10 +2153,13 @@ function render(rawRows, filename) {
       return (va - vb) * dirMul;
     });
 
-    const maxImpactAbs = sorted.reduce((m, g) => Math.max(m, Math.abs(g.cvrImpact)), 1e-9);
+    // Bars scale to the widest impact ON SCREEN, so a hidden tail can't flatten
+    // the visible rows.
+    const visible = sorted.slice(0, contribShown);
+    const maxImpactAbs = visible.reduce((m, g) => Math.max(m, Math.abs(g.cvrImpact)), 1e-9);
     contribList.innerHTML = '';
 
-    sorted.forEach(g => {
+    visible.forEach(g => {
       const barPct = Math.round(Math.abs(g.cvrImpact) / maxImpactAbs * 100);
       const impactColor = g.cvrImpact >= 0 ? 'var(--positive)' : 'var(--negative)';
       const pctOfDelta = tCvrDelta !== 0 ? (g.cvrImpact / tCvrDelta * 100) : 0;
@@ -2122,6 +2212,33 @@ function render(rawRows, filename) {
       wrap.appendChild(effectsPanel);
       contribList.appendChild(wrap);
     });
+
+    // Say what's hidden and how much of the ΔCVR it accounts for, so a truncated
+    // view can't be mistaken for the whole picture.
+    if (sorted.length > visible.length) {
+      const hidden = sorted.slice(visible.length);
+      const hiddenImpact = hidden.reduce((a, g) => a + g.cvrImpact, 0);
+      const foot = document.createElement('div');
+      foot.className = 'contrib-more';
+      foot.innerHTML = `
+        <button type="button">Show all ${sorted.length} campaigns</button>
+        <span>${hidden.length} hidden · ${fmtPP(hiddenImpact * 100)} of the blended ΔCVR between them</span>`;
+      foot.querySelector('button').addEventListener('click', () => {
+        contribShown = sorted.length;
+        renderContributorsList();
+      });
+      contribList.appendChild(foot);
+    } else if (sorted.length > CONTRIB_PAGE) {
+      const foot = document.createElement('div');
+      foot.className = 'contrib-more';
+      foot.innerHTML = `<button type="button">Show top ${CONTRIB_PAGE} only</button>
+        <span>showing all ${sorted.length} campaigns</span>`;
+      foot.querySelector('button').addEventListener('click', () => {
+        contribShown = CONTRIB_PAGE;
+        renderContributorsList();
+      });
+      contribList.appendChild(foot);
+    }
 
     document.querySelectorAll('.contrib-header .sort-h').forEach(h => {
       const active = h.dataset.sort === sortKey;
@@ -2206,10 +2323,192 @@ function render(rawRows, filename) {
     </tr>
   `;
 
+  // Collapsible first, then grouped: organizeSections() labels each section's
+  // Expand all / Collapse all from the cards' actual state.
   makeCardsCollapsible();
+  organizeSections();
 
   document.getElementById('upload-screen').style.display = 'none';
   document.getElementById('results-screen').style.display = 'block';
+}
+
+// ─────────────────────────────────────────────
+// SECTIONS
+// ─────────────────────────────────────────────
+// This page carries ~14 cards. Flat and all-collapsed, finding the one that
+// answers a question meant clicking through identical rows, and the campaign /
+// landing-page / ad views were interleaved. So layout is declared here, in
+// reading order — headline first, then what moved, then each dimension in
+// increasing granularity, with the raw tables last — and organizeSections()
+// MOVES the cards in the markup into these groups. Adding a card means adding
+// its id here; anything unlisted lands in a trailing "More" section rather
+// than disappearing.
+const SECTIONS = [
+  {
+    id: 'sec-what-moved',
+    label: 'What moved',
+    hint: 'Rank the drivers of the blended-CVR change and split mix from performance.',
+    cards: ['contributors-card', 'mix-shift-card'],
+  },
+  {
+    id: 'sec-campaigns',
+    label: 'Campaigns',
+    hint: 'Per-campaign CVR and volume, plus cuts by campaign type.',
+    cards: ['cvr-movement-card', 'session-volume-card', 'cvr-bucket-card', 'test-vs-nontest-card', 'campaign-segments-card'],
+  },
+  {
+    id: 'sec-landing-pages',
+    label: 'Landing pages',
+    hint: 'Per-page CVR and volume — click any row for the ads that sent it traffic.',
+    cards: ['cvr-movement-lp-card', 'session-volume-lp-card', 'correlation-card'],
+  },
+  {
+    id: 'sec-ads',
+    label: 'Ads',
+    hint: 'Ad-level detail parsed out of utm_content, filterable by ad-name variables.',
+    cards: ['ad-lp-card'],
+  },
+  {
+    id: 'sec-tables',
+    label: 'Raw tables',
+    hint: 'Every number behind the charts above, in one wide table.',
+    cards: ['campaign-breakdown-card'],
+  },
+];
+
+// Cards that start open on a first visit. Everything else starts collapsed;
+// after that the viewer's own choices win (see cardOpenState).
+const DEFAULT_OPEN = new Set(['contributors-card']);
+
+// Per-card open/closed state, remembered across reloads — this is a dashboard
+// people return to daily, and re-opening the same four cards every morning is
+// the kind of friction that makes a page feel unusable.
+const CARD_STATE_KEY = 'mcvr:cardsOpen:v1';
+function cardOpenState() {
+  try { return JSON.parse(localStorage.getItem(CARD_STATE_KEY) || '{}'); } catch { return {}; }
+}
+function saveCardOpen(id, open) {
+  try {
+    const s = cardOpenState();
+    s[id] = open;
+    localStorage.setItem(CARD_STATE_KEY, JSON.stringify(s));
+  } catch { /* private browsing — layout just won't persist */ }
+}
+
+function organizeSections() {
+  const host = document.getElementById('dash-sections');
+  const nav  = document.getElementById('section-nav');
+  if (!host || host.dataset.built === '1') return;
+
+  const placed = new Set();
+  const built = [];
+
+  for (const sec of SECTIONS) {
+    const cards = sec.cards.map(id => document.getElementById(id)).filter(Boolean);
+    if (cards.length === 0) continue;
+
+    const wrap = document.createElement('section');
+    wrap.className = 'dash-section';
+    wrap.id = sec.id;
+    wrap.innerHTML = `
+      <div class="dash-section__head">
+        <span class="dash-section__label">${esc(sec.label)}</span>
+        <span class="dash-section__hint">${esc(sec.hint)}</span>
+        <button type="button" class="dash-section__toggle">Expand all</button>
+      </div>`;
+    cards.forEach(c => { wrap.appendChild(c); placed.add(c.id); });
+    host.appendChild(wrap);
+    built.push({ ...sec, el: wrap, cards });
+  }
+
+  // Safety net: a card added to the markup but not to SECTIONS still shows up.
+  const orphans = [...document.querySelectorAll('#results-screen .card')]
+    .filter(c => !placed.has(c.id) && !c.closest('.dash-section') && c.id !== 'headline-card');
+  if (orphans.length) {
+    const wrap = document.createElement('section');
+    wrap.className = 'dash-section';
+    wrap.id = 'sec-more';
+    wrap.innerHTML = `
+      <div class="dash-section__head">
+        <span class="dash-section__label">More</span>
+        <span class="dash-section__hint">Cards not yet assigned to a section.</span>
+        <button type="button" class="dash-section__toggle">Expand all</button>
+      </div>`;
+    orphans.forEach(c => wrap.appendChild(c));
+    host.appendChild(wrap);
+    built.push({ id: 'sec-more', label: 'More', el: wrap, cards: orphans });
+  }
+
+  // Per-section expand/collapse. Label reflects what the click will do, based
+  // on whether anything in the section is currently open.
+  built.forEach(sec => {
+    const btn = sec.el.querySelector('.dash-section__toggle');
+    const sync = () => {
+      const anyOpen = sec.cards.some(c => !c.classList.contains('collapsed'));
+      btn.textContent = anyOpen ? 'Collapse all' : 'Expand all';
+    };
+    btn.addEventListener('click', () => {
+      const anyOpen = sec.cards.some(c => !c.classList.contains('collapsed'));
+      sec.cards.forEach(c => {
+        c.classList.toggle('collapsed', anyOpen);
+        saveCardOpen(c.id, !anyOpen);
+      });
+      sync();
+    });
+    sec.el.addEventListener('cardtoggle', sync);
+    sync();
+  });
+
+  nav.innerHTML = built.map(s =>
+    `<a class="section-nav__link" href="#${s.id}" data-sec="${s.id}">${esc(s.label)}</a>`
+  ).join('') + `
+    <span class="section-nav__spacer"></span>
+    <button type="button" class="section-nav__all" id="nav-expand-all">Expand all</button>
+    <button type="button" class="section-nav__all" id="nav-collapse-all">Collapse all</button>`;
+  nav.style.display = '';
+
+  // Anything else that sticks (the contributors table's header) parks below the
+  // nav, so publish the nav's real height — it wraps to two lines when narrow.
+  const syncNavHeight = () => {
+    const h = nav.offsetHeight;
+    // 0 while #results-screen is still display:none — keep the CSS fallback.
+    if (!h) return;
+    document.documentElement.style.setProperty('--nav-h', (h + 4) + 'px');
+  };
+  syncNavHeight();
+  requestAnimationFrame(syncNavHeight);   // again once the results screen paints
+  window.addEventListener('resize', syncNavHeight);
+
+  nav.querySelectorAll('.section-nav__link').forEach(a => {
+    a.addEventListener('click', e => {
+      e.preventDefault();
+      const sec = document.getElementById(a.dataset.sec);
+      const head = sec && sec.querySelector('.dash-section__head');
+      (head || sec).scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  });
+
+  const setAll = open => {
+    document.querySelectorAll('#dash-sections .card.collapsible').forEach(c => {
+      c.classList.toggle('collapsed', !open);
+      saveCardOpen(c.id, open);
+    });
+    built.forEach(s => s.el.dispatchEvent(new Event('cardtoggle')));
+  };
+  nav.querySelector('#nav-expand-all').addEventListener('click', () => setAll(true));
+  nav.querySelector('#nav-collapse-all').addEventListener('click', () => setAll(false));
+
+  // Highlight the section currently in view.
+  const links = [...nav.querySelectorAll('.section-nav__link')];
+  const spy = new IntersectionObserver(entries => {
+    entries.forEach(en => {
+      if (!en.isIntersecting) return;
+      links.forEach(l => l.classList.toggle('section-nav__link--active', l.dataset.sec === en.target.id));
+    });
+  }, { rootMargin: '-45px 0px -70% 0px' });
+  built.forEach(s => spy.observe(s.el));
+
+  host.dataset.built = '1';
 }
 
 // ─────────────────────────────────────────────
@@ -2230,8 +2529,12 @@ function makeCardsCollapsible() {
     'ad-lp-card':             { title: 'Top Ad × Landing Page Combinations', hint: 'Click an ad name or landing page to filter' },
   };
 
+  const remembered = cardOpenState();
+
   document.querySelectorAll('#results-screen .card').forEach(card => {
     if (card.dataset.collapsibleDone === '1') return;
+    // The headline is the page's answer line — it stays open, always.
+    if (card.dataset.noCollapse === '1') return;
     const innerH3 = card.querySelector(':scope > h3, :scope > div > h3');
     const innerSub = card.querySelector(':scope > p.card__sub, :scope > div > p.card__sub');
 
@@ -2261,10 +2564,18 @@ function makeCardsCollapsible() {
 
     card.appendChild(header);
     card.appendChild(body);
-    card.classList.add('collapsible', 'collapsed');
+    card.classList.add('collapsible');
+    const startOpen = card.id in remembered ? !!remembered[card.id] : DEFAULT_OPEN.has(card.id);
+    card.classList.toggle('collapsed', !startOpen);
     card.dataset.collapsibleDone = '1';
 
-    header.addEventListener('click', () => card.classList.toggle('collapsed'));
+    header.addEventListener('click', () => {
+      const open = !card.classList.toggle('collapsed');
+      saveCardOpen(card.id, open);
+      // Lets the enclosing section re-label its Expand all / Collapse all.
+      const sec = card.closest('.dash-section');
+      if (sec) sec.dispatchEvent(new Event('cardtoggle'));
+    });
   });
 }
 
