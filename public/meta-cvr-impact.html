@@ -670,6 +670,8 @@
       word-break: break-all; margin-top: 1px;
     }
     .adrill-lp::before { content: '↳ '; }
+    /* LP→ad drill: the second line is the ad's share of the page, not a path. */
+    .adrill-share { font-size: 0.7rem; color: var(--text-secondary); margin-top: 1px; }
     .adrill-preview {
       display: inline-block; margin-left: 5px; padding: 1px 6px;
       background: #eef3ff; color: var(--fb-blue); border-radius: 3px;
@@ -796,6 +798,13 @@
       position: absolute; top: -2px; bottom: -2px; width: 1px;
       background: var(--text-secondary); opacity: 0.3;
     }
+    /* Row-drill affordance. Sits inside the chart because the collapsible-card
+       pass strips the card's own sub paragraph. */
+    .drill-hint {
+      font-size: 0.72rem;
+      color: var(--fb-blue);
+      padding: 0 0 6px;
+    }
     .cvr-chart-row--clickable {
       cursor: pointer;
       transition: background 0.12s;
@@ -869,6 +878,10 @@
       border-bottom: 2px solid var(--border); padding-bottom: 8px;
     }
     .sess-chart-row .r { text-align: right; }
+    .sess-chart-row--clickable { cursor: pointer; transition: background 0.12s; }
+    .sess-chart-row--clickable:hover { background: #f4f7fb; }
+    .sess-chart-row--open { background: #f4f7fb; }
+    .sess-chart-row--open .cvr-chev { color: var(--fb-blue); }
     .sess-bars {
       display: flex; align-items: center; gap: 0;
       height: 22px; position: relative;
@@ -1717,6 +1730,9 @@ let _queryCtx = null;   // { start, end, source, medium, compareStart, compareEn
 // preview links have their own persistent caches — see the resolver below.)
 let _adLpDrillCache = new Map();
 
+// Same idea for the landing-page cards' ad drill, keyed by landing_page_path.
+let _lpAdDrillCache = new Map();
+
 // ─────────────────────────────────────────────
 // SCOPE NOTE
 // ─────────────────────────────────────────────
@@ -2005,6 +2021,7 @@ function render(rawRows, filename) {
     labelName: 'Landing Page',
     color: LP_COLOR,
     minSess: 20,
+    drillBy: 'ad',
   });
   renderMixShift(campaignRows, tPrevS, tCurrS, tPrevCvr, tCurrCvr);
   renderTestVsNonTest(campaignRows);
@@ -2020,6 +2037,7 @@ function render(rawRows, filename) {
     sub: 'Landing pages ordered by current sessions. Gray = previous, colored = current.',
     labelName: 'Landing Page',
     color: LP_COLOR,
+    drillBy: 'ad',
   });
   renderCvrBuckets(campaignRows);
   renderCorrelation(lpRows);
@@ -2259,17 +2277,30 @@ function renderCvrMovement(cardId, rows, opts) {
   const qualified = rows.filter(r => r.prevSess >= minSess || r.currS >= minSess);
   const sorted = [...qualified].sort((a, b) => (b.currS * b.currC) - (a.currS * a.currC));
   const maxAbsDelta = Math.max(...sorted.map(r => Math.abs(r.currC - r.prevCvr)), 0.001);
-  const drillByLp = opts.drillBy === 'lp';
+  // 'lp' = expand a campaign into its landing pages (client-side, from _rawRows);
+  // 'ad' = expand a landing page into the ads that sent it traffic (lazy query).
+  const drillBy = opts.drillBy === 'lp' || opts.drillBy === 'ad' ? opts.drillBy : null;
+  const drillable = !!drillBy;
   const show7d = !!opts.show7d;
   // Scale for the "vs 7d" bars — only over rows that actually have 7d data.
   const maxAbsDelta7 = show7d
     ? Math.max(...sorted.filter(r => r.avg7S > 0).map(r => Math.abs(r.currC - r.avg7C)), 0.001)
     : 0.001;
 
+  // The hint lives INSIDE the chart, not in the sub: makeCardsCollapsible()
+  // hoists h3 + p.card__sub into the collapsed header and truncates the hint at
+  // 80 chars, so anything appended to `sub` is never seen.
+  const drillHint = drillBy === 'lp'
+    ? 'Click a row to break down by landing page.'
+    : drillBy === 'ad'
+      ? 'Click a row to see which ads sent it that traffic.'
+      : '';
+
   let html = `
     <h3>${esc(opts.title)}</h3>
-    <p class="card__sub">${opts.sub}${drillByLp ? ' <em style="color:var(--text-secondary)">· click a row to break down by landing page</em>' : ''}</p>
+    <p class="card__sub">${opts.sub}</p>
     <div class="cvr-chart${show7d ? ' cvr-chart--7d' : ''}">
+      ${drillHint ? `<div class="drill-hint">▶ ${drillHint}</div>` : ''}
       <div class="cvr-chart-row cvr-chart-row--header">
         <div>${esc(opts.labelName)}</div>
         <div class="r">Prev CVR</div>
@@ -2297,8 +2328,8 @@ function renderCvrMovement(cardId, rows, opts) {
     const labelStyle = isPositive
       ? `left:calc(50% + ${barWidthPct}% + 4px);color:${barColor}`
       : `right:calc(50% + ${barWidthPct}% + 4px);color:${barColor}`;
-    const rowCls = drillByLp ? 'cvr-chart-row cvr-chart-row--clickable' : 'cvr-chart-row';
-    const dataAttr = drillByLp ? ` data-drill-idx="${idx}"` : '';
+    const rowCls = drillable ? 'cvr-chart-row cvr-chart-row--clickable' : 'cvr-chart-row';
+    const dataAttr = drillable ? ` data-drill-idx="${idx}"` : '';
 
     // 7d-average CVR column + "vs 7d" delta bar (campaign table only).
     let sevenCells = '';
@@ -2352,7 +2383,7 @@ function renderCvrMovement(cardId, rows, opts) {
     html += `
       <div class="${rowCls}"${dataAttr}>
         <div class="cvr-src-label" title="${esc(label)}">
-          ${drillByLp ? '<span class="cvr-chev">▶</span>' : ''}
+          ${drillable ? '<span class="cvr-chev">▶</span>' : ''}
           <span class="ch-dot" style="background:${opts.color}"></span>
           ${esc(shortLabel)}
         </div>
@@ -2370,13 +2401,13 @@ function renderCvrMovement(cardId, rows, opts) {
         <div class="r" style="font-size:0.78rem;font-weight:600">${fmtN(Math.round(r.currS * r.currC))}</div>
         ${txnDeltaCell}
       </div>
-      ${drillByLp ? `<div class="cvr-drill-panel" data-drill-panel="${idx}"></div>` : ''}`;
+      ${drillable ? `<div class="cvr-drill-panel" data-drill-panel="${idx}"></div>` : ''}`;
   });
 
   html += '</div>';
   card.innerHTML = html;
 
-  if (drillByLp) {
+  if (drillable) {
     card.querySelectorAll('.cvr-chart-row--clickable').forEach(row => {
       row.addEventListener('click', () => {
         const idx = row.dataset.drillIdx;
@@ -2388,7 +2419,12 @@ function renderCvrMovement(cardId, rows, opts) {
         if (chev) chev.textContent = isOpen ? '▼' : '▶';
         if (isOpen && !panel.dataset.loaded) {
           panel.dataset.loaded = '1';
-          panel.innerHTML = buildLpDrilldownHtml(sorted[idx].key);
+          const r = sorted[idx];
+          if (drillBy === 'ad') {
+            renderLpAdDrill(panel, r.key, { currS: r.currS, prevSess: r.prevSess });
+          } else {
+            panel.innerHTML = buildLpDrilldownHtml(r.key);
+          }
         }
       });
     });
@@ -3374,11 +3410,14 @@ function renderSessionVolume(cardId, rows, opts) {
   const card = document.getElementById(cardId);
   const sorted = [...rows].sort((a, b) => b.currS - a.currS);
   const maxSess = Math.max(...sorted.map(r => Math.max(r.currS, r.prevSess)), 1);
+  // 'ad' expands a landing page into the ads that sent it traffic (lazy query).
+  const drillBy = opts.drillBy === 'ad' ? 'ad' : null;
 
   let html = `
     <h3>${esc(opts.title)}</h3>
     <p class="card__sub">${opts.sub} CVR pill: <span style="color:#dc2626;font-weight:600">red</span> ≤0.3% → white at 1% → <span style="color:#15803d;font-weight:600">green</span> ≥3%.</p>
     <div class="cvr-chart">
+      ${drillBy === 'ad' ? '<div class="drill-hint">▶ Click a row to see which ads sent it that traffic.</div>' : ''}
       <div class="sess-chart-row sess-chart-row--header">
         <div>${esc(opts.labelName)}</div>
         <div class="r">Sessions</div>
@@ -3387,7 +3426,7 @@ function renderSessionVolume(cardId, rows, opts) {
         <div class="r">CVR</div>
       </div>`;
 
-  sorted.forEach(r => {
+  sorted.forEach((r, idx) => {
     const label = r.key || '(empty)';
     const sessDelta = r.currS - r.prevSess;
     const sessPct = r.prevSess > 0 ? (sessDelta / r.prevSess * 100) : (r.currS > 0 ? 100 : 0);
@@ -3397,8 +3436,9 @@ function renderSessionVolume(cardId, rows, opts) {
     const heat = cvrHeatColor(r.currC);
 
     html += `
-      <div class="sess-chart-row">
+      <div class="sess-chart-row${drillBy ? ' sess-chart-row--clickable' : ''}"${drillBy ? ` data-drill-idx="${idx}"` : ''}>
         <div class="cvr-src-label" title="${esc(label)}">
+          ${drillBy ? '<span class="cvr-chev">▶</span>' : ''}
           <span class="ch-dot" style="background:${opts.color}"></span>
           ${esc(label)}
         </div>
@@ -3409,11 +3449,31 @@ function renderSessionVolume(cardId, rows, opts) {
         </div>
         <div class="r sess-delta-tag ${cls(sessDelta)}">${fmtS(Math.round(sessDelta))}<br><span style="font-size:0.65rem;color:var(--text-secondary)">${fmtP(sessPct, 0)}</span></div>
         <div class="r"><span class="cvr-pill" style="background:${heat.bg};color:${heat.text}">${(r.currC * 100).toFixed(2)}%</span></div>
-      </div>`;
+      </div>
+      ${drillBy ? `<div class="cvr-drill-panel" data-drill-panel="${idx}"></div>` : ''}`;
   });
 
   html += '</div>';
   card.innerHTML = html;
+
+  if (drillBy) {
+    card.querySelectorAll('.sess-chart-row--clickable').forEach(row => {
+      row.addEventListener('click', () => {
+        const idx = row.dataset.drillIdx;
+        const panel = card.querySelector(`.cvr-drill-panel[data-drill-panel="${idx}"]`);
+        if (!panel) return;
+        const isOpen = panel.classList.toggle('open');
+        row.classList.toggle('sess-chart-row--open', isOpen);
+        const chev = row.querySelector('.cvr-chev');
+        if (chev) chev.textContent = isOpen ? '▼' : '▶';
+        if (isOpen && !panel.dataset.loaded) {
+          panel.dataset.loaded = '1';
+          const r = sorted[idx];
+          renderLpAdDrill(panel, r.key, { currS: r.currS, prevSess: r.prevSess });
+        }
+      });
+    });
+  }
 }
 
 // ─────────────────────────────────────────────
@@ -3997,6 +4057,264 @@ async function fetchCampaignAdLp(campaign) {
   const out = { rows, truncated: !!data.truncated };
   _adLpDrillCache.set(campaign, out);
   return out;
+}
+
+async function fetchLpAd(lp) {
+  if (_lpAdDrillCache.has(lp)) return _lpAdDrillCache.get(lp);
+  const ctx = _queryCtx;
+  if (!ctx) throw new Error('No query context — reload the data first.');
+
+  const params = new URLSearchParams({
+    start: ctx.start, end: ctx.end, lp,
+    source: ctx.source, medium: ctx.medium,
+  });
+  if (ctx.compareStart && ctx.compareEnd) {
+    params.set('compare_start', ctx.compareStart);
+    params.set('compare_end', ctx.compareEnd);
+  }
+  const resp = await fetch(`/api/meta-lp-ad-data?${params.toString()}`);
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.error || `HTTP ${resp.status}`);
+  }
+  const data = await resp.json();
+  if (data.query) console.log('[ShopifyQL · LP→ad drill]\n' + data.query);
+  // parseAdLpQL tolerates a missing landing_page_path column (lp comes back
+  // empty), which is exactly this query's shape: grouped by utm_content only.
+  const rows = parseAdLpQL(data);
+  const out = { rows, truncated: !!data.truncated };
+  _lpAdDrillCache.set(lp, out);
+  return out;
+}
+
+// One row per ad that sent traffic to ONE landing page. Mirrors the campaign
+// drill below, but every share and impact is measured against THIS landing
+// page's own totals, so the CVR Impact column sums to the LP's ΔCVR — the
+// number on the row the user just expanded.
+//
+// `parent` is that row's { currS, prevSess } from the main table, used only to
+// warn when the two pulls disagree on the LP's session count (they can: the
+// main table groups campaign × LP and is subject to its own row cap).
+function renderLpAdDrill(container, lp, parent) {
+  if (!lp) {
+    container.innerHTML = `<div class="adrill-note">These sessions carry no <code>landing_page_path</code>, so there's no page to filter ads by.</div>`;
+    return;
+  }
+  container.innerHTML = `<div class="adrill-note">Loading ad breakdown for <code>${esc(lp)}</code>…</div>`;
+
+  fetchLpAd(lp).then(({ rows, truncated }) => {
+    if (rows.length === 0) {
+      container.innerHTML = `<div class="adrill-note">No ads recorded for this landing page. Shopify stores the ad name in <code>utm_content</code> — if the ads don't pass it, this breakdown stays empty.</div>`;
+      return;
+    }
+
+    const lPrevS = rows.reduce((a, r) => a + r.prevSess, 0);
+    const lCurrS = rows.reduce((a, r) => a + r.currS, 0);
+
+    if (lCurrS === 0 && lPrevS > 0) {
+      container.innerHTML = `
+        <div class="adrill-note">
+          <strong>No sessions in the current window</strong> for this landing page
+          (${fmtN(Math.round(lPrevS))} in the comparison window, across ${rows.length} ad${rows.length !== 1 ? 's' : ''}).
+          Every ad stopped sending here, so there's no per-ad CVR change to break down.
+        </div>`;
+      return;
+    }
+
+    const lPrevT = rows.reduce((a, r) => a + r.prevSess * r.prevCvr, 0);
+    const lCurrT = rows.reduce((a, r) => a + r.currS * r.currC, 0);
+    const lPrevCvr = lPrevS > 0 ? lPrevT / lPrevS : 0;
+    const lCurrCvr = lCurrS > 0 ? lCurrT / lCurrS : 0;
+    const lCvrDelta = lCurrCvr - lPrevCvr;
+
+    const groups = rows.map(r => {
+      const prevShare = lPrevS > 0 ? r.prevSess / lPrevS : 0;
+      const currShare = lCurrS > 0 ? r.currS / lCurrS : 0;
+      const dCvr = r.currC - r.prevCvr;
+      const within  = prevShare * dCvr;
+      const between = (currShare - prevShare) * (r.currC - lCurrCvr);
+      return {
+        ...r,
+        sessDelta: r.currS - r.prevSess,
+        dCvr,
+        within, between,
+        cvrImpact: within + between,
+        txnDelta: Math.round(r.currS * r.currC) - Math.round(r.prevSess * r.prevCvr),
+      };
+    });
+
+    const SORT_ACCESS = {
+      ad:        g => (g.ad || '').toLowerCase(),
+      sessions:  g => g.currS,
+      sessDelta: g => g.sessDelta,
+      cvr:       g => g.currC,
+      cvrDelta:  g => g.dCvr,
+      txnDelta:  g => g.txnDelta,
+      cvrImpact: g => g.cvrImpact,
+      absImpact: g => Math.abs(g.cvrImpact),
+    };
+    const SORT_DEFAULT_DIR = {
+      ad: 'asc', sessions: 'desc', sessDelta: 'desc', cvr: 'desc',
+      cvrDelta: 'desc', txnDelta: 'desc', cvrImpact: 'asc', absImpact: 'desc',
+    };
+    let sortKey = 'sessions';
+    let sortDir = 'desc';
+
+    const sortedGroups = () => {
+      const get = SORT_ACCESS[sortKey] || SORT_ACCESS.absImpact;
+      const mul = sortDir === 'asc' ? 1 : -1;
+      return [...groups].sort((a, b) => {
+        const av = get(a), bv = get(b);
+        if (typeof av === 'string' || typeof bv === 'string') {
+          return String(av).localeCompare(String(bv)) * mul;
+        }
+        if (av === bv) return b.currS - a.currS;
+        return (av - bv) * mul;
+      });
+    };
+
+    const PAGE = 25;
+    let shown = Math.min(PAGE, groups.length);
+
+    const rowHtml = (g) => {
+      const adLabel = g.ad || '(no utm_content)';
+      const sPos = g.sessDelta >= 0;
+      const retired = g.currS === 0 && g.prevSess > 0;
+      const brandNew = g.prevSess === 0 && g.currS > 0;
+      const tag = retired
+        ? `<span class="adrill-tag adrill-tag--off" title="No sessions to this page in the current window — this ad stopped sending here. Its impact is entirely share-shift: ${fmtN(Math.round(g.prevSess))} prior sessions at ${(g.prevCvr * 100).toFixed(2)}% left the mix.">retired</span>`
+        : brandNew
+          ? `<span class="adrill-tag adrill-tag--new" title="No sessions to this page in the comparison window — new here, so there's no prior CVR to compare against. Its impact is entirely share-shift.">new</span>`
+          : '';
+      const sharePct = lCurrS > 0 ? (g.currS / lCurrS * 100) : 0;
+
+      return `
+        <div class="adrill-row">
+          <div class="adrill-name">
+            <div class="adrill-ad">${esc(adLabel)} ${adLinkCellHtml(g.ad)}${tag}</div>
+            <div class="adrill-share">${sharePct.toFixed(1)}% of this page's sessions</div>
+          </div>
+          <div class="r">${fmtN(Math.round(g.currS))}</div>
+          <div class="r" style="font-weight:600;color:${g.sessDelta === 0 ? 'var(--text-secondary)' : (sPos ? 'var(--positive)' : 'var(--negative)')}" title="${fmtN(Math.round(g.prevSess))} → ${fmtN(Math.round(g.currS))} sessions">${g.sessDelta === 0 ? '0' : (sPos ? '+' : '−') + fmtN(Math.abs(Math.round(g.sessDelta)))}</div>
+          <div class="r"${retired ? ' style="color:var(--text-secondary)" title="No current sessions"' : ''}>${retired ? '—' : (g.currC * 100).toFixed(2) + '%'}</div>
+          <div class="r ${retired || brandNew ? '' : cls(g.dCvr)}" style="font-weight:600${retired || brandNew ? ';color:var(--text-secondary)' : ''}" title="CVR ${(g.prevCvr * 100).toFixed(2)}% → ${retired ? 'no traffic' : (g.currC * 100).toFixed(2) + '%'}">${retired || brandNew ? '—' : fmtPP(g.dCvr * 100)}</div>
+          <div class="r ${cls(g.txnDelta)}">${fmtS(g.txnDelta)}</div>
+          <div class="r contrib-val ${cls(g.cvrImpact)}" style="font-size:0.78rem" title="Own-CVR effect ${fmtPP(g.within * 100)} + share-shift effect ${fmtPP(g.between * 100)} = ${fmtPP(g.cvrImpact * 100)}. Sums across all ads on this page to its ΔCVR of ${fmtPP(lCvrDelta * 100)}.">${fmtPP(g.cvrImpact * 100)}</div>
+        </div>`;
+    };
+
+    const paint = () => {
+      const h = (key, label, extraCls, title) => {
+        const active = sortKey === key || (key === 'cvrImpact' && sortKey === 'absImpact');
+        const arrow = active ? `<span class="adrill-sort-arrow">${sortDir === 'asc' ? '▲' : '▼'}</span>` : '';
+        return `<div class="${extraCls || ''} adrill-sort${active ? ' adrill-sort--active' : ''}"`
+          + ` data-adrill-sort="${key}"${title ? ` title="${title}"` : ''}>${label}${arrow}</div>`;
+      };
+      const header = `
+        <div class="adrill-row adrill-row--header">
+          ${h('ad', 'Ad (utm_content)', '', 'Sort by ad name')}
+          ${h('sessions', 'Sessions', 'r', 'Sessions this ad sent to this page in the current window')}
+          ${h('sessDelta', 'Sess Δ', 'r', 'Session change vs the comparison window')}
+          ${h('cvr', 'CVR', 'r', "This ad's CVR on this page, current window")}
+          ${h('cvrDelta', 'CVR Δ', 'r', "This ad's own CVR change on this page, in pp")}
+          ${h('txnDelta', 'Txns Δ', 'r', 'Transaction change vs the comparison window')}
+          ${h('cvrImpact', 'CVR Impact', 'r', 'Contribution in pp to THIS landing page&apos;s CVR change (own-CVR effect + share-shift effect). First click ranks by absolute size; click again for signed order (biggest drags first).')}
+        </div>`;
+      const ordered = sortedGroups();
+      const body = ordered.slice(0, shown).map(rowHtml).join('');
+      const more = shown < groups.length
+        ? `<button class="adrill-more" type="button">Show all ${groups.length} ads</button>`
+        : '';
+
+      const notes = [];
+      notes.push(`Impacts are measured against <strong>this landing page</strong>: CVR ${(lPrevCvr * 100).toFixed(2)}% → ${(lCurrCvr * 100).toFixed(2)}% (<span class="${cls(lCvrDelta)}">${fmtPP(lCvrDelta * 100)}</span>) on ${fmtN(Math.round(lPrevS))} → ${fmtN(Math.round(lCurrS))} sessions. The CVR Impact column sums to that ΔCVR.`);
+
+      // The parent row comes from the campaign × LP pull; this drill re-queries
+      // grouped by ad. Same underlying sessions, so a material gap means one of
+      // the two pulls is missing rows — say so rather than let the numbers
+      // quietly disagree.
+      if (parent && parent.currS > 0) {
+        const gap = lCurrS - parent.currS;
+        if (Math.abs(gap) / parent.currS > 0.02) {
+          notes.push(`⚠ This breakdown totals ${fmtN(Math.round(lCurrS))} current sessions vs ${fmtN(Math.round(parent.currS))} on the row above (${fmtS(Math.round(gap))}). The row above is grouped by campaign × landing page; this one by ad — a gap that size usually means one of the two pulls hit its row cap.`);
+        }
+      }
+
+      let banner = '';
+      if (_adLink.authFailed) {
+        banner = `<strong>Creative previews are off because this page isn't signed in to Facebook.</strong>
+          Shopify only records the ad <em>name</em>; turning it into a preview link needs the Meta API.
+          <a class="adrill-login" href="/auth/facebook">Log in with Facebook</a>
+          then reopen this drill — every number below is Shopify data and works without it.`;
+      } else {
+        const pend = Math.max(0, _adLink.seen.size - _adLink.resolved - _adLink.failed);
+        const bits = [];
+        if (_adLink.resolved) bits.push(`${_adLink.resolved} preview link${_adLink.resolved === 1 ? '' : 's'} resolved`);
+        if (pend) bits.push(`${pend} still resolving`);
+        if (_adLink.failed) bits.push(`${_adLink.failed} unresolved`);
+        if (bits.length) {
+          notes.push(`Ad links: ${bits.join(' · ')}${_adLink.lastError ? ` · last error: ${esc(_adLink.lastError)}` : ''}.`
+            + ` Names are matched to Meta one at a time and cached, so repeat visits link instantly.`);
+        }
+      }
+      if (truncated) notes.push(`⚠ Shopify returned the maximum 1000 rows for this landing page — the tail is cut off.`);
+      const bannerHtml = banner ? `<div class="adrill-banner">⚠ ${banner}</div>` : '';
+
+      const SORT_LABEL = {
+        absImpact: 'sorted by |CVR impact|',
+        ad: `sorted by ad name (${sortDir === 'asc' ? 'A→Z' : 'Z→A'})`,
+        sessions: `sorted by sessions (${sortDir === 'desc' ? 'highest first' : 'lowest first'})`,
+        sessDelta: `sorted by session change (${sortDir === 'desc' ? 'biggest gain first' : 'biggest drop first'})`,
+        cvr: `sorted by CVR (${sortDir === 'desc' ? 'highest first' : 'lowest first'})`,
+        cvrDelta: `sorted by CVR change (${sortDir === 'desc' ? 'biggest rise first' : 'biggest fall first'})`,
+        txnDelta: `sorted by transaction change (${sortDir === 'desc' ? 'biggest gain first' : 'biggest drop first'})`,
+        cvrImpact: `sorted by CVR impact (${sortDir === 'desc' ? 'most positive first' : 'most negative first'})`,
+      };
+
+      container.innerHTML = `
+        <div class="drill-header">Ads sending traffic to ${esc(lp)} · ${groups.length} ad${groups.length !== 1 ? 's' : ''} · ${SORT_LABEL[sortKey] || ''}</div>
+        ${bannerHtml}
+        <div class="adrill-scroll"><div class="adrill-table">${header}${body}</div></div>
+        ${more}
+        <div class="adrill-note">${notes.join('<br>')}</div>`;
+
+      const moreBtn = container.querySelector('.adrill-more');
+      if (moreBtn) moreBtn.addEventListener('click', () => { shown = groups.length; paint(); });
+
+      container.querySelectorAll('[data-adrill-sort]').forEach(el => {
+        el.addEventListener('click', () => {
+          const key = el.dataset.adrillSort;
+          if (key === 'cvrImpact') {
+            sortKey = sortKey === 'absImpact' ? 'cvrImpact' : 'absImpact';
+            sortDir = sortKey === 'absImpact' ? 'desc' : 'asc';
+          } else if (sortKey === key) {
+            sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+          } else {
+            sortKey = key;
+            sortDir = SORT_DEFAULT_DIR[key] || 'desc';
+          }
+          paint();
+        });
+      });
+
+      adLinkEnqueue(ordered.slice(0, shown).map(g => g.ad));
+    };
+
+    let progressTimer = null;
+    const onProgress = () => {
+      if (progressTimer) return;
+      progressTimer = setTimeout(() => {
+        progressTimer = null;
+        if (container.isConnected) paint();
+        else _adLink.listeners.delete(onProgress);
+      }, 2500);
+    };
+    _adLink.listeners.add(onProgress);
+
+    paint();
+  }).catch(e => {
+    container.innerHTML = `<div class="adrill-note" style="color:var(--negative)">Could not load the ad breakdown for this landing page: ${esc(e.message)}</div>`;
+  });
 }
 
 // One row per ad × landing-page pair inside a campaign, carrying the same
@@ -5079,6 +5397,7 @@ async function loadFromShopify() {
       compareEnd:   useCustomCompare ? compareEnd   : null,
     };
     _adLpDrillCache = new Map();
+    _lpAdDrillCache = new Map();
     // Let a fresh pull retry ad-link resolution (window changed; auth may now be
     // in place). The localStorage caches survive — that's the point of them.
     _adLink.queue.length = 0;

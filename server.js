@@ -2334,6 +2334,157 @@ app.get('/api/meta-campaign-ad-lp-data', async (req, res) => {
   }
 });
 
+// --- Ad breakdown for ONE landing page (landing-page table drills) ---
+//
+// Powers "click a landing-page row to see which ads sent that traffic" on the
+// Meta CVR page's two landing-page cards. Scoped to a single
+// landing_page_path and fetched lazily for the same reason as the campaign
+// drill above: the account-wide ad × LP pull is already at the edge of
+// ShopifyQL's row cap, and filtering to one LP keeps this to a few dozen rows.
+//
+// Honours the same custom-compare contract as /api/meta-cvr-impact-data so the
+// drill's Δ values share the baseline of the landing-page row that opened it.
+app.get('/api/meta-lp-ad-data', async (req, res) => {
+  if (!SHOPIFY_URL || !SHOPIFY_TOKEN) {
+    return res.status(500).json({ error: 'Shopify credentials not configured' });
+  }
+
+  const { start, end, lp } = req.query;
+  if (!start || !end || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+    return res.status(400).json({ error: 'start and end query params required (YYYY-MM-DD)' });
+  }
+  // An empty landing_page_path can't be filtered on by equality, so the client
+  // is expected to skip the drill for those rows rather than send a blank.
+  if (typeof lp !== 'string' || !lp.trim()) {
+    return res.status(400).json({ error: 'lp query param required' });
+  }
+
+  const escapeQL = (v) => String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  const scope = utmScope(req.query.source, req.query.medium, { source: 'facebook', medium: 'paid_social' });
+  const source = scope.sources.join(',');
+  const medium = scope.mediums.join(',');
+  const lpQL = escapeQL(lp);
+
+  const cs = req.query.compare_start;
+  const ce = req.query.compare_end;
+  const useCustomCompare = cs && ce
+    && /^\d{4}-\d{2}-\d{2}$/.test(cs) && /^\d{4}-\d{2}-\d{2}$/.test(ce);
+
+  // One LP grouped by ad stays far below 1000, but ask explicitly so a
+  // pathological page truncates predictably and the response can flag it.
+  const ROW_LIMIT = 1000;
+  const WHERE = `WHERE ${scope.where} AND landing_page_path = '${lpQL}'`;
+
+  const mainQuery = `FROM sessions
+  SHOW sessions, conversion_rate
+  ${WHERE}
+  GROUP BY utm_content
+  SINCE ${start} UNTIL ${end}
+  COMPARE TO previous_period
+  ORDER BY sessions DESC
+  LIMIT ${ROW_LIMIT}`;
+
+  const compareQuery = useCustomCompare ? `FROM sessions
+  SHOW sessions, conversion_rate
+  ${WHERE}
+  GROUP BY utm_content
+  SINCE ${cs} UNTIL ${ce}
+  ORDER BY sessions DESC
+  LIMIT ${ROW_LIMIT}` : null;
+
+  const endpoint = `https://${SHOPIFY_URL}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
+  const gqlQuery = `query RunShopifyQL($q: String!) {
+    shopifyqlQuery(query: $q) {
+      tableData { columns { name dataType } rows }
+      parseErrors
+    }
+  }`;
+
+  const runShopifyQL = async (q) => {
+    const resp = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
+      body: JSON.stringify({ query: gqlQuery, variables: { q } }),
+    });
+    const json = await resp.json();
+    const payload = json.data?.shopifyqlQuery;
+    if (payload?.parseErrors?.length) {
+      const err = new Error('ShopifyQL parse error: ' + JSON.stringify(payload.parseErrors));
+      err.parseErrors = payload.parseErrors;
+      throw err;
+    }
+    if (!payload?.tableData) throw new Error('No data returned from Shopify');
+    return payload.tableData;
+  };
+
+  try {
+    const [main, compare] = await Promise.all([
+      runShopifyQL(mainQuery),
+      compareQuery ? runShopifyQL(compareQuery) : Promise.resolve(null),
+    ]);
+
+    const base = {
+      query: mainQuery,
+      filter: { source, medium, lp },
+      truncated: main.rows.length >= ROW_LIMIT,
+      row_limit: ROW_LIMIT,
+      columns: main.columns,
+    };
+
+    if (!compare) return res.json({ ...base, rows: main.rows });
+
+    // Swap-in-place merge, keyed on utm_content alone (the only grouping
+    // dimension here), so the column shape the client parses stays identical.
+    const mainColNames = main.columns.map(c => c.name);
+    const cmpColNames  = compare.columns.map(c => c.name);
+    const toArray = (row, names) => {
+      if (Array.isArray(row)) return row;
+      if (row && typeof row === 'object') return names.map(n => row[n]);
+      return [];
+    };
+    const cols    = mainColNames.map(n => (n || '').toLowerCase());
+    const cmpCols = cmpColNames.map(n => (n || '').toLowerCase());
+    const idx = (arr, n) => arr.findIndex(s => s === n);
+
+    const iAd          = idx(cols, 'utm_content');
+    const iMainPrevS   = idx(cols, 'comparison_sessions__previous_period');
+    const iMainPrevCvr = idx(cols, 'comparison_conversion_rate__previous_period');
+    const cmpIAd       = idx(cmpCols, 'utm_content');
+    const cmpISess     = idx(cmpCols, 'sessions');
+    const cmpICvr      = idx(cmpCols, 'conversion_rate');
+
+    const cmpMap = new Map();
+    for (const row of compare.rows) {
+      const arr = toArray(row, cmpColNames);
+      const a = String(arr[cmpIAd] ?? '').trim();
+      if (!a) continue;
+      cmpMap.set(a, arr);
+    }
+
+    let matched = 0, unmatched = 0;
+    const newRows = main.rows.map(row => {
+      const arr = toArray(row, mainColNames).slice();
+      const a = String(arr[iAd] ?? '').trim();
+      const cmpRow = cmpMap.get(a);
+      if (cmpRow) matched++; else unmatched++;
+      if (iMainPrevS >= 0)   arr[iMainPrevS]   = cmpRow != null && cmpISess >= 0 ? cmpRow[cmpISess] : null;
+      if (iMainPrevCvr >= 0) arr[iMainPrevCvr] = cmpRow != null && cmpICvr  >= 0 ? cmpRow[cmpICvr]  : null;
+      return arr;
+    });
+
+    res.json({
+      ...base,
+      compare_query: compareQuery,
+      compare_window: { start: cs, end: ce },
+      merge_stats: { main_rows: main.rows.length, compare_rows: compare.rows.length, matched_keys: matched, unmatched_keys: unmatched },
+      rows: newRows,
+    });
+  } catch (err) {
+    console.error('[meta-lp-ad-data] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─────────────────────────────────────────────
 // AD NAME → CREATIVE PREVIEW LINK (2-call pipeline)
 // ─────────────────────────────────────────────
