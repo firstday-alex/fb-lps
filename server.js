@@ -1535,6 +1535,20 @@ app.get('/api/lp-by-channel-data', async (req, res) => {
   SINCE ${start} UNTIL ${end}
   ORDER BY sessions DESC`;
 
+  // Per-ad source split, so the client can tell which ad names are Meta traffic and only
+  // attempt creative-preview lookups for those. Only meaningful when the rows ARE ad names.
+  //
+  // A separate query on purpose: the main one is `ONLY TOP ${limit} utm_content`, and adding
+  // utm_source to that GROUP BY would make TOP N count ad-and-source pairs — one ad split
+  // across three sources would eat three slots and the table would stop showing the top N
+  // ads. The cap here is deliberately generous for the same reason: the pair count is larger
+  // than the row count it has to cover.
+  const rowSourcesQuery = group === 'ad' ? `FROM sessions
+  SHOW sessions${whereClause}
+  GROUP BY ONLY TOP ${Math.min(1000, limit * 8)} utm_content, utm_source
+  SINCE ${start} UNTIL ${end}
+  ORDER BY sessions DESC` : null;
+
   const runQuery = async (q) => {
     const resp = await fetch(endpoint, {
       method: 'POST',
@@ -1574,10 +1588,16 @@ app.get('/api/lp-by-channel-data', async (req, res) => {
   };
 
   try {
-    const [main, compare, channelsTable] = await Promise.all([
+    const [main, compare, channelsTable, rowSourcesTable] = await Promise.all([
       runQuery(mainQuery),
       compareQuery ? runQuery(compareQuery) : Promise.resolve(null),
       runQuery(channelsQuery),
+      // Non-fatal: without it the client falls back to deciding preview scope from the
+      // channel filter alone. A missing breakdown must not cost anyone the whole table.
+      rowSourcesQuery ? runQuery(rowSourcesQuery).catch((e) => {
+        console.warn('[lp-by-channel-data] per-row source query failed:', e.message);
+        return null;
+      }) : Promise.resolve(null),
     ]);
 
     const mainCols = (main.columns || []).map(c => c.name);
@@ -1615,6 +1635,23 @@ app.get('/api/lp-by-channel-data', async (req, res) => {
       if ((compare.rows || [])[0]) totals.previous = extractCmp(compare.rows[0], (c) => `${c}__totals`);
     }
 
+    // Per-row source split: label -> { source: sessions }. Attached to each row so the
+    // client can decide per row instead of per table.
+    if (rowSourcesTable) {
+      const rsCols = (rowSourcesTable.columns || []).map(c => c.name);
+      const sIdx = rsCols.indexOf('sessions');
+      const byLabel = new Map();
+      for (const r of (rowSourcesTable.rows || [])) {
+        const label = labelOf(r, rsCols, 'utm_content');
+        const source = labelOf(r, rsCols, 'utm_source');
+        const sessions = num(Array.isArray(r) ? r[sIdx] : r.sessions);
+        if (!byLabel.has(label)) byLabel.set(label, {});
+        const bucket = byLabel.get(label);
+        bucket[source] = (bucket[source] || 0) + sessions;
+      }
+      for (const row of rows) row.sources = byLabel.get(row.label) || null;
+    }
+
     // Channel dropdown list
     const chCols = (channelsTable.columns || []).map(c => c.name);
     const channels = (channelsTable.rows || []).map(r => ({
@@ -1629,6 +1666,9 @@ app.get('/api/lp-by-channel-data', async (req, res) => {
       query: mainQuery,
       compare_query: compareQuery,
       channels,
+      // Whether rows carry a `sources` map. The client needs to distinguish "this ad has no
+      // Meta sessions" from "nobody asked", and a null/absent field cannot say which.
+      row_sources: !!rowSourcesTable,
       totals,
       rows,
     });

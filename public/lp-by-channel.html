@@ -251,6 +251,22 @@ const META_SOURCE = /facebook/i;
 //     set of sources present in the window: all Meta means every row is Meta.
 // Anything else is mixed traffic we cannot attribute per row, and firing lookups for a
 // Klaviyo or Google ad name burns Meta API calls to render "no link" on every row.
+// Whether ONE row's traffic includes Meta sessions, from the server's per-row utm_source
+// breakdown. "Any Meta sessions" is the right test rather than "mostly Meta": if the ad name
+// appeared in facebook traffic at all then it exists in the Meta ad account and the lookup
+// will succeed, even when most of that row's sessions came from somewhere else.
+function rowMetaShare(sources) {
+  if (!sources) return null;                       // no breakdown for this row
+  let meta = 0, total = 0;
+  for (const [s, n] of Object.entries(sources)) {
+    const v = Number(n) || 0;
+    total += v;
+    if (META_SOURCE.test(s)) meta += v;
+  }
+  if (!total) return null;
+  return { meta, total, share: meta / total, hasMeta: meta > 0 };
+}
+
 function metaScope() {
   const ch = (_data.channel || '').trim();
   if (ch) {
@@ -276,6 +292,7 @@ let _drill = new Map();      // drillKey → { state, rows, totals, error }
 // markup to U+FFFD, so a key read back out of an attribute never matched the one that was
 // written and every click was a silent no-op. An integer survives the round trip.
 let _paths = [];             // index → path, rebuilt each paint
+let _lastSkippedAdRows = 0;  // ad rows on the last paint whose traffic isn't Meta
 
 // Columns. heat=true → funnel-rate cell gets the color-coded background.
 const COLS = [
@@ -480,13 +497,19 @@ function renderGroupHint() {
     : '▶ Click an ad to break it down by landing page.';
   const bits = [chain];
 
-  // Outside Meta scope there is nothing to report about preview progress, because no
-  // lookups were made. Say why the links are absent rather than leaving a silent gap.
-  const scope = metaScope();
-  if (!scope.ok) {
-    bits.push(`<span class="hint-muted">Creative previews off: ${escapeHtml(scope.why)}. Copy buttons still work.</span>`);
-    el.innerHTML = bits.join(' ');
-    return;
+  // Report why previews are absent rather than leaving a silent gap. With a per-row
+  // breakdown that is a count of skipped rows; without one it is the whole table.
+  if (_data.row_sources) {
+    if (_lastSkippedAdRows > 0) {
+      bits.push(`<span class="hint-muted">${_lastSkippedAdRows} non-Meta ad${_lastSkippedAdRows === 1 ? '' : 's'} skipped for previews (copy still works).</span>`);
+    }
+  } else {
+    const scope = metaScope();
+    if (!scope.ok) {
+      bits.push(`<span class="hint-muted">Creative previews off: ${escapeHtml(scope.why)}. Copy buttons still work.</span>`);
+      el.innerHTML = bits.join(' ');
+      return;
+    }
   }
 
   const s = AdLink.state;
@@ -574,7 +597,8 @@ function renderTable() {
     const av = a.cur[_sort.key], bv = b.cur[_sort.key];
     return _sort.dir * ((av == null ? -Infinity : av) - (bv == null ? -Infinity : bv));
   });
-  const rows = sortRows(_data.rows.map(r => ({ label: r.label, cur: computeFunnel(r.current), prev: computeFunnel(r.previous) })));
+  const rows = sortRows(_data.rows.map(r => ({ label: r.label, sources: r.sources || null,
+    cur: computeFunnel(r.current), prev: computeFunnel(r.previous) })));
 
   // Ad names get a copy button wherever they appear -- as top-level rows when grouping by
   // ad, and as drill children under a campaign. They run past 100 characters; copying one
@@ -584,13 +608,28 @@ function renderTable() {
   // be Meta traffic. Outside that scope the lookup cannot succeed, so it is not attempted
   // at all rather than resolved into "no link" on every row.
   const meta = metaScope();
-  const adTools = (dim, label) => {
+  // Per row when the server sent a source breakdown, per table when it didn't. `row_sources`
+  // distinguishes "this ad has no Meta sessions" from "nobody asked" -- a missing map alone
+  // cannot say which, and treating the two the same would silently drop previews whenever
+  // the breakdown query failed.
+  const rowCanPreview = (row) => {
+    if (!_data.row_sources) return meta.ok;
+    const m = rowMetaShare(row && row.sources);
+    return m ? m.hasMeta : false;
+  };
+  const adTools = (dim, label, row) => {
     if (dim !== 'ad' || label === '(none)') return '';
-    return meta.ok ? AdLink.cellHtml(label, { copy: true }) : AdLink.copyHtml(label);
+    return rowCanPreview(row) ? AdLink.cellHtml(label, { copy: true }) : AdLink.copyHtml(label);
   };
 
-  // Every ad name on screen at any depth, so previews resolve for nested rows too.
+  // Ad names on screen at any depth that can actually resolve -- non-Meta rows are never
+  // enqueued, so no lookup is spent discovering there is nothing to find.
   const adNamesOnScreen = [];
+  let adRowsSkipped = 0;
+  const noteAdRow = (label, row) => {
+    if (label === '(none)') return;
+    if (rowCanPreview(row)) adNamesOnScreen.push(label); else adRowsSkipped++;
+  };
 
   // One level of children, and — if those children can themselves expand — their
   // children under them. Depth is only used for indentation and shading; the path is
@@ -616,9 +655,10 @@ function renderTable() {
       return `<tr class="${noteCls}"><td colspan="${span}">No ${escapeHtml(childName)}s recorded here in this window.</td></tr>`;
     }
 
-    const sub = sortRows(d.rows.map(r => ({ label: r.label, cur: computeFunnel(r.current), prev: computeFunnel(r.previous) })));
+    const sub = sortRows(d.rows.map(r => ({ label: r.label, sources: r.sources || null,
+      cur: computeFunnel(r.current), prev: computeFunnel(r.previous) })));
     const body = sub.map(r => {
-      if (childDim === 'ad') adNamesOnScreen.push(r.label);
+      if (childDim === 'ad') noteAdRow(r.label, r);
       const childPath = path.concat([{ dim: childDim, label: r.label }]);
       const childKey = drillKey(childPath);
       const childIdx = _paths.push(childPath) - 1;
@@ -631,7 +671,7 @@ function renderTable() {
       const drillAttr = expandable ? ` data-drill="${childIdx}"` : '';
       const chev = expandable ? `<span class="chev">${open ? '&#9660;' : '&#9654;'}</span>` : '';
       const tds = COLS.map(c => c.kind === 'label'
-        ? `<td class="${labelCls}"${drillAttr} title="${escapeAttr(r.label)}">${chev}&#8627; ${escapeHtml(r.label)}${shareHtml}${adTools(childDim, r.label)}</td>`
+        ? `<td class="${labelCls}"${drillAttr} title="${escapeAttr(r.label)}">${chev}&#8627; ${escapeHtml(r.label)}${shareHtml}${adTools(childDim, r.label, r)}</td>`
         : cell(c, r.cur, r.prev, true)).join('');
       return `<tr class="drill-row${depth > 1 ? ' drill-row--2' : ''}${open ? ' parent-open' : ''}">${tds}</tr>`
         + (expandable ? drillRowsHtml(childPath, r.cur.sessions) : '');
@@ -652,15 +692,15 @@ function renderTable() {
   };
 
   const bodyRows = rows.map(r => {
-    if (topDim === 'ad') adNamesOnScreen.push(r.label);
+    if (topDim === 'ad') noteAdRow(r.label, r);
     const path = [{ dim: topDim, label: r.label }];
     const key = drillKey(path);
     const idx = _paths.push(path) - 1;
     const expandable = canExpand(topDim, r.label);
     const open = _drill.has(key);
     const labelCell = expandable
-      ? `<td class="col-label col-label--drill${open ? ' open' : ''}" data-drill="${idx}" title="${escapeAttr(r.label)}"><span class="chev">${open ? '&#9660;' : '&#9654;'}</span>${escapeHtml(r.label)}${adTools(topDim, r.label)}</td>`
-      : `<td class="col-label" title="${escapeAttr(DRILL[topDim] ? 'No ' + (GROUP_LABEL[topDim] || topDim).toLowerCase() + ' recorded on these sessions, so there is nothing to break down' : r.label)}">${escapeHtml(r.label)}${adTools(topDim, r.label)}</td>`;
+      ? `<td class="col-label col-label--drill${open ? ' open' : ''}" data-drill="${idx}" title="${escapeAttr(r.label)}"><span class="chev">${open ? '&#9660;' : '&#9654;'}</span>${escapeHtml(r.label)}${adTools(topDim, r.label, r)}</td>`
+      : `<td class="col-label" title="${escapeAttr(DRILL[topDim] ? 'No ' + (GROUP_LABEL[topDim] || topDim).toLowerCase() + ' recorded on these sessions, so there is nothing to break down' : r.label)}">${escapeHtml(r.label)}${adTools(topDim, r.label, r)}</td>`;
     const tds = COLS.map(c => c.kind === 'label' ? labelCell : cell(c, r.cur, r.prev, true)).join('');
     return `<tr${open ? ' class="parent-open"' : ''}>${tds}</tr>`
       + (expandable ? drillRowsHtml(path, r.cur.sessions) : '');
@@ -676,8 +716,9 @@ function renderTable() {
   // Resolve previews for every ad name now on screen, at any depth -- but only inside Meta
   // scope. Names already seen are skipped inside the resolver, so calling this on each paint
   // is cheap; calling it for non-Meta traffic is not, it is a wasted lookup per ad.
-  if (meta.ok && adNamesOnScreen.length) {
-    AdLink.enqueue(adNamesOnScreen.filter(l => l && l !== '(none)'));
+  _lastSkippedAdRows = adRowsSkipped;
+  if (adNamesOnScreen.length) {
+    AdLink.enqueue(adNamesOnScreen.filter(Boolean));
   }
 
   document.querySelectorAll('#tbody .col-label--drill').forEach(td => {
