@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Conversion Impact Analysis</title>
+  <title>CVR by Traffic Source</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -1074,7 +1074,7 @@
 <header>
   <a class="header__back" href="/">&#8592; Ads Viewer</a>
   <div>
-    <h1>Conversion Impact Analysis</h1>
+    <h1>CVR by Traffic Source</h1>
     <p>Conversion impact analysis — auto-loaded from Shopify or upload CSV</p>
   </div>
   <a class="header__report-link" href="https://admin.shopify.com/store/first-day-inc/analytics/reports/275054690?ql=FROM+sessions%0A++SHOW+sessions%2C+conversion_rate%0A++GROUP+BY+ONLY+TOP+20+utm_source%2C+ONLY+TOP+20+landing_page_path+WITH%0A++++GROUP_TOTALS%2C+TOTALS%2C+PERCENT_CHANGE%0A++SINCE+startOfDay%28-2d%29+UNTIL+endOfDay%28-1d%29%0A++COMPARE+TO+previous_period%0A++ORDER+BY+conversion_rate__utm_source_totals+DESC%2C+conversion_rate+DESC%2C%0A++++utm_source+ASC%2C+landing_page_path+ASC%0AVISUALIZE+conversion_rate" target="_blank" rel="noopener">Open Shopify Report ↗</a>
@@ -1119,7 +1119,7 @@
 
     <!-- Overall summary -->
     <div id="scope-note" style="font-size:0.8rem;color:var(--text-secondary);margin:2px 0 14px">
-      <strong>Scope:</strong> grouped by <code>utm_source</code> across <em>all</em> mediums — each source (e.g. <code>facebook</code>) blends every medium (paid_social, paid, social_profile, …). For Meta <em>paid-social-only</em> numbers, use the <em>Meta CVR Impact</em> tab, whose Facebook CVR will be lower/different because it excludes the other Facebook mediums.
+      <strong>Scope:</strong> grouped by <code>utm_source</code> across <em>all</em> mediums — each source (e.g. <code>facebook</code>) blends every medium (paid_social, paid, social_profile, …). For Meta <em>paid-social-only</em> numbers, use the <em>CVR · Meta Paid Social</em> tab, whose Facebook CVR will be lower/different because it excludes the other Facebook mediums.
     </div>
     <div class="kpi-row" id="kpi-row"></div>
 
@@ -3324,5 +3324,6 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-shopify-load').addEventListener('click', loadFromShopify);
 });
 </script>
+<script src="/app-nav.js" defer></script>
 </body>
 </html>

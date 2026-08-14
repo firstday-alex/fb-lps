@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Meta Paid Social · Conversion Impact</title>
+  <title>CVR · Meta Paid Social</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -1490,7 +1490,7 @@
 <header>
   <a class="header__back" href="/">&#8592; Ads Viewer</a>
   <div>
-    <h1>Meta Paid Social &middot; Conversion Impact</h1>
+    <h1>CVR &middot; Meta Paid Social</h1>
     <p>Campaign &amp; landing-page analysis filtered to utm_source / utm_medium</p>
   </div>
   <a class="header__report-link" id="shopify-report-link" href="#" target="_blank" rel="noopener">Open Shopify Report ↗</a>
@@ -1511,7 +1511,7 @@
     </div>
     <div class="filter-row">
       <label>utm_source <input type="text" id="filter-source" value="facebook"></label>
-      <label>utm_medium <input type="text" id="filter-medium" value="*" title="* = every medium for this source, which matches the CVR Diagnosis by UTM tab exactly. Or name them: paid_social,paid for paid Meta traffic only."></label>
+      <label>utm_medium <input type="text" id="filter-medium" value="*" title="* = every medium for this source, which matches the CVR by Traffic Source tab exactly. Or name them: paid_social,paid for paid Meta traffic only."></label>
     </div>
     <button class="shopify-load-btn" id="btn-shopify-load">Load from Shopify</button>
     <div class="shopify-status" id="shopify-status"></div>
@@ -1841,7 +1841,7 @@ function renderScopeNote(data, source, medium) {
 
   let html = `<strong>Scope:</strong> <code>${esc(scopeLabel)}</code> — counting ${inc.map(fmtMed).join(' · ')}.`;
   if (allIn) {
-    html += ` Every <code>${esc(source)}</code> medium is included, so these totals reconcile exactly with the <em>CVR Diagnosis by UTM</em> tab's "${esc(source)}" row.`;
+    html += ` Every <code>${esc(source)}</code> medium is included, so these totals reconcile exactly with the <em>CVR by Traffic Source</em> tab's "${esc(source)}" row.`;
     const organic = mix.filter(m => !/^paid/i.test(m.medium || ''));
     const organicSess = organic.reduce((a, m) => a + m.sessions, 0);
     if (organicSess > 0) {
@@ -1851,7 +1851,7 @@ function renderScopeNote(data, source, medium) {
     }
   } else {
     html += ` <span style="color:var(--negative)">Excluded: ${out.map(fmtMed).join(' · ')}</span>`
-      + ` — ${fmtN(outSess)} session${outSess === 1 ? '' : 's'} this range. The <em>CVR Diagnosis by UTM</em> tab's "${esc(source)}" row includes them, so its CVR can move the other way.`
+      + ` — ${fmtN(outSess)} session${outSess === 1 ? '' : 's'} this range. The <em>CVR by Traffic Source</em> tab's "${esc(source)}" row includes them, so its CVR can move the other way.`
       + ` <button type="button" id="scope-include-all" class="scope-btn">Include all mediums &amp; reload</button>`;
   }
   el.innerHTML = html;
@@ -5837,5 +5837,6 @@ document.addEventListener('DOMContentLoaded', () => {
   setupAdLpHandlers();
 });
 </script>
+<script src="/app-nav.js" defer></script>
 </body>
 </html>

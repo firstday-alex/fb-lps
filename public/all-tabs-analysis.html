@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Tab Analysis — Firstday</title>
+  <title>Tab Summaries</title>
   <style>
     :root { --bg:#0f1115; --card:#171a21; --line:#272b34; --ink:#e7e9ee; --muted:#9aa3b2; --accent:#5b8cff; --good:#37c07a; --bad:#f2606a; }
     * { box-sizing: border-box; }
@@ -49,14 +49,14 @@
 </head>
 <body>
   <div class="wrap">
-    <h1>Tab Analysis</h1>
+    <h1>Tab Summaries</h1>
     <p class="sub">Pick a date range and run an automated, numbers-grounded summary of a dashboard tab. Defaults to <strong>yesterday vs the day prior</strong>.</p>
 
     <div class="controls">
       <div class="field">
         <label>Tab</label>
         <select id="tab">
-          <option value="meta-cvr-impact">Meta CVR Impact</option>
+          <option value="meta-cvr-impact">CVR · Meta Paid Social</option>
         </select>
       </div>
       <div class="field">
@@ -213,5 +213,6 @@
       loadContext();
     })();
   </script>
+<script src="/app-nav.js" defer></script>
 </body>
 </html>

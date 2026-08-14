@@ -3516,12 +3516,12 @@ CRITICAL RULE: use ONLY numbers present in the BRIEF JSON below. Never invent, e
 CONTEXT ON THE COMPARISONS: every curr/prev pair is this day vs the PRIOR DAY, which is dominated by day-of-week effects. Where \`trailing\` is present (overall.trailing and aov.trailing, holding d7 and d30 over the 7 and 30 days BEFORE this day, excluding it), weigh it more heavily than the prior-day delta — sessionsPerDay and transactionsPerDay are per-day rates directly comparable to this single day, cvr and averageOrderValue compare directly. Call out when the two disagree, e.g. down vs yesterday but above the 7-day run-rate. If \`trailing\` is absent or null, just use the prior-day comparison and don't mention run-rates.
 
 Write markdown with these sections:
-# Daily Analysis — ${brief.date}
+# Morning Brief — ${brief.date}
 ## Headline — what moved in sessions / CVR / transactions vs the prior day AND vs the 7/30-day run-rate, and why it matters (2-3 sentences).
 ## Channels — biggest session and CVR movers among channels[]; name the drags and the bright spots.
 ## Paid campaigns — notable movers in googleCampaigns[] and metaCampaigns[].
 ## AOV & funnel — AOV change and any funnel-step signal.
-## What to check — 2-4 concrete follow-ups, referencing the relevant dashboard tab (Google CVR Impact, Meta CVR Impact, Funnel Breakdown, AOV Impact).
+## What to check — 2-4 concrete follow-ups, referencing the relevant dashboard tab (CVR · Google, CVR · Meta Paid Social, Funnel Drop-Off, AOV by Traffic Source).
 Prefer short bullets over prose. Output ONLY the markdown, no preamble.
 
 BRIEF:
@@ -3654,7 +3654,7 @@ function reduceMetaCvrBrief(data, windowInfo) {
     .sort((a, b) => Math.abs(b.sessions_delta) - Math.abs(a.sessions_delta)).slice(0, 6);
 
   return {
-    tab: 'Meta CVR Impact',
+    tab: 'CVR · Meta Paid Social',
     window: windowInfo,
     filter: data.filter || null,
     overall: {
@@ -3679,7 +3679,7 @@ function reduceMetaCvrBrief(data, windowInfo) {
 
 // Registry of analyzable tabs. Add entries to extend beyond meta-cvr-impact.
 const ANALYSIS_TABS = {
-  'meta-cvr-impact': { label: 'Meta CVR Impact', endpoint: '/api/meta-cvr-impact-data', reduce: reduceMetaCvrBrief },
+  'meta-cvr-impact': { label: 'CVR · Meta Paid Social', endpoint: '/api/meta-cvr-impact-data', reduce: reduceMetaCvrBrief },
 };
 
 // Grounded per-tab summary — mirrors callClaudeForNarrative's "use ONLY these

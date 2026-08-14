@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Meta Paid Social &middot; AOV Impact</title>
+  <title>AOV · Meta Paid Social</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -217,7 +217,7 @@
 <header>
   <a class="header__back" href="/">&#8592; Ads Viewer</a>
   <div>
-    <h1>Meta Paid Social &middot; AOV Impact</h1>
+    <h1>AOV &middot; Meta Paid Social</h1>
     <p>Campaign, ad &amp; landing-page decomposition of revenue and blended-AOV change, from Shopify orders</p>
   </div>
   <a class="header__alt-link" href="/aov-impact.html">All sources (AOV Impact) &#8594;</a>
@@ -569,7 +569,7 @@
       Revenue is order total_price (incl. tax/shipping, currency = shop currency); units is
       <code>subtotalLineItemsQuantity</code>.
       This is <em>order-level first-touch</em> attribution, not Shopify session data — so order counts here will
-      not tie exactly to the session-based transactions on the Meta CVR Impact tab.
+      not tie exactly to the session-based transactions on the CVR · Meta Paid Social tab.
     </p>
   </div>
 </div>
@@ -1097,7 +1097,7 @@ async function load() {
   const statusEl = document.getElementById('load-status');
   const btn = document.getElementById('btn-load');
   if (!s || !e) { statusEl.textContent = 'Pick start and end.'; statusEl.classList.add('error'); return; }
-  if (!source) { statusEl.textContent = 'utm_source is required — use the AOV Impact tab for all sources.'; statusEl.classList.add('error'); return; }
+  if (!source) { statusEl.textContent = 'utm_source is required — use the AOV by Traffic Source tab for all sources.'; statusEl.classList.add('error'); return; }
   statusEl.classList.remove('error');
   btn.disabled = true;
   statusEl.textContent = 'Fetching orders from Shopify…';
@@ -1206,5 +1206,6 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 </script>
 
+<script src="/app-nav.js" defer></script>
 </body>
 </html>
