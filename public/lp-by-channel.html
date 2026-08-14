@@ -239,6 +239,32 @@ const DRILL = {
 // the landing page anyway, but a bound means adding a dimension can't accidentally make
 // the table recurse further than anyone intended.
 const MAX_DEPTH = 2;
+
+// Creative previews resolve an ad name against the Meta ad account, so they can only work
+// for Meta traffic. Matching `utm_source CONTAINS 'facebook'` -- the same test the server
+// uses to scope Meta queries -- rather than a hand-written list of source spellings.
+const META_SOURCE = /facebook/i;
+
+// Whether the rows on screen are known to be Meta traffic.
+//   - a channel filter is exact, so it answers outright;
+//   - with "All channels" the payload has no per-row source, so the only safe read is the
+//     set of sources present in the window: all Meta means every row is Meta.
+// Anything else is mixed traffic we cannot attribute per row, and firing lookups for a
+// Klaviyo or Google ad name burns Meta API calls to render "no link" on every row.
+function metaScope() {
+  const ch = (_data.channel || '').trim();
+  if (ch) {
+    return META_SOURCE.test(ch)
+      ? { ok: true }
+      : { ok: false, why: `previews need Meta traffic - ${ch} ad names do not exist in the Meta ad account` };
+  }
+  const sources = (_data.channels || []).map(c => c.source).filter(Boolean);
+  if (!sources.length) return { ok: false, why: 'no channel data in this window' };
+  const nonMeta = sources.filter(s => !META_SOURCE.test(s));
+  if (!nonMeta.length) return { ok: true };
+  const shown = nonMeta.slice(0, 3).join(', ') + (nonMeta.length > 3 ? ` +${nonMeta.length - 3} more` : '');
+  return { ok: false, why: `mixed traffic (${shown}) - pick a Meta channel to load creative previews` };
+}
 // NUL as the separator: ad names contain spaces, pipes, slashes and dashes, but a NUL
 // cannot occur in a UTM value. So a key can never collide with another path, and the
 // prefix test that closes descendants cannot false-positive on a sibling.
@@ -453,6 +479,16 @@ function renderGroupHint() {
     ? '▶ Click a campaign to break it down by ad name, then an ad to break it down by landing page.'
     : '▶ Click an ad to break it down by landing page.';
   const bits = [chain];
+
+  // Outside Meta scope there is nothing to report about preview progress, because no
+  // lookups were made. Say why the links are absent rather than leaving a silent gap.
+  const scope = metaScope();
+  if (!scope.ok) {
+    bits.push(`<span class="hint-muted">Creative previews off: ${escapeHtml(scope.why)}. Copy buttons still work.</span>`);
+    el.innerHTML = bits.join(' ');
+    return;
+  }
+
   const s = AdLink.state;
   if (s.authFailed) {
     // Every number on the page is Shopify data and works without Facebook —
@@ -540,12 +576,18 @@ function renderTable() {
   });
   const rows = sortRows(_data.rows.map(r => ({ label: r.label, cur: computeFunnel(r.current), prev: computeFunnel(r.previous) })));
 
-  // Ad names get a Meta creative-preview link and a copy button wherever they appear --
-  // as top-level rows when grouping by ad, and as drill children under a campaign.
-  // They run past 100 characters; copying one out of a table cell by hand is miserable.
-  const adTools = (dim, label) => (dim === 'ad' && label !== '(none)')
-    ? AdLink.cellHtml(label, { copy: true })
-    : '';
+  // Ad names get a copy button wherever they appear -- as top-level rows when grouping by
+  // ad, and as drill children under a campaign. They run past 100 characters; copying one
+  // out of a table cell by hand is miserable, and that is true whatever the source.
+  //
+  // The preview LINK is Meta-only, so it is added only when the rows on screen are known to
+  // be Meta traffic. Outside that scope the lookup cannot succeed, so it is not attempted
+  // at all rather than resolved into "no link" on every row.
+  const meta = metaScope();
+  const adTools = (dim, label) => {
+    if (dim !== 'ad' || label === '(none)') return '';
+    return meta.ok ? AdLink.cellHtml(label, { copy: true }) : AdLink.copyHtml(label);
+  };
 
   // Every ad name on screen at any depth, so previews resolve for nested rows too.
   const adNamesOnScreen = [];
@@ -631,9 +673,10 @@ function renderTable() {
 
   document.getElementById('tbody').innerHTML = `<tr class="totals-row">${totTds}</tr>` + bodyRows;
 
-  // Resolve previews for every ad name now on screen, at any depth. Names already seen
-  // are skipped inside the resolver, so calling this on each paint is cheap.
-  if (adNamesOnScreen.length) {
+  // Resolve previews for every ad name now on screen, at any depth -- but only inside Meta
+  // scope. Names already seen are skipped inside the resolver, so calling this on each paint
+  // is cheap; calling it for non-Meta traffic is not, it is a wasted lookup per ad.
+  if (meta.ok && adNamesOnScreen.length) {
     AdLink.enqueue(adNamesOnScreen.filter(l => l && l !== '(none)'));
   }
 
