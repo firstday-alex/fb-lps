@@ -298,7 +298,10 @@ let _lastSkippedAdRows = 0;  // ad rows on the last paint whose traffic isn't Me
 const COLS = [
   { key: 'label',          label: '',              kind: 'label' },
   { key: 'sessions',       label: 'Sessions',      kind: 'int', goodUp: true },
-  { key: 'duration',       label: 'Avg dur',       kind: 'dur', goodUp: true, info: 'duration' },
+  // Heat-coloured like every other metric column. heatBg is a proportional deviation from
+  // the filtered average, (v - agg) / agg, so it is unit-agnostic — seconds shade exactly
+  // the way rates do. Longer is better here, hence goodUp.
+  { key: 'duration',       label: 'Avg dur',       kind: 'dur', goodUp: true, heat: true, info: 'duration' },
   { key: 'bounce',         label: 'Bounce',        kind: 'pct', goodUp: false, heat: true, info: 'bounce' },
   { key: 'atcRate',        label: 'ATC (non-bnc)', kind: 'pct', goodUp: true, heat: true, info: 'atcRate' },
   { key: 'checkoutRate',   label: 'Checkout',      kind: 'pct', goodUp: true, heat: true, info: 'checkoutRate' },
