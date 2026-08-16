@@ -183,6 +183,11 @@
             </a>`;
           }).join('')}
         `).join('')}
+        <div class="appnav-group"><span class="appnav-group__label">Session</span></div>
+        <a class="appnav-item" href="/logout">
+          <div class="appnav-item__name">Sign out</div>
+          <div class="appnav-item__desc">Clears the shared-password session on this browser</div>
+        </a>
       </div>`;
 
     document.body.appendChild(scrim);

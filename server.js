@@ -82,6 +82,187 @@ function clearTokenCookie(res) {
 const cookieParser = require('cookie-parser');
 app.use(cookieParser());
 app.use(express.json({ limit: '32kb' }));
+app.use(express.urlencoded({ extended: false, limit: '32kb' }));
+
+// ─────────────────────────────────────────────
+// APP PASSWORD GATE
+// ─────────────────────────────────────────────
+// One shared password in front of everything. This is a company-internal
+// analytics tool on a public URL — before this, every Shopify-derived endpoint
+// (sessions, CVR, revenue, AOV) answered anyone who knew the hostname.
+// `requireAuth` below is a different thing: it guards the Meta API calls and
+// proves we hold a Facebook token. It never protected the Shopify data.
+//
+// The gate cookie is `issuedAt.HMAC(issuedAt)` keyed on SESSION_SECRET *and*
+// the password itself, so changing APP_PASSWORD signs everyone out — no
+// session store to clear, which matters on serverless.
+const APP_PASSWORD = process.env.APP_PASSWORD || '';
+const GATE_COOKIE = 'app_gate';
+const GATE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;   // 30 days
+const ON_VERCEL = !!process.env.VERCEL;
+
+const gateSign = (issuedAt) => crypto
+  .createHmac('sha256', COOKIE_SECRET + '|' + APP_PASSWORD)
+  .update(`gate|${issuedAt}`)
+  .digest('hex');
+
+function gateCookieValue() {
+  const now = Date.now();
+  return `${now}.${gateSign(now)}`;
+}
+
+function gateCookieValid(raw) {
+  if (!raw || typeof raw !== 'string') return false;
+  const dot = raw.lastIndexOf('.');
+  if (dot < 1) return false;
+  const issuedAt = Number(raw.slice(0, dot));
+  const sig = raw.slice(dot + 1);
+  if (!Number.isFinite(issuedAt)) return false;
+  if (Date.now() - issuedAt > GATE_MAX_AGE_MS) return false;   // server-side expiry
+  const expected = gateSign(issuedAt);
+  // Both are hex of the same length, so timingSafeEqual is safe to call.
+  if (sig.length !== expected.length) return false;
+  try {
+    return crypto.timingSafeEqual(Buffer.from(sig, 'hex'), Buffer.from(expected, 'hex'));
+  } catch { return false; }
+}
+
+// Vercel's scheduler calls the daily-report endpoint with no browser session.
+// Prefer CRON_SECRET when it's set; otherwise fall back to the x-vercel-cron
+// header, which Vercel strips from inbound public requests.
+function isCronRequest(req) {
+  const secret = process.env.CRON_SECRET;
+  if (secret && req.get('authorization') === `Bearer ${secret}`) return true;
+  return !secret && !!req.get('x-vercel-cron');
+}
+
+// Best-effort brute-force damping. Per-instance memory, so serverless resets it
+// on a cold start — it slows casual guessing, it is not a real rate limiter.
+const gateFails = new Map();   // ip → { count, until }
+const LOCKOUT_AFTER = 10;
+const LOCKOUT_MS = 60 * 1000;
+
+const clientIp = (req) => (req.get('x-forwarded-for') || '').split(',')[0].trim() || req.ip || 'unknown';
+
+function loginPage({ error = '', next = '/' } = {}) {
+  const esc = (s) => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sign in</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #f0f2f5; color: #1c1e21; min-height: 100vh;
+    display: flex; align-items: center; justify-content: center; padding: 24px; }
+  .card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+    padding: 28px 30px; width: 100%; max-width: 380px; }
+  h1 { font-size: 1.15rem; margin-bottom: 4px; }
+  p.sub { font-size: 0.82rem; color: #65676b; margin-bottom: 18px; }
+  label { display: block; font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.06em; color: #65676b; margin-bottom: 6px; }
+  input { width: 100%; padding: 10px 12px; border: 1px solid #dddfe2; border-radius: 6px;
+    font-size: 0.95rem; font-family: inherit; }
+  input:focus { outline: none; border-color: #1877f2; box-shadow: 0 0 0 2px rgba(24,119,242,0.15); }
+  button { width: 100%; margin-top: 14px; padding: 11px; background: #1877f2; color: #fff;
+    border: none; border-radius: 6px; font-size: 0.92rem; font-weight: 600; cursor: pointer; }
+  button:hover { background: #166fe5; }
+  .err { margin-top: 14px; font-size: 0.82rem; color: #c0392b; }
+</style>
+</head>
+<body>
+  <form class="card" method="POST" action="/login">
+    <h1>Firstday Analytics</h1>
+    <p class="sub">Enter the shared password to continue.</p>
+    <input type="hidden" name="next" value="${esc(next)}">
+    <label for="pw">Password</label>
+    <input id="pw" name="password" type="password" autocomplete="current-password" autofocus required>
+    <button type="submit">Sign in</button>
+    ${error ? `<div class="err">${esc(error)}</div>` : ''}
+  </form>
+</body>
+</html>`;
+}
+
+// Only ever redirect to a path on this site.
+const safeNext = (v) => (typeof v === 'string' && v.startsWith('/') && !v.startsWith('//')) ? v : '/';
+
+app.get('/login', (req, res) => {
+  if (gateCookieValid(req.cookies?.[GATE_COOKIE])) return res.redirect(safeNext(req.query.next));
+  res.set('Cache-Control', 'no-store').send(loginPage({ next: safeNext(req.query.next) }));
+});
+
+app.post('/login', (req, res) => {
+  const ip = clientIp(req);
+  const rec = gateFails.get(ip);
+  if (rec && rec.until > Date.now()) {
+    return res.status(429).set('Cache-Control', 'no-store')
+      .send(loginPage({ error: 'Too many attempts. Try again in a minute.', next: safeNext(req.body?.next) }));
+  }
+
+  const supplied = String(req.body?.password ?? '');
+  // Compare digests so the comparison is constant-time and length-independent.
+  const a = crypto.createHash('sha256').update(supplied).digest();
+  const b = crypto.createHash('sha256').update(APP_PASSWORD).digest();
+  const ok = APP_PASSWORD !== '' && crypto.timingSafeEqual(a, b);
+
+  if (!ok) {
+    const count = (rec?.count || 0) + 1;
+    gateFails.set(ip, { count, until: count >= LOCKOUT_AFTER ? Date.now() + LOCKOUT_MS : 0 });
+    console.warn(`[gate] failed sign-in from ${ip} (${count})`);
+    // A small delay blunts scripted guessing without annoying a human typo.
+    return setTimeout(() => {
+      res.status(401).set('Cache-Control', 'no-store')
+        .send(loginPage({ error: 'Incorrect password.', next: safeNext(req.body?.next) }));
+    }, 400);
+  }
+
+  gateFails.delete(ip);
+  res.cookie(GATE_COOKIE, gateCookieValue(), {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production' || BASE_URL.startsWith('https'),
+    sameSite: 'lax',
+    maxAge: GATE_MAX_AGE_MS,
+    path: '/',
+  });
+  res.redirect(safeNext(req.body?.next));
+});
+
+app.get('/logout', (req, res) => {
+  res.clearCookie(GATE_COOKIE, { path: '/' });
+  res.redirect('/login');
+});
+
+app.use((req, res, next) => {
+  if (req.path === '/login' || req.path === '/logout') return next();
+  if (isCronRequest(req)) return next();
+  if (gateCookieValid(req.cookies?.[GATE_COOKIE])) return next();
+
+  if (!APP_PASSWORD) {
+    // Deployed with no password configured: refuse rather than silently serve
+    // the whole dashboard to the internet. Locally it just warns and lets you in.
+    if (ON_VERCEL) {
+      return res.status(503).type('text/plain')
+        .send('APP_PASSWORD is not set on this deployment, so the app is closed. Set it in the Vercel project environment variables and redeploy.');
+    }
+    if (!global.__gateWarned) {
+      global.__gateWarned = true;
+      console.warn('[gate] APP_PASSWORD is not set — running WITHOUT a password. Set it before deploying.');
+    }
+    return next();
+  }
+
+  // Fetches should fail loudly as JSON rather than get a login page they'd
+  // try to parse.
+  if (req.path.startsWith('/api/')) {
+    return res.status(401).json({ error: 'Not signed in', login: '/login' });
+  }
+  const next_ = encodeURIComponent(req.originalUrl || '/');
+  res.redirect(`/login?next=${next_}`);
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 function requireAuth(req, res, next) {
