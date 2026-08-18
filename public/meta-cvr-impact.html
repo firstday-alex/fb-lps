@@ -485,7 +485,7 @@
 
     .contrib-header {
       display: grid;
-      grid-template-columns: minmax(260px, 2.2fr) 50px 50px 58px 50px minmax(120px, 1fr) 84px 72px 18px;
+      grid-template-columns: minmax(260px, 2.2fr) 58px 56px 50px 58px 50px 56px minmax(120px, 1fr) 84px 72px 18px;
       gap: 8px;
       padding: 6px 4px;
       font-size: 0.68rem;
@@ -525,7 +525,7 @@
     .source-wrap:last-child { border-bottom: none; }
     .source-row {
       display: grid;
-      grid-template-columns: minmax(260px, 2.2fr) 50px 50px 58px 50px minmax(120px, 1fr) 84px 72px 18px;
+      grid-template-columns: minmax(260px, 2.2fr) 58px 56px 50px 58px 50px 56px minmax(120px, 1fr) 84px 72px 18px;
       align-items: center;
       gap: 8px;
       padding: 11px 4px;
@@ -1578,10 +1578,12 @@
       <p class="card__sub">Each row is one utm_campaign. <strong>CVR Impact</strong> = this campaign's contribution (in pp) to the total blended CVR change for this data pull. Decomposed into: (a) <strong>own CVR effect</strong> — <em>prevShare × ΔCvr</em> (the campaign's own CVR movement, weighted by its baseline traffic share); plus (b) <strong>share-shift effect</strong> — <em>ΔShare × (currCvr − blended avg)</em> (gaining/losing share at a CVR above or below the blended average). Sums across all campaigns to the overall blended ΔCvr. Negative = dragged blended CVR down. So a below-average campaign whose CVR drops <em>and</em> gains share compounds on both terms. <em>Click a column header to sort. Expand a campaign to break it down by landing page or by <strong>ad × landing page</strong> — the ad view shows session and CVR deltas per pair and links each ad to Ads Manager.</em></p>
       <div class="contrib-header">
         <div class="sort-h" data-sort="campaign">Campaign</div>
-        <div class="r sort-h" data-sort="sessions">Sessions</div>
+        <div class="r sort-h" data-sort="sessions" title="Sessions in the current period">Sess</div>
+        <div class="r sort-h" data-sort="sessDelta" title="Change in sessions vs the comparison period (current − previous)">Sess &Delta;</div>
         <div class="r sort-h" data-sort="cvr">CVR</div>
         <div class="r sort-h" data-sort="cvrDelta" title="Campaign's own CVR change in pp (current − previous)">CVR Δ</div>
         <div class="r sort-h" data-sort="txns">Txns</div>
+        <div class="r sort-h" data-sort="txnDelta" title="Change in transactions vs the comparison period (current − previous)">Txn &Delta;</div>
         <div>Impact</div>
         <div class="r sort-h" data-sort="cvrImpact" title="Contribution to blended CVR change (pp). Own CVR effect + share-shift effect. Sums to total blended ΔCvr. Negative = dragged blended CVR down.">CVR Impact ⓘ</div>
         <div class="r">% of ΔCvr</div>
@@ -1741,6 +1743,8 @@ const LP_COLOR       = '#7c3aed';
 const fmtN  = (n, d=0) => isFinite(n) ? n.toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d}) : '—';
 const fmtK  = n => { if (!isFinite(n)) return '—'; if (Math.abs(n) >= 1000) return (n/1000).toFixed(1).replace(/\.0$/,'')+'K'; return String(Math.round(n)); };
 const fmtS  = (n, d=0) => { if(!isFinite(n)) return '—'; return (n>0?'+':'')+fmtN(n,d); };
+// Signed + abbreviated, for the Δ columns: +1.8K / −612 / 0.
+const fmtKS = n => { if (!isFinite(n)) return '—'; const r = Math.round(n); if (r === 0) return '0'; return (r > 0 ? '+' : '−') + fmtK(Math.abs(r)); };
 const fmtP  = (n, d=1) => { if(!isFinite(n)) return '—'; return (n>0?'+':'')+n.toFixed(d)+'%'; };
 const fmtPP = (n, d=2) => { if(!isFinite(n)) return '—'; return (n>0?'+':'')+n.toFixed(d)+'pp'; };
 const cls   = n => n > 0 ? 'pos' : n < 0 ? 'neg' : '';
@@ -2129,13 +2133,15 @@ function render(rawRows, filename) {
   const sortKeyFns = {
     campaign:  g => g.campaign.toLowerCase(),
     sessions:  g => g.currS,
+    sessDelta: g => g.currS - g.prevSess,
     cvr:       g => g.currC,
     cvrDelta:  g => Math.abs(g.deltaCvr),
     txns:      g => g.currS * g.currC,
+    txnDelta:  g => g.txnDelta,
     cvrImpact: g => g.cvrImpact,
   };
   // cvrImpact default 'asc' so the biggest blended-CVR draggers surface at top.
-  const defaultDir = { campaign: 'asc', sessions: 'desc', cvr: 'desc', cvrDelta: 'desc', txns: 'desc', cvrImpact: 'asc' };
+  const defaultDir = { campaign: 'asc', sessions: 'desc', sessDelta: 'desc', cvr: 'desc', cvrDelta: 'desc', txns: 'desc', txnDelta: 'desc', cvrImpact: 'asc' };
   let sortKey = 'cvrImpact';
   let sortDir = 'asc';
 
@@ -2184,9 +2190,11 @@ function render(rawRows, filename) {
           </div>
         </div>
         <div class="contrib-stat"><strong>${esc(fmtK(g.currS))}</strong>sess</div>
+        <div class="contrib-stat ${cls(g.currS - g.prevSess)}" title="Sessions ${fmtN(g.prevSess)} → ${fmtN(g.currS)}${g.prevSess > 0 ? ` (${fmtP((g.currS - g.prevSess) / g.prevSess * 100, 1)})` : ''}"><strong>${fmtKS(g.currS - g.prevSess)}</strong></div>
         <div class="contrib-stat"><strong>${(g.currC*100).toFixed(2)}%</strong>CVR</div>
         <div class="contrib-stat ${cls(g.deltaCvr)}" title="This campaign's own CVR change (${(g.prevCvr*100).toFixed(2)}% → ${(g.currC*100).toFixed(2)}%)"><strong>${fmtPP(g.deltaCvr*100)}</strong></div>
         <div class="contrib-stat"><strong>${esc(fmtK(Math.round(g.currS * g.currC)))}</strong>txns</div>
+        <div class="contrib-stat ${cls(g.txnDelta)}" title="Transactions ${fmtN(Math.round(g.prevSess * g.prevCvr))} → ${fmtN(Math.round(g.currS * g.currC))}${g.prevSess * g.prevCvr > 0 ? ` (${fmtP(g.txnDelta / (g.prevSess * g.prevCvr) * 100, 1)})` : ''}"><strong>${fmtKS(g.txnDelta)}</strong></div>
         <div>
           <div class="contrib-bar-wrap">
             <div class="contrib-bar" style="width:${barPct}%;background:${impactColor}"></div>
