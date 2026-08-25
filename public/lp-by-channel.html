@@ -83,7 +83,7 @@
     }
     tr.totals-row td { font-weight: 700; border-top: 2px solid var(--border); border-bottom: none; background: #f9fafc; }
 
-    /* Ad-name rows expand into that ad's landing pages */
+    /* Rows expand into the next dimension down (see DRILL in the script) */
     .group-hint { font-size: 0.76rem; color: var(--fb-blue); align-self: center; }
     .group-hint .hint-muted { color: var(--text-secondary); margin-left: 8px; }
     .group-hint .hint-warn { color: #8a6d3b; margin-left: 8px; }
@@ -223,17 +223,22 @@ const GROUP_LABEL = { lp: 'Landing page', ad: 'Ad name', campaign: 'Campaign' };
 
 // Rows expand into the next dimension down, fetched on demand and cleared on every
 // fresh load so a drill can never show numbers from a different window or filter set.
-// Two chains, both ending at the landing page:
+// Three chains, one per grouping:
 //
-//   Campaign → Ad name → Landing page
-//   Ad name  → Landing page
+//   Landing page → Campaign  → Ad name
+//   Campaign     → Ad name   → Landing page
+//   Ad name      → Landing page
+//
+// Each bottoms out after two levels — `childDrillable: false` on the last hop is what
+// stops landing page → campaign → ad → landing page from cycling forever.
 //
 // Keyed by the PATH, not the label, because the same ad name legitimately runs under
 // several campaigns. Keying on the label alone would make those rows share one cache
 // entry and show each other's landing pages.
 const DRILL = {
-  campaign: { child: 'ad', childDrillable: true  },
-  ad:       { child: 'lp', childDrillable: false },
+  lp:       { child: 'campaign', childDrillable: true  },
+  campaign: { child: 'ad',       childDrillable: true  },
+  ad:       { child: 'lp',       childDrillable: false },
 };
 // Hard stop on nesting depth, independent of DRILL. The chain happens to bottom out at
 // the landing page anyway, but a bound means adding a dimension can't accidentally make
@@ -448,6 +453,7 @@ async function fetchDrill(path) {
   path.forEach(p => {
     if (p.dim === 'campaign') params.set('campaign_exact', p.label);
     if (p.dim === 'ad') params.set('ad_exact', p.label);
+    if (p.dim === 'lp') params.set('lp_exact', p.label);
   });
   // The table's own free-text filters still apply at any level the path hasn't pinned.
   if (!params.has('campaign_exact') && _data.campaign) params.set('campaign', _data.campaign);
@@ -495,9 +501,12 @@ function renderGroupHint() {
   const el = document.getElementById('group-hint');
   if (!DRILL[_data.group]) { el.innerHTML = ''; return; }
 
-  const chain = _data.group === 'campaign'
-    ? '▶ Click a campaign to break it down by ad name, then an ad to break it down by landing page.'
-    : '▶ Click an ad to break it down by landing page.';
+  const CHAIN_HINT = {
+    lp: '▶ Click a landing page to break it down by campaign, then a campaign to break it down by ad name.',
+    campaign: '▶ Click a campaign to break it down by ad name, then an ad to break it down by landing page.',
+    ad: '▶ Click an ad to break it down by landing page.',
+  };
+  const chain = CHAIN_HINT[_data.group] || '';
   const bits = [chain];
 
   // Report why previews are absent rather than leaving a silent gap. With a per-row

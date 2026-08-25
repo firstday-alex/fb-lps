@@ -1670,6 +1670,10 @@ app.get('/api/lp-by-channel-data', async (req, res) => {
   // drill. CONTAINS would fold "Prospecting" and "Prospecting-Retarget" into one
   // row's children and silently overstate it. Wins over `campaign`.
   const campaignExact = (req.query.campaign_exact || '').trim();
+  // Exact landing_page_path — powers the landing-page row drill, which needs the
+  // campaigns that sent traffic to THAT page. There is no CONTAINS counterpart:
+  // the page has no free-text landing-page filter, only this drill uses it.
+  const lpExact = (req.query.lp_exact || '').trim();
   let limit = parseInt(req.query.limit, 10);
   if (!Number.isFinite(limit) || limit < 1) limit = 50;
   limit = Math.min(limit, 200);
@@ -1695,6 +1699,7 @@ app.get('/api/lp-by-channel-data', async (req, res) => {
   else if (campaign) conds.push(`utm_campaign CONTAINS '${esc(campaign)}'`);
   if (adExact) conds.push(`utm_content = '${esc(adExact)}'`);
   else if (ad) conds.push(`utm_content CONTAINS '${esc(ad)}'`);
+  if (lpExact) conds.push(`landing_page_path = '${esc(lpExact)}'`);
   const whereClause = conds.length ? `\n  WHERE ${conds.join(' AND ')}` : '';
 
   const mainQuery = `FROM sessions
@@ -1842,7 +1847,7 @@ app.get('/api/lp-by-channel-data', async (req, res) => {
 
     res.json({
       start, end, group,
-      channel, campaign, ad, ad_exact: adExact, campaign_exact: campaignExact, limit,
+      channel, campaign, ad, ad_exact: adExact, campaign_exact: campaignExact, lp_exact: lpExact, limit,
       compare: { mode: useCustomCompare ? 'custom' : 'previous_period', start: cs || null, end: ce || null },
       query: mainQuery,
       compare_query: compareQuery,
