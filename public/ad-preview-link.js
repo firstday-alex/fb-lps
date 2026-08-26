@@ -84,6 +84,7 @@
   };
 
   let lookupEnd = null;     // end date of the window the name search covers
+  let chosenAccount = null; // set via setAccount(); beats the ?ad_account= override
 
   const notify = () => { state.listeners.forEach(fn => { try { fn(); } catch {} }); };
 
@@ -151,7 +152,7 @@
     if (!adId) {
       const params = new URLSearchParams({ name });
       if (lookupEnd) params.set('end', lookupEnd);
-      const acctOverride = new URLSearchParams(location.search).get('ad_account');
+      const acctOverride = chosenAccount || new URLSearchParams(location.search).get('ad_account');
       if (acctOverride) params.set('account_id', acctOverride);
       const r = await fetch(`/api/meta-ad-lookup?${params.toString()}`);
       const j = await r.json().catch(() => ({}));
@@ -333,8 +334,34 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install);
   else install();
 
+  // Explicit account selection, for pages that let the operator pick one. The
+  // id cache is keyed by ad NAME only, so ids resolved against a different
+  // account would be served straight back after a switch — changing accounts
+  // therefore drops the caches and the resolution state so every name is looked
+  // up again. Pages that never call this are unaffected; the ?ad_account=
+  // override still works and this takes precedence over it.
+  function setAccount(id) {
+    const next = id ? String(id) : null;
+    if (next === chosenAccount) return false;
+    chosenAccount = next;
+    try { localStorage.removeItem(ID_KEY); localStorage.removeItem(PREV_KEY); } catch {}
+    state.queue.length = 0;
+    state.seen.clear();
+    state.attempts.clear();
+    state.terminal.clear();
+    state.resolved = 0;
+    state.failed = 0;
+    state.authFailed = false;
+    state.lastError = null;
+    state.accountId = next;
+    notify();
+    return true;
+  }
+
   window.AdLink = {
     state,
+    setAccount,
+    getAccount() { return chosenAccount; },
     setLookupEnd(d) { lookupEnd = d || null; },
     enqueue,
     cellHtml,

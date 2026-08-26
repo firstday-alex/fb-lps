@@ -4236,6 +4236,123 @@ function makeCvrBriefReducer({ label, dims }) {
   };
 }
 
+// ── Meta only: drill the biggest-moving campaigns down to ad × landing page ──
+//
+// The campaign roll-up says a campaign lost 54 transactions; it does not say
+// which creative did it. Meta is the one tab where that next level is both
+// available and actionable — Shopify records the ad name in `utm_content`, and
+// an ad name can be resolved to a creative preview.
+//
+// Lazily, one query per campaign, reusing /api/meta-campaign-ad-lp-data
+// (`WHERE utm_campaign = '…'` GROUP BY utm_content, landing_page_path, ~150
+// rows). Grouping campaign × ad × LP account-wide would blow ShopifyQL's row
+// cap — see the row-cap notes on the other endpoints.
+//
+// Ads are ranked by ABSOLUTE transaction move, so a campaign's offsetting
+// winner shows up next to its losers rather than being filtered out: inside one
+// campaign "which creative moved, and which way" is the question. That is the
+// opposite choice from the campaign-level `drivers` list, which is filtered to
+// the parent's direction on purpose.
+async function enrichMetaAdDrill(brief, { base, headers, start, end, extraParams }) {
+  const groups = [
+    ...(brief.biggest_decreases || []).map(g => ({ g, direction: 'decrease' })),
+    ...(brief.biggest_increases || []).map(g => ({ g, direction: 'increase' })),
+  ].filter(x => x.g && x.g.entity && x.g.entity !== '(none)');
+  if (!groups.length) return null;
+
+  const r2 = (n) => (n == null ? null : Math.round(n * 100) / 100);
+  const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
+
+  const one = async ({ g, direction }) => {
+    const params = new URLSearchParams({ start, end, campaign: g.entity });
+    for (const [k, v] of Object.entries(extraParams || {})) params.set(k, String(v));
+    const r = await fetch(`${base}/api/meta-campaign-ad-lp-data?${params.toString()}`, { headers });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || `ad drill ${r.status}`);
+
+    const cols = (data.columns || []).map(c => String(c.name || ''));
+    const cell = (row, name) => {
+      if (Array.isArray(row)) { const i = cols.indexOf(name); return i >= 0 ? row[i] : null; }
+      return row ? row[name] : null;
+    };
+    // conversion_rate is a 0-1 fraction; ×100 to match every other figure here.
+    const pct2 = (v) => { const n = num(v); return n == null ? null : Math.round(n * 10000) / 100; };
+
+    const ads = new Map();
+    for (const row of (data.rows || [])) {
+      const ad = String(cell(row, 'utm_content') ?? '').trim() || '(none)';
+      const lp = String(cell(row, 'landing_page_path') ?? '').trim() || '(none)';
+      const sNow = num(cell(row, 'sessions')) || 0;
+      const sPrev = num(cell(row, 'comparison_sessions__previous_period')) || 0;
+      const cNow = pct2(cell(row, 'conversion_rate'));
+      const cPrev = pct2(cell(row, 'comparison_conversion_rate__previous_period'));
+      if (cNow == null && cPrev == null) continue;
+      const volume = (sNow - sPrev) * (cPrev || 0) / 100;
+      const rate = sNow * ((cNow || 0) - (cPrev || 0)) / 100;
+      if (!ads.has(ad)) ads.set(ad, { ad_name: ad, sessions: 0, sessions_prev: 0, txns_now: 0, txns_prev: 0, volume_effect: 0, rate_effect: 0, lps: [] });
+      const a = ads.get(ad);
+      a.sessions += sNow; a.sessions_prev += sPrev;
+      a.txns_now += sNow * (cNow || 0) / 100;
+      a.txns_prev += sPrev * (cPrev || 0) / 100;
+      a.volume_effect += volume; a.rate_effect += rate;
+      a.lps.push({
+        landing_page: lp, sessions: sNow, sessions_prev: sPrev,
+        cvr_pct: cNow, cvr_prev_pct: cPrev,
+        cvr_delta_pts: (cNow != null && cPrev != null) ? r2(cNow - cPrev) : null,
+        txn_delta: r2(sNow * (cNow || 0) / 100 - sPrev * (cPrev || 0) / 100),
+        volume_effect: r2(volume), rate_effect: r2(rate),
+      });
+    }
+
+    const finished = [...ads.values()].map(a => {
+      const cvr = a.sessions > 0 ? (a.txns_now / a.sessions) * 100 : null;
+      const cvrPrev = a.sessions_prev > 0 ? (a.txns_prev / a.sessions_prev) * 100 : null;
+      const txnDelta = r2(a.txns_now - a.txns_prev);
+      return {
+        ad_name: a.ad_name,
+        // An ad with traffic in only one period moved entirely by appearing or
+        // disappearing; a 0.00% CVR cell otherwise reads as missing data.
+        status: a.sessions_prev === 0 ? 'new' : (a.sessions === 0 ? 'retired' : null),
+        direction: txnDelta == null ? null : (txnDelta >= 0 ? 'up' : 'down'),
+        sessions: a.sessions, sessions_prev: a.sessions_prev,
+        sessions_delta: a.sessions - a.sessions_prev,
+        cvr_pct: r2(cvr), cvr_prev_pct: r2(cvrPrev),
+        cvr_delta_pts: (cvr != null && cvrPrev != null) ? r2(cvr - cvrPrev) : null,
+        txn_delta: txnDelta,
+        volume_effect: r2(a.volume_effect), rate_effect: r2(a.rate_effect),
+        led_by: (Math.abs(a.volume_effect) === 0 && Math.abs(a.rate_effect) === 0) ? null
+          : (Math.abs(a.volume_effect) >= Math.abs(a.rate_effect) ? 'traffic' : 'conversion'),
+        landing_pages: a.lps.sort((x, y) => Math.abs((y.txn_delta || 0)) - Math.abs((x.txn_delta || 0))).slice(0, 3),
+      };
+    }).filter(a => a.txn_delta != null)
+      .sort((x, y) => Math.abs(y.txn_delta) - Math.abs(x.txn_delta));
+
+    const shown = finished.slice(0, 3);
+    return {
+      campaign: g.entity,
+      direction,
+      campaign_txn_delta: g.txn_delta,
+      campaign_led_by: g.led_by,
+      ads: shown,
+      // How much of the campaign's move the three named ads actually account
+      // for. Without it "top 3 ads" invites the reading that they ARE the move.
+      ads_in_campaign: finished.length,
+      top3_txn_delta: r2(shown.reduce((t, a) => t + (a.txn_delta || 0), 0)),
+      all_ads_txn_delta: r2(finished.reduce((t, a) => t + (a.txn_delta || 0), 0)),
+      // parseAdLpQL-style gap: rows with an empty utm_content are dropped
+      // upstream, so ad totals sit slightly under the campaign's.
+      truncated: !!data.truncated,
+    };
+  };
+
+  const settled = await Promise.all(groups.map(x =>
+    one(x).catch(err => {
+      console.warn(`[tab-analysis] ad drill failed for '${x.g.entity}':`, err.message);
+      return { campaign: x.g.entity, direction: x.direction, error: err.message, ads: [] };
+    })));
+  return settled;
+}
+
 // Registry of analyzable tabs. Each entry is one existing dashboard endpoint
 // plus the dimensions its rows are keyed by — the reducer is shared.
 //
@@ -4258,6 +4375,9 @@ const ANALYSIS_TABS = {
   'meta-cvr-impact': {
     label: 'CVR · Meta Paid Social',
     endpoint: '/api/meta-cvr-impact-data',
+    // Only Meta drills to creative: it's the tab where utm_content is an ad name
+    // that resolves to a preview.
+    enrich: enrichMetaAdDrill,
     reduce: makeCvrBriefReducer({
       label: 'CVR · Meta Paid Social',
       dims: [{ col: 'utm_campaign', as: 'campaign' }, { col: 'landing_page_path', as: 'landing_page' }],
@@ -4385,11 +4505,17 @@ THE MAIN JOB: for the 3 biggest transaction DECREASES and the 3 biggest INCREASE
 3. Which children drove it — name the top entries in that group's \`drivers\` list with their own numbers. That is the answer to "what was the largest driver", so never skip it. If drivers is empty, say the move was spread across the group rather than concentrated.
 
 Flag small-sample rows. Do not add up the numbers yourself — every figure you need is already in the brief.
+AD-LEVEL DETAIL (Meta only). When the brief carries ad_drilldown, each of the biggest-moving campaigns has been broken down to ad × landing page, with the top 3 ads by absolute transaction move — both directions, because inside one campaign a winner offsetting the losers is part of the story. For every Meta campaign bullet, name those ads with their txn_delta, their volume/rate split, and the landing page underneath that carried it.
+- Ad names run past 100 characters. Quote a SHORT distinguishing fragment (the SKU/date token, e.g. \`SKU-kde#4821c\`), never the whole string. The full names and their creative preview links are in the table on the page.
+- top3_txn_delta vs all_ads_txn_delta says how much of the campaign the three named ads actually explain. When they cover well under the whole move, say the move was spread across the campaign rather than implying those three are the whole story.
+- status "new" means the ad had no traffic in the prior period and "retired" means none in the current one; their whole move is arrival or disappearance, so a null CVR there is not missing data.
+- NEVER write a preview or Ads Manager URL. You do not have any. The page renders links itself from the ad names.
 ${ctxBlock}
 Write GitHub-flavored markdown, no title, in this shape:
 - **Headline** — 2-3 sentences with the actual figures: how sessions and CVR moved overall vs the prior period, how that reads against the 7-day run-rate (\`trailing.vs_run_rate\`), and the net effect on estimated transactions.
 - **Biggest losses** — one bullet per entry in biggest_decreases (up to 3), each answering all three questions above: how much, traffic- or conversion-led with the split, and the named drivers underneath. If empty, say so.
 - **Biggest gains** — same, from biggest_increases.
+- **Ad-level read** (only when ad_drilldown is present) — up to 4 bullets naming the individual ads that moved the biggest campaigns, each with its txn_delta, traffic-vs-conversion split, and landing page. Use short name fragments.
 - **Also worth knowing** — up to 2 bullets for anything the two lists above missed: a CVR collapse on real volume from biggest_cvr_drops, or a session shift from biggest_session_movers that hasn't shown up in transactions yet. Skip the section if it would just repeat what you already said.
 - **Watch next** — 2-3 concrete follow-ups tied to named rows (${dimNames}) and their numbers.
 Keep each bullet to 1-2 lines, but numeric and concrete. Output ONLY the markdown, no preamble.
@@ -4451,6 +4577,7 @@ Write GitHub-flavored markdown, no title, in this shape:
 - **Site-wide** — 2-3 sentences: sessions and CVR vs the prior period AND vs the 7-day run-rate, and the net estimated-transaction effect.
 - **Where it came from** — reconcile using RECONCILIATION: how much of the site-wide transaction move each channel accounts for, and what is left in the residual. Say plainly whether paid explains the move. Name the scope caveat if the residual is doing heavy lifting.
 - **Biggest movers and what drove them** — the 3 largest transaction decreases and the 3 largest increases across the briefs, drawn from their biggest_decreases / biggest_increases. Each bullet must answer: how much (txn_delta, with sessions and CVR), whether it was traffic-led or conversion-led (led_by, quoting volume_effect vs rate_effect — they sum to txn_delta), and WHICH children drove it (name the entries in that group's drivers list with their numbers). A group can shed transactions on falling traffic while its CVR improves — call that out explicitly, it is the most commonly misread case. Say which tab each mover comes from. Never omit the drivers.
+- **Meta ad-level read** (only when the Meta brief carries ad_drilldown) — up to 4 bullets naming the individual ads behind the biggest Meta campaign moves: txn_delta, traffic-vs-conversion split, and the landing page that carried it. Quote a SHORT distinguishing fragment of each ad name (the SKU/date token), never the full 100+ character string, and never write a preview or Ads Manager URL — you have none, and the page renders links itself. Where top3_txn_delta covers well under all_ads_txn_delta, say the move was spread across the campaign rather than down to those three ads.
 - **Anything else worth knowing** — up to 2 bullets the above missed: a CVR collapse on real volume, or a session shift that hasn't reached transactions yet.
 - **Watch next** — 2-3 concrete follow-ups tied to named rows and their numbers.
 Keep bullets to 1-2 lines, numeric and concrete. Output ONLY the markdown, no preamble.
@@ -4554,6 +4681,8 @@ app.get('/api/tab-analysis', async (req, res) => {
         : 'previous_period (prior equal-length window)',
     };
 
+    const cookieHeader = req.headers.cookie ? { cookie: req.headers.cookie } : {};
+
     const fetchBrief = async (cfg) => {
       const params = new URLSearchParams({ start, end });
       for (const k of ['source', 'medium', 'sources', 'compare_start', 'compare_end']) {
@@ -4569,12 +4698,25 @@ app.get('/api/tab-analysis', async (req, res) => {
       // though the user is signed in perfectly well. Same-origin request on
       // behalf of an already-authenticated caller, so their own cookies are
       // exactly the right credentials to present.
-      const r = await fetch(`${base}${cfg.endpoint}?${params.toString()}`, {
-        headers: req.headers.cookie ? { cookie: req.headers.cookie } : {},
-      });
+      const r = await fetch(`${base}${cfg.endpoint}?${params.toString()}`, { headers: cookieHeader });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data.error || `data endpoint ${r.status}`);
-      return cfg.reduce(data, windowInfo);
+      const brief = cfg.reduce(data, windowInfo);
+      // Optional second pass that needs the reduced brief to know what to fetch
+      // (Meta drills its biggest movers down to ad × landing page). Non-fatal:
+      // losing the drill costs detail, not the analysis.
+      if (cfg.enrich) {
+        brief.ad_drilldown = await cfg.enrich(brief, {
+          base, headers: cookieHeader, start, end,
+          extraParams: hasCustomCompare
+            ? { compare_start: req.query.compare_start, compare_end: req.query.compare_end }
+            : {},
+        }).catch(err => {
+          console.warn(`[tab-analysis] enrich failed for '${cfg.endpoint}':`, err.message);
+          return null;
+        });
+      }
+      return brief;
     };
 
     const storedCtx = await readTabContext().catch(() => null);

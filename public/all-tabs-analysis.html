@@ -52,6 +52,27 @@
     pre { background:#0c0e12; border:1px solid var(--line); border-radius:8px; padding:12px; overflow:auto; font-size:.78rem; color:#c7cdda; }
     .err { color:var(--bad); background:#2a1416; border:1px solid #4a2024; padding:12px 14px; border-radius:8px; }
     .spin { color:var(--muted); }
+    .hidden { display:none !important; }
+    .meta-bar { margin-top:14px; background:var(--card); border:1px solid var(--line); border-radius:12px;
+      padding:10px 14px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; font-size:.84rem; }
+    .meta-bar__label { font-size:.72rem; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+    .meta-bar__state { color:var(--muted); }
+    .meta-bar__state.ok { color:var(--good); }
+    .meta-bar__btn { background:var(--accent); color:#fff; text-decoration:none; border-radius:8px; padding:6px 14px; font-weight:600; font-size:.84rem; }
+    /* Ad table: names are ~120 chars, so the name column wraps and everything
+       else stays on one line. */
+    table.ads { width:100%; border-collapse:collapse; margin:4px 0 16px; font-size:.82rem; }
+    table.ads th, table.ads td { padding:6px 8px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }
+    table.ads th { font-size:.66rem; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); font-weight:600; }
+    table.ads td.num, table.ads th.num { text-align:right; white-space:nowrap; }
+    table.ads td.adname { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.72rem;
+      overflow-wrap:anywhere; max-width:460px; color:#c7cdda; }
+    table.ads tr.camp td { background:#0c0e12; font-weight:600; font-size:.8rem; }
+    table.ads .lp { color:var(--muted); font-size:.72rem; }
+    .adrill-preview, .adrill-adsmanager { color:var(--accent); font-size:.72rem; white-space:nowrap; }
+    .adrill-none, .adrill-pending { color:var(--muted); font-size:.72rem; white-space:nowrap; }
+    .adcopy { background:transparent; border:1px solid var(--line); color:var(--muted); border-radius:6px;
+      padding:1px 6px; font-size:.68rem; cursor:pointer; margin-left:6px; }
   </style>
 </head>
 <body>
@@ -92,9 +113,19 @@
       </div>
     </details>
 
+    <!-- Creative previews need Meta, the numbers don't. Kept as its own opt-in
+         strip so an operator who never connects still gets the whole analysis. -->
+    <div class="meta-bar" id="meta-bar">
+      <span class="meta-bar__label">Creative previews</span>
+      <span id="meta-state" class="meta-bar__state">checking…</span>
+      <select id="meta-account" class="hidden"></select>
+      <a id="meta-connect" class="meta-bar__btn hidden" href="/auth/facebook">Connect Meta</a>
+    </div>
+
     <div class="out" id="out"></div>
   </div>
 
+  <script src="/ad-preview-link.js"></script>
   <script>
     const $ = (id) => document.getElementById(id);
     const fmtN = (n) => (n == null || !isFinite(n)) ? '—' : Math.round(n).toLocaleString();
@@ -109,9 +140,12 @@
     }
     function setYesterday() { $('start').value = ydayISO(1); $('end').value = ydayISO(1); }
 
+    // Shared: ad names and campaign names are user-authored strings that land in
+    // markup, so everything interpolated goes through this.
+    const esc = (s) => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
     // Minimal, safe markdown → HTML (bold, headings, bullets, paragraphs).
     function mdToHtml(md) {
-      const esc = (s) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
       const lines = esc(md).split('\n');
       let html = '', inList = false;
       const inline = (s) => s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/`(.+?)`/g, '<code>$1</code>');
@@ -182,6 +216,108 @@
         </tbody></table>`;
     }
 
+    // ── Meta connect + account chooser ──
+    // The analysis itself never needs Meta: it reads Shopify. Only the creative
+    // previews do, because resolving an ad NAME to a preview means asking the
+    // Meta API which ad in which account that name belongs to. So this strip
+    // fails soft — not connected just means no links.
+    const ACCT_KEY = 'tab-analysis:ad-account';
+    let _metaReady = false;
+
+    async function initMeta() {
+      const stateEl = $('meta-state'), sel = $('meta-account'), connect = $('meta-connect');
+      try {
+        const r = await fetch('/api/ad-accounts');
+        if (r.status === 401) {
+          stateEl.textContent = 'not connected — numbers work without it';
+          connect.classList.remove('hidden');
+          return;
+        }
+        const d = await r.json();
+        const accounts = d.accounts || [];
+        if (d.error || !accounts.length) {
+          stateEl.textContent = d.error ? ('Meta error: ' + d.error) : 'no ad accounts on this login';
+          return;
+        }
+        sel.innerHTML = accounts.map(a => `<option value="${esc(a.id)}">${esc(a.name)} (${esc(a.id)})</option>`).join('');
+        // Remembered choice wins, else the first account.
+        let saved = null;
+        try { saved = localStorage.getItem(ACCT_KEY); } catch {}
+        if (saved && accounts.some(a => a.id === saved)) sel.value = saved;
+        sel.classList.remove('hidden');
+        stateEl.textContent = 'connected —';
+        stateEl.classList.add('ok');
+        _metaReady = true;
+        AdLink.setAccount(sel.value);
+        sel.addEventListener('change', () => {
+          try { localStorage.setItem(ACCT_KEY, sel.value); } catch {}
+          // Switching accounts drops AdLink's name→id caches, so anything on
+          // screen has to be re-resolved against the new account.
+          AdLink.setAccount(sel.value);
+          if (_lastAdNames.length) AdLink.enqueue(_lastAdNames);
+        });
+      } catch (e) {
+        stateEl.textContent = 'could not reach Meta — numbers work without it';
+      }
+    }
+
+    // Ad names currently on screen, so an account switch can re-resolve them.
+    let _lastAdNames = [];
+
+    // Meta's ad × landing-page drilldown. Rendered as a table rather than left
+    // to the summary prose: the preview links are real URLs resolved from the
+    // Meta API, and the model must never be in the business of writing URLs.
+    function adTable(drill) {
+      if (!Array.isArray(drill) || !drill.length) return '';
+      _lastAdNames = [];
+      const dirArrow = (d) => d === 'up' ? '▲' : '▼';
+      let body = '';
+      for (const c of drill) {
+        if (c.error) {
+          body += `<tr class="camp"><td colspan="5">${esc(c.campaign)} — ad drill failed: ${esc(c.error)}</td></tr>`;
+          continue;
+        }
+        if (!c.ads || !c.ads.length) continue;
+        // How much of the campaign the three named ads explain — without it,
+        // "top 3 ads" reads as though they were the whole move.
+        const cover = (c.all_ads_txn_delta && c.top3_txn_delta != null)
+          ? ` · top 3 cover ${signed(c.top3_txn_delta)} of ${signed(c.all_ads_txn_delta)} across ${c.ads_in_campaign} ads`
+          : '';
+        body += `<tr class="camp"><td colspan="5">${dirArrow(c.direction === 'increase' ? 'up' : 'down')}
+          ${esc(c.campaign)} <span class="lp">— campaign ${signed(c.campaign_txn_delta)} txns${esc(cover)}</span></td></tr>`;
+        for (const a of c.ads) {
+          _lastAdNames.push(a.ad_name);
+          const lp = (a.landing_pages || [])[0];
+          const tag = a.status ? ` <span class="lp">(${a.status})</span>` : '';
+          body += `<tr>
+            <td class="adname">${esc(a.ad_name)}${tag}
+              ${_metaReady ? AdLink.cellHtml(a.ad_name, { copy: true }) : AdLink.copyHtml(a.ad_name)}
+              ${lp ? `<div class="lp">${esc(lp.landing_page)} · ${signed(lp.txn_delta)} txns</div>` : ''}</td>
+            <td class="num ${cls(a.txn_delta)}">${signed(a.txn_delta)}</td>
+            <td class="num">${signed(a.volume_effect)} / ${signed(a.rate_effect)}<div class="lp">${a.led_by || '—'}</div></td>
+            <td class="num">${fmtN(a.sessions_prev)} → ${fmtN(a.sessions)}</td>
+            <td class="num">${fmtPct(a.cvr_prev_pct)} → ${fmtPct(a.cvr_pct)}</td>
+          </tr>`;
+        }
+      }
+      if (!body) return '';
+      const note = _metaReady ? '' :
+        '<p class="hint">Connect Meta above to turn these ad names into creative preview links.</p>';
+      return `<h3 style="font-size:.95rem;margin:18px 0 6px">Ads behind the biggest Meta campaign moves</h3>
+        ${note}
+        <table class="ads"><thead><tr>
+          <th>Ad</th><th class="num">Txn Δ</th><th class="num">Volume / Rate</th>
+          <th class="num">Sessions</th><th class="num">CVR</th>
+        </tr></thead><tbody>${body}</tbody></table>`;
+    }
+
+    // The drilldown rides on the Meta brief — directly on `brief` for a
+    // single-tab run, inside `briefs` on the reconciled one.
+    function metaDrill(data) {
+      if (data.briefs && data.briefs['meta-cvr-impact']) return data.briefs['meta-cvr-impact'].ad_drilldown;
+      return data.brief && data.brief.ad_drilldown;
+    }
+
     async function run() {
       const tab = $('tab').value, start = $('start').value, end = $('end').value;
       const out = $('out');
@@ -212,10 +348,14 @@
           ${data.failed_tabs ? `<div class="err">Some tabs failed and are missing from this read: ${Object.entries(data.failed_tabs).map(([k,v]) => k + ' (' + v + ')').join('; ')}</div>` : ''}
           ${reconTable(data.reconciliation)}
           <div class="md">${mdToHtml(data.summary || '')}</div>
+          ${adTable(metaDrill(data))}
           <details><summary>Show the exact numbers Claude was given (grounding)</summary>
             <pre>${JSON.stringify(data.reconciliation ? { reconciliation: data.reconciliation, briefs: data.briefs } : data.brief, null, 2).replace(/</g,'&lt;')}</pre>
           </details>
         </div>`;
+        // Now that the ad names are in the DOM, resolve their previews. AdLink
+        // swaps each link in place as it lands, so no repaint is needed.
+        if (_metaReady && _lastAdNames.length) AdLink.enqueue(_lastAdNames);
       } catch (err) {
         out.innerHTML = `<div class="err">${err.message}</div>`;
       } finally {
@@ -268,6 +408,8 @@
       $('quick-yday').addEventListener('click', setYesterday);
       $('ctx-save').addEventListener('click', saveContext);
       loadContext();
+      // Fire and forget: the analysis must be runnable before this resolves.
+      initMeta();
     })();
   </script>
 <script src="/app-nav.js" defer></script>
