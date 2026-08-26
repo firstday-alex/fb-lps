@@ -2110,6 +2110,19 @@ app.get('/api/aov-impact-data', async (req, res) => {
 // Accepts a comma-separated list ("paid_social,paid") → IN (...), a single
 // value → `=`, and empty / "*" / "all" → no condition on that dimension at all,
 // which is what makes an exact match with a source-only view possible.
+// All paid Meta traffic is ONE bucket. Facebook sessions do not all carry
+// `paid_social`: `paid` is real paid Meta traffic every single day (3,042 of
+// 37,371 facebook sessions on 2026-08-25, ~8%), and scoping to `paid_social`
+// alone both understates Meta and pushes that traffic into whatever "everything
+// else" bucket a caller has — on the cross-tab reconciliation it landed in the
+// residual, which reads as non-paid.
+//
+// This is only the DEFAULT, for callers that don't name a medium (the analysis
+// path). The dashboards pass `medium` explicitly — meta-cvr-impact.html sends
+// `*` — so their numbers are unchanged by it. Organic mediums (`social_profile`,
+// `CommentReply`) stay out: this bucket is paid Meta, not all of Facebook.
+const META_PAID_MEDIUMS = 'paid_social,paid';
+
 function utmScope(sourceParam, mediumParam, defaults) {
   const esc = (v) => String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
   const parse = (raw, fallback) => {
@@ -2147,7 +2160,7 @@ app.get('/api/meta-cvr-impact-data', async (req, res) => {
   const escapeQL = (v) => String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
   // Multi-value scope — see utmScope(). Replaces the old single-value
   // `utm_source = X AND utm_medium = Y` pair so `paid_social,paid` works.
-  const scope = utmScope(req.query.source, req.query.medium, { source: 'facebook', medium: 'paid_social' });
+  const scope = utmScope(req.query.source, req.query.medium, { source: 'facebook', medium: META_PAID_MEDIUMS });
   const source = scope.sources.join(',');
   const medium = scope.mediums.join(',');
 
@@ -2445,7 +2458,7 @@ app.get('/api/meta-ad-lp-data', async (req, res) => {
   const escapeQL = (v) => String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
   // Multi-value scope — see utmScope(). Replaces the old single-value
   // `utm_source = X AND utm_medium = Y` pair so `paid_social,paid` works.
-  const scope = utmScope(req.query.source, req.query.medium, { source: 'facebook', medium: 'paid_social' });
+  const scope = utmScope(req.query.source, req.query.medium, { source: 'facebook', medium: META_PAID_MEDIUMS });
   const source = scope.sources.join(',');
   const medium = scope.mediums.join(',');
 
@@ -2520,7 +2533,7 @@ app.get('/api/meta-campaign-ad-lp-data', async (req, res) => {
   const escapeQL = (v) => String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
   // Multi-value scope — see utmScope(). Replaces the old single-value
   // `utm_source = X AND utm_medium = Y` pair so `paid_social,paid` works.
-  const scope = utmScope(req.query.source, req.query.medium, { source: 'facebook', medium: 'paid_social' });
+  const scope = utmScope(req.query.source, req.query.medium, { source: 'facebook', medium: META_PAID_MEDIUMS });
   const source = scope.sources.join(',');
   const medium = scope.mediums.join(',');
   const campQL   = escapeQL(campaign);
@@ -2677,7 +2690,7 @@ app.get('/api/meta-lp-ad-data', async (req, res) => {
   }
 
   const escapeQL = (v) => String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-  const scope = utmScope(req.query.source, req.query.medium, { source: 'facebook', medium: 'paid_social' });
+  const scope = utmScope(req.query.source, req.query.medium, { source: 'facebook', medium: META_PAID_MEDIUMS });
   const source = scope.sources.join(',');
   const medium = scope.mediums.join(',');
   const lpQL = escapeQL(lp);
@@ -4177,10 +4190,11 @@ const ANALYSIS_TABS = {
 // arithmetic, not narration. Computing it here keeps the numbers deterministic
 // and leaves the model only the job of describing them.
 //
-// The residual is everything the two channel tabs don't cover. That is NOT
-// "non-paid": the Meta tab is scoped to facebook/paid_social, so facebook/paid
-// (about 8% of facebook sessions on 2026-08-25) falls into the residual too.
-// Stated explicitly below because a reader would otherwise take the residual for
+// The residual is everything the two channel tabs don't cover, and it is still
+// NOT "non-paid" — it holds every other paid source (applovin, axon, attentive,
+// impact, ...) alongside organic and direct. It no longer hides paid Meta
+// traffic: the Meta scope covers paid_social AND paid (see META_PAID_MEDIUMS).
+// Said explicitly below because a reader would otherwise take the residual for
 // organic and reach the wrong conclusion.
 function buildCrossTabReconciliation(briefs) {
   const site = briefs['conversion-impact'];
@@ -4232,7 +4246,7 @@ function buildCrossTabReconciliation(briefs) {
       share_of_site_sessions_pct: (o.sessions_now)
         ? r2((o.sessions_now - coveredSessions) / o.sessions_now * 100) : null,
     },
-    notes: 'site = ALL traffic (conversion-impact). channels are disjoint subsets of it. residual = site minus those channels: everything the two channel tabs do not cover. residual is NOT organic/non-paid — the Meta tab is scoped to facebook/paid_social, so facebook/paid sessions (~8% of facebook traffic) sit in the residual, as does every other paid and unpaid source. est_transactions figures are sessions × CVR and are estimates, so the channel deltas and the residual will not sum exactly. share_of_site_txn_delta_pct is signed: over 100% means the channel moved further than the site did, and a negative value means it moved against the site.',
+    notes: 'site = ALL traffic (conversion-impact). channels are disjoint subsets of it. residual = site minus those channels: everything the two channel tabs do not cover. residual is NOT organic/non-paid — it holds every other paid source (applovin, axon, attentive, impact and the rest) as well as organic and direct traffic. The Meta scope covers facebook paid_social AND paid, so paid Meta traffic is fully inside the Meta channel and not in the residual. est_transactions figures are sessions × CVR and are estimates, so the channel deltas and the residual will not sum exactly. share_of_site_txn_delta_pct is signed: over 100% means the channel moved further than the site did, and a negative value means it moved against the site.',
   };
 }
 
@@ -4322,7 +4336,7 @@ CRITICAL RULE: use ONLY numbers present in the JSON below. Never invent, estimat
 HOW THE THREE FIT TOGETHER:
 - "CVR · All traffic" is the top line: every session on the site.
 - "CVR · Meta Paid Social" and "CVR · Google family" are disjoint subsets of it.
-- RECONCILIATION.residual is everything those two do not cover. It is NOT organic — the Meta tab covers facebook/paid_social only, so facebook/paid sits in the residual. Never call the residual "organic" or "non-paid".
+- RECONCILIATION.residual is everything those two do not cover: every other paid source (applovin, axon, attentive, impact, ...) plus organic and direct. Never call it "organic" or "non-paid" — say "everything else" or name what the channels cover. Paid Meta traffic is NOT in there: the Meta scope covers facebook paid_social and paid together.
 
 HOW TO READ A BRIEF:
 - cvr_pct / cvr_prev_pct are conversion rates (%); cvr_delta_pts is the percentage-POINT change.
@@ -4443,8 +4457,17 @@ app.get('/api/tab-analysis', requireAuth, async (req, res) => {
       // Registry-pinned params (e.g. a leaner response shape) — applied last so a
       // tab's own requirements can't be overridden by a caller's query string.
       for (const [k, v] of Object.entries(cfg.params || {})) params.set(k, String(v));
-      const r = await fetch(`${base}${cfg.endpoint}?${params.toString()}`);
-      const data = await r.json();
+      // Forward the caller's cookies. This is a server-to-server call, so it
+      // carries no browser cookies of its own — and every route now sits behind
+      // the shared password gate, which answers an uncookied /api/ request with
+      // "Not signed in". Without this the analysis fails on every tab even
+      // though the user is signed in perfectly well. Same-origin request on
+      // behalf of an already-authenticated caller, so their own cookies are
+      // exactly the right credentials to present.
+      const r = await fetch(`${base}${cfg.endpoint}?${params.toString()}`, {
+        headers: req.headers.cookie ? { cookie: req.headers.cookie } : {},
+      });
+      const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data.error || `data endpoint ${r.status}`);
       return cfg.reduce(data, windowInfo);
     };

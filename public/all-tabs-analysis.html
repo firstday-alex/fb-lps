@@ -178,7 +178,7 @@
           ${row('<b>Site — all traffic</b>', r.site.sessions_now, 100, r.site.est_transactions_delta, 100, '')}
           ${chans.join('')}
           ${row('Residual — everything else', r.residual.sessions_now, r.residual.share_of_site_sessions_pct, r.residual.est_transactions_delta, null,
-                'not organic: excludes facebook/paid, which the Meta tab does not cover')}
+                'everything the channels above do not cover — other paid sources, organic and direct. Not \'organic\': paid Meta is fully inside the Meta row.')}
         </tbody></table>`;
     }
 
