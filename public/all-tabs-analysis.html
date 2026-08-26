@@ -191,8 +191,12 @@
       try {
         const params = new URLSearchParams({ tab, start, end });
         const resp = await fetch('/api/tab-analysis?' + params.toString());
+        // The only gate left on this page is the shared app password, so a 401
+        // means the session expired — send them to /login and back here, not to
+        // Facebook (this page never needed it).
         if (resp.status === 401) {
-          out.innerHTML = '<div class="err">Not logged in. <a href="/auth/facebook" style="color:#9cc0ff">Log in with Facebook</a>, then run again.</div>';
+          const back = encodeURIComponent(location.pathname + location.search);
+          out.innerHTML = `<div class="err">Session expired. <a href="/login?next=${back}" style="color:#9cc0ff">Sign in</a>, then run again.</div>`;
           return;
         }
         const data = await resp.json();
@@ -222,7 +226,7 @@
     async function loadContext() {
       try {
         const resp = await fetch('/api/tab-analysis-context');
-        if (!resp.ok) return; // 401 (not logged in) etc — leave empty quietly
+        if (!resp.ok) return; // 401 (expired session) etc — leave empty quietly
         const d = await resp.json();
         $('ctx-text').value = d.text || '';
         if (d.text && d.text.trim()) {

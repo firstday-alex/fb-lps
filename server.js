@@ -4397,7 +4397,13 @@ async function writeTabContext(data) {
   return { label: TAB_CTX_FILE };
 }
 
-app.get('/api/tab-analysis-context', requireAuth, async (req, res) => {
+// Auth: the shared password gate (see the app.use gate above) is the boundary
+// for these three routes. They previously also required a Facebook login, which
+// was the right call when the app had no gate of its own — but none of them
+// touches the Meta API (they read Shopify and call Claude) and none reads
+// req.accessToken, so that login was pure friction: a signed-in operator got a
+// 401 on a page that never needed Facebook.
+app.get('/api/tab-analysis-context', async (req, res) => {
   try {
     const s = await readTabContext();
     res.json({
@@ -4410,7 +4416,7 @@ app.get('/api/tab-analysis-context', requireAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.post('/api/tab-analysis-context', requireAuth, async (req, res) => {
+app.post('/api/tab-analysis-context', async (req, res) => {
   const text = String((req.body && req.body.text) || '').slice(0, 4000);
   const record = {
     text,
@@ -4424,7 +4430,7 @@ app.post('/api/tab-analysis-context', requireAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.get('/api/tab-analysis', requireAuth, async (req, res) => {
+app.get('/api/tab-analysis', async (req, res) => {
   const tabKey = String(req.query.tab || 'meta-cvr-impact');
   // `tab=all` runs every registered tab and reconciles them in one Claude call.
   const isAll = tabKey === 'all';
