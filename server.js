@@ -1318,8 +1318,27 @@ VISUALIZE conversion_rate TYPE table`;
   COMPARE TO previous_period
   ORDER BY sessions DESC
   LIMIT ${BRIEF_ROW_LIMIT}`;
+    // Trailing 7-day baseline, grouped at SOURCE grain rather than reusing the
+    // brief's source × LP dimensions: `WITH TOTALS` is computed over the full
+    // dataset whatever the grouping, so a low-cardinality query gives the exact
+    // same totals for a fraction of the payload — the same trick
+    // /api/google-cvr-impact-data already uses for its KPI baselines. The window
+    // ENDS on the analysed end date and so includes it; the reducer nets the
+    // analysed window back out arithmetically.
+    const briefTrailingQuery = `FROM sessions
+  SHOW sessions, conversion_rate
+  GROUP BY utm_source WITH TOTALS
+  SINCE ${shiftDate(end, -6)} UNTIL ${end}
+  ORDER BY sessions DESC`;
     try {
-      const t = await runQuery(briefQuery);
+      const [t, trail7] = await Promise.all([
+        runQuery(briefQuery),
+        // Non-fatal: losing the baseline costs the trend anchor, not the brief.
+        runQuery(briefTrailingQuery).catch(e => {
+          console.warn('[conversion-impact-data] shape=brief trailing query failed:', e.message);
+          return null;
+        }),
+      ]);
       const rows = t.rows || [];
       // A full result AT the cap means rows were still dropped; say so rather
       // than letting a truncated set read as complete.
@@ -1333,6 +1352,11 @@ VISUALIZE conversion_rate TYPE table`;
         rows,
         row_cap: BRIEF_ROW_LIMIT,
         truncated: rows.length >= BRIEF_ROW_LIMIT,
+        // Same key and shape the other two dashboards use, so the shared reducer
+        // reads a trailing baseline the same way for every tab.
+        avg7d: trail7
+          ? { window: { start: shiftDate(end, -6), end, days: 7 }, columns: trail7.columns, rows: trail7.rows }
+          : null,
       });
     } catch (err) {
       console.error('[conversion-impact-data] shape=brief error:', err);
@@ -3970,7 +3994,91 @@ function makeCvrBriefReducer({ label, dims }) {
       });
     }
 
-    const bySessions = [...detail].filter(d => d.sessions != null).sort((a, b) => b.sessions - a.sessions);
+      // ── Trend anchor: the analysed window vs its trailing 7-day run-rate ──
+    //
+    // A single day compared only against the day before is mostly day-of-week
+    // noise. All three dashboards already return `avg7d` with full-dataset
+    // `__totals`, so the baseline costs nothing extra.
+    //
+    // That window ENDS on the analysed end date, so it CONTAINS the window being
+    // judged — a day sitting inside its own baseline dampens its own deviation.
+    // We net it back out arithmetically, which is exact rather than approximate:
+    // sessions are additive across days, and so are converted sessions
+    // (sessions × CVR), so the excluded baseline is
+    //   sessions_ex = sessions_7d − sessions_now
+    //   cvr_ex      = (sessions_7d×cvr_7d − sessions_now×cvr_now) / sessions_ex
+    // Verified against a directly-queried 6-day window: sessions matched exactly
+    // and CVR to floating-point precision. This also matches the daily brief's
+    // convention of baselining on the days BEFORE the subject day.
+    //
+    // Sessions compare as a PER-DAY rate, never totals — the analysed window can
+    // be any length.
+    const daysInclusive = (a, b) => {
+      if (!a || !b) return null;
+      const d = Math.round((new Date(b + 'T00:00:00Z') - new Date(a + 'T00:00:00Z')) / 86400000) + 1;
+      return Number.isFinite(d) && d > 0 ? d : null;
+    };
+    const trailing = (() => {
+      const a7 = data && data.avg7d;
+      const t0 = a7 && Array.isArray(a7.rows) ? a7.rows[0] : null;
+      if (!t0 || !a7.window) return null;
+      const tCols = (a7.columns || []).map(c => String(c.name || ''));
+      const tCell = (name) => {
+        if (Array.isArray(t0)) { const i = tCols.findIndex(c => c.toLowerCase() === name); return i >= 0 ? t0[i] : null; }
+        const k = tCols.find(c => c.toLowerCase() === name);
+        return k != null ? t0[k] : null;
+      };
+      const tSessions = num(tCell('sessions__totals'));
+      const tCvr = pct2(tCell('conversion_rate__totals'));
+      const tDays = a7.window.days || daysInclusive(a7.window.start, a7.window.end);
+      if (tSessions == null || tCvr == null || !tDays) return null;
+
+      const out = {
+        window: { start: a7.window.start, end: a7.window.end, days: tDays },
+        includes_analysed_window: a7.window.end === windowInfo.end,
+        sessions_per_day: r2(tSessions / tDays),
+        cvr_pct: tCvr,
+      };
+
+      // Net the analysed window out, but only when it really is the tail of the
+      // trailing window and something is left to compare against.
+      const aDays = daysInclusive(windowInfo.start, windowInfo.end);
+      const exDays = (out.includes_analysed_window && aDays) ? tDays - aDays : null;
+      if (exDays && exDays > 0 && sessionsNow != null && cvrNow != null && tSessions > sessionsNow) {
+        const exSessions = tSessions - sessionsNow;
+        const exCvr = ((tSessions * tCvr) - (sessionsNow * cvrNow)) / exSessions;
+        out.excluding_analysed_window = {
+          days: exDays,
+          window: { start: a7.window.start, end: shiftDate(windowInfo.start, -1) },
+          sessions_per_day: r2(exSessions / exDays),
+          cvr_pct: r2(exCvr),
+        };
+      }
+
+      // When the analysed window covers the whole trailing window there is no
+      // independent baseline left — comparing it to itself yields a flat 0%,
+      // which reads like "no change" when it actually means "no test". Say that
+      // instead of emitting a number.
+      if (out.includes_analysed_window && aDays && aDays >= tDays) {
+        out.vs_run_rate = { unavailable: 'the analysed window IS the trailing window, so there is no independent run-rate to compare against' };
+        return out;
+      }
+
+      // Compare against the excluded baseline when we have one — it is the
+      // honest test — and fall back to the raw trailing window otherwise.
+      const base = out.excluding_analysed_window || out;
+      const nowPerDay = (sessionsNow != null && aDays) ? sessionsNow / aDays : null;
+      out.vs_run_rate = {
+        baseline_excludes_analysed_window: !!out.excluding_analysed_window,
+        sessions_per_day_now: nowPerDay == null ? null : r2(nowPerDay),
+        sessions_per_day_pct_change: (nowPerDay != null && base.sessions_per_day)
+          ? r2((nowPerDay / base.sessions_per_day - 1) * 100) : null,
+        cvr_delta_pts: (cvrNow != null && base.cvr_pct != null) ? r2(cvrNow - base.cvr_pct) : null,
+      };
+      return out;
+    })();
+
+  const bySessions = [...detail].filter(d => d.sessions != null).sort((a, b) => b.sessions - a.sessions);
     // Rank CVR movers by session-weighted impact (transactions gained/lost), not
     // raw pp, so meaningful-volume moves surface ahead of small-sample noise.
     // Keep a light >=30-session floor to drop pure noise entirely.
@@ -3996,6 +4104,10 @@ function makeCvrBriefReducer({ label, dims }) {
         est_transactions_prev: txnsPrev,
         est_transactions_delta: (txnsNow != null && txnsPrev != null) ? txnsNow - txnsPrev : null,
       },
+      // The trend anchor sits directly under `overall` because it reframes it:
+      // a move that reverses against the run-rate is a different story from one
+      // the run-rate confirms.
+      trailing: trailing,
       top_by_sessions: bySessions.slice(0, 8),
       biggest_cvr_drops: cvrDrops,
       biggest_cvr_gains: cvrGains,
@@ -4012,7 +4124,7 @@ function makeCvrBriefReducer({ label, dims }) {
       notes: `Rows are identified by ${dims.map(d => d.as).join(' × ')}.${
         (data && data.truncated)
           ? ' WARNING: counts.rows_truncated is true — the row set was capped, so it covers the highest-session rows only and the mover lists are NOT exhaustive. Overall figures come from full-dataset totals and remain exact.'
-          : ''} CVR values are percentages. cvr_delta_pts is a percentage-POINT change (this-period% − prior-period%). sessions vs sessions_prev is traffic volume. cvr_impact_txns = estimated transactions gained/lost from that row's CVR change over its current sessions (sessions × cvr_delta_pts ÷ 100) — this is how much the row actually moved the business, so a big pp swing on tiny sessions has small impact. CVR movers are ranked by cvr_impact_txns and exclude rows with <30 sessions.`,
+          : ''} CVR values are percentages. cvr_delta_pts is a percentage-POINT change (this-period% − prior-period%). sessions vs sessions_prev is traffic volume. cvr_impact_txns = estimated transactions gained/lost from that row's CVR change over its current sessions (sessions × cvr_delta_pts ÷ 100) — this is how much the row actually moved the business, so a big pp swing on tiny sessions has small impact. CVR movers are ranked by cvr_impact_txns and exclude rows with <30 sessions. trailing is the 7-day run-rate baseline: trailing.vs_run_rate compares the analysed window against it, and when baseline_excludes_analysed_window is true the analysed days have been netted out of that baseline so the comparison is clean. Sessions are compared as per-day rates because the analysed window can be any length.`,
     };
   };
 }
@@ -4059,6 +4171,71 @@ const ANALYSIS_TABS = {
   },
 };
 
+// Reconcile the three tabs against each other, in code. conversion-impact is the
+// top line (ALL traffic); the other two are disjoint channels inside it, so the
+// question worth answering — "is the site-wide move explained by paid?" — is
+// arithmetic, not narration. Computing it here keeps the numbers deterministic
+// and leaves the model only the job of describing them.
+//
+// The residual is everything the two channel tabs don't cover. That is NOT
+// "non-paid": the Meta tab is scoped to facebook/paid_social, so facebook/paid
+// (about 8% of facebook sessions on 2026-08-25) falls into the residual too.
+// Stated explicitly below because a reader would otherwise take the residual for
+// organic and reach the wrong conclusion.
+function buildCrossTabReconciliation(briefs) {
+  const site = briefs['conversion-impact'];
+  if (!site || !site.overall) return null;
+  const r2 = (n) => (n == null ? null : Math.round(n * 100) / 100);
+  const o = site.overall;
+
+  const channelKeys = Object.keys(briefs).filter(k => k !== 'conversion-impact' && briefs[k] && briefs[k].overall);
+  const channels = channelKeys.map(k => {
+    const b = briefs[k];
+    const c = b.overall;
+    const rr = b.trailing && b.trailing.vs_run_rate;
+    return {
+      tab: k,
+      label: b.tab,
+      scope: b.filter || null,
+      sessions_now: c.sessions_now,
+      share_of_site_sessions_pct: (c.sessions_now != null && o.sessions_now)
+        ? r2(c.sessions_now / o.sessions_now * 100) : null,
+      sessions_pct_change: c.sessions_pct_change,
+      cvr_now_pct: c.cvr_now_pct,
+      cvr_delta_pts: c.cvr_delta_pts,
+      est_transactions_delta: c.est_transactions_delta,
+      // Share of the SITE-WIDE transaction move this channel accounts for. Only
+      // meaningful when the site actually moved, and signed: a channel can move
+      // against the site.
+      share_of_site_txn_delta_pct: (c.est_transactions_delta != null && o.est_transactions_delta)
+        ? r2(c.est_transactions_delta / o.est_transactions_delta * 100) : null,
+      vs_run_rate: rr || null,
+    };
+  });
+
+  const covered = channels.reduce((a, c) => a + (c.est_transactions_delta || 0), 0);
+  const coveredSessions = channels.reduce((a, c) => a + (c.sessions_now || 0), 0);
+
+  return {
+    site: {
+      sessions_now: o.sessions_now,
+      sessions_pct_change: o.sessions_pct_change,
+      cvr_now_pct: o.cvr_now_pct,
+      cvr_delta_pts: o.cvr_delta_pts,
+      est_transactions_delta: o.est_transactions_delta,
+      vs_run_rate: (site.trailing && site.trailing.vs_run_rate) || null,
+    },
+    channels,
+    residual: {
+      est_transactions_delta: (o.est_transactions_delta != null) ? r2(o.est_transactions_delta - covered) : null,
+      sessions_now: (o.sessions_now != null) ? o.sessions_now - coveredSessions : null,
+      share_of_site_sessions_pct: (o.sessions_now)
+        ? r2((o.sessions_now - coveredSessions) / o.sessions_now * 100) : null,
+    },
+    notes: 'site = ALL traffic (conversion-impact). channels are disjoint subsets of it. residual = site minus those channels: everything the two channel tabs do not cover. residual is NOT organic/non-paid — the Meta tab is scoped to facebook/paid_social, so facebook/paid sessions (~8% of facebook traffic) sit in the residual, as does every other paid and unpaid source. est_transactions figures are sessions × CVR and are estimates, so the channel deltas and the residual will not sum exactly. share_of_site_txn_delta_pct is signed: over 100% means the channel moved further than the site did, and a negative value means it moved against the site.',
+  };
+}
+
 // Grounded per-tab summary — mirrors callClaudeForNarrative's "use ONLY these
 // numbers" contract, kept separate so the daily-report path is untouched.
 async function callClaudeForTabSummary(tabLabel, brief, operatorContext) {
@@ -4084,13 +4261,20 @@ HOW TO READ THE BRIEF:
 - sessions / sessions_prev is traffic volume for that row; sessions_delta is the change.
 - cvr_impact_txns = estimated transactions gained/lost from that row's CVR move (sessions × cvr_delta_pts ÷ 100). This is the real business impact — weight it above raw pp.
 - A large pp swing on small sessions (e.g. CVR → 0% on well under ~100 sessions) is usually NOISE — say so and don't over-weight it.
+- \`trailing\` is the 7-day run-rate baseline, and \`trailing.vs_run_rate\` compares the analysed window against it (sessions as a per-day rate, CVR in percentage points). When \`baseline_excludes_analysed_window\` is true the analysed days have been netted out, so it is a clean independent comparison. If \`vs_run_rate.unavailable\` is present, there is no baseline — say the trend check wasn't possible rather than inventing one.
+
+WEIGH THE RUN-RATE ABOVE THE PRIOR-PERIOD DELTA. A single day against the day before is mostly day-of-week noise; the run-rate says whether a move is real. Lead the headline with whether the two AGREE:
+- both down → a genuine decline, not a calendar artefact;
+- down vs prior period but flat/up vs run-rate → most likely day-of-week, say so plainly and do not raise an alarm;
+- up vs prior period but down vs run-rate → a weak day that merely followed a weaker one; do not report it as recovery.
+State both figures when they disagree.
 
 Each row in this tab is identified by ${dimNames} — name the row by those fields so it is unambiguous which campaign, source or page you mean.
 
 For EVERY row bullet you MUST include: the CVR move (from% → to%, plus the pp change), the session volume (now vs prior), and the transactions gained/lost (cvr_impact_txns) when notable. Make explicit which figure is CVR and which is sessions. Flag small-sample rows.
 ${ctxBlock}
 Write GitHub-flavored markdown, no title, in this shape:
-- **Headline** — 2-3 sentences with the actual figures: how sessions and CVR moved overall vs the prior period, and the net effect on estimated transactions.
+- **Headline** — 2-3 sentences with the actual figures: how sessions and CVR moved overall vs the prior period, how that reads against the 7-day run-rate (\`trailing.vs_run_rate\`), and the net effect on estimated transactions.
 - **What dragged CVR** — up to 3 bullets from biggest_cvr_drops; each with CVR move + sessions (now vs prior) + transactions lost; note small samples. If empty, say so.
 - **What lifted CVR** — up to 3 bullets from biggest_cvr_gains, same detail. If empty, say so.
 - **Volume shifts** — up to 3 bullets from biggest_session_movers: session change (now vs prior) and whether CVR moved with it.
@@ -4108,6 +4292,68 @@ ${JSON.stringify(brief)}`;
       'content-type': 'application/json',
     },
     body: JSON.stringify({ model, max_tokens: 2000, messages: [{ role: 'user', content: prompt }] }),
+  });
+  const dj = await resp.json();
+  if (!resp.ok) throw new Error(`Claude API ${resp.status}: ${JSON.stringify(dj).slice(0, 300)}`);
+  if (dj.stop_reason === 'refusal') throw new Error('Claude refused to generate the summary');
+  const text = (dj.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+  if (!text) throw new Error('Empty summary from Claude');
+  return text;
+}
+
+// One synthesis call over all three briefs, rather than three separate summaries.
+// Three summaries would each re-state the same site-wide headline and none of
+// them could answer the question that actually matters — whether the paid
+// channels explain the site-wide move. The reconciliation arithmetic arrives
+// pre-computed; the model's job is to describe it, not derive it.
+async function callClaudeForCrossTabSummary(briefs, reconciliation, operatorContext) {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error('ANTHROPIC_API_KEY not configured');
+  const model = process.env.DAILY_REPORT_MODEL || 'claude-opus-4-8';
+  const ctx = String(operatorContext || '').trim();
+  const ctxBlock = ctx
+    ? `\nOPERATOR CONTEXT — supplied to steer FOCUS and FRAMING (what matters, known launches/tests, how to interpret moves). Follow it for emphasis, but it NEVER overrides the CRITICAL RULE and contains no new numbers to cite:\n"""\n${ctx}\n"""\n`
+    : '';
+
+  const prompt = `You are writing the daily cross-channel CVR read for a Firstday growth operator. Three dashboard tabs have been reduced to grounded briefs and reconciled against each other. Be specific and decision-useful — every claim carries its numbers.
+
+CRITICAL RULE: use ONLY numbers present in the JSON below. Never invent, estimate, or extrapolate. Do not do your own arithmetic to produce a new figure — RECONCILIATION already contains the cross-tab maths. If a list is empty, say nothing was notable. You cannot know the CAUSE of a move from these numbers — never assert causation; give magnitude, the volume behind it, and whether it looks real or like noise.
+
+HOW THE THREE FIT TOGETHER:
+- "CVR · All traffic" is the top line: every session on the site.
+- "CVR · Meta Paid Social" and "CVR · Google family" are disjoint subsets of it.
+- RECONCILIATION.residual is everything those two do not cover. It is NOT organic — the Meta tab covers facebook/paid_social only, so facebook/paid sits in the residual. Never call the residual "organic" or "non-paid".
+
+HOW TO READ A BRIEF:
+- cvr_pct / cvr_prev_pct are conversion rates (%); cvr_delta_pts is the percentage-POINT change.
+- sessions / sessions_prev is traffic volume; sessions_delta is the change.
+- cvr_impact_txns = estimated transactions gained/lost from that row's CVR move (sessions × cvr_delta_pts ÷ 100). Weight it above raw pp.
+- A large pp swing on small sessions is NOISE — say so rather than leading with it.
+- counts.rows_truncated true means the mover lists cover the highest-session rows only, NOT everything. Say so rather than implying the list is exhaustive.
+
+WEIGH THE 7-DAY RUN-RATE ABOVE THE PRIOR-PERIOD DELTA. One day against the day before is mostly day-of-week noise; \`trailing.vs_run_rate\` says whether a move is real. Lead with whether the two agree — both down is a genuine decline; down vs prior period but flat/up vs run-rate is a calendar artefact and must not be reported as alarming; up vs prior period but down vs run-rate is a weak day following a weaker one, not a recovery. If \`vs_run_rate.unavailable\` is present, say the trend check was not possible.
+${ctxBlock}
+Write GitHub-flavored markdown, no title, in this shape:
+- **Site-wide** — 2-3 sentences: sessions and CVR vs the prior period AND vs the 7-day run-rate, and the net estimated-transaction effect.
+- **Where it came from** — reconcile using RECONCILIATION: how much of the site-wide transaction move each channel accounts for, and what is left in the residual. Say plainly whether paid explains the move. Name the scope caveat if the residual is doing heavy lifting.
+- **Meta** — 2-3 bullets from the Meta brief's movers: CVR move + sessions (now vs prior) + transactions gained/lost. Flag small samples.
+- **Google** — same, from the Google brief.
+- **All traffic** — up to 2 bullets for anything in the all-traffic brief that neither channel explains.
+- **Watch next** — 2-3 concrete follow-ups tied to named rows and their numbers.
+Keep bullets to 1-2 lines, numeric and concrete. Output ONLY the markdown, no preamble.
+
+RECONCILIATION:
+${reconciliation
+  ? JSON.stringify(reconciliation)
+  : 'UNAVAILABLE — the all-traffic tab did not return, so there is no site-wide top line to reconcile the channels against. Summarise the channel briefs you were given and say explicitly that the site-wide reconciliation could not be produced. Do NOT treat the channels as if they were the whole site.'}
+
+BRIEFS:
+${JSON.stringify(briefs)}`;
+
+  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    body: JSON.stringify({ model, max_tokens: 3000, messages: [{ role: 'user', content: prompt }] }),
   });
   const dj = await resp.json();
   if (!resp.ok) throw new Error(`Claude API ${resp.status}: ${JSON.stringify(dj).slice(0, 300)}`);
@@ -4166,8 +4412,10 @@ app.post('/api/tab-analysis-context', requireAuth, async (req, res) => {
 
 app.get('/api/tab-analysis', requireAuth, async (req, res) => {
   const tabKey = String(req.query.tab || 'meta-cvr-impact');
-  const tab = ANALYSIS_TABS[tabKey];
-  if (!tab) return res.status(400).json({ error: `Unknown tab '${tabKey}'. Known: ${Object.keys(ANALYSIS_TABS).join(', ')}` });
+  // `tab=all` runs every registered tab and reconciles them in one Claude call.
+  const isAll = tabKey === 'all';
+  const tab = isAll ? null : ANALYSIS_TABS[tabKey];
+  if (!isAll && !tab) return res.status(400).json({ error: `Unknown tab '${tabKey}'. Known: all, ${Object.keys(ANALYSIS_TABS).join(', ')}` });
 
   // Default window: yesterday vs day prior.
   const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || '');
@@ -4176,21 +4424,9 @@ app.get('/api/tab-analysis', requireAuth, async (req, res) => {
   const end   = isDate(req.query.end)   ? req.query.end   : yday;
 
   try {
-    // Reuse the EXISTING dashboard endpoint verbatim via an internal call.
+    // Reuse the EXISTING dashboard endpoints verbatim via internal calls.
     const proto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
     const base = `${proto}://${req.get('host')}`;
-    const params = new URLSearchParams({ start, end });
-    for (const k of ['source', 'medium', 'sources', 'compare_start', 'compare_end']) {
-      if (req.query[k]) params.set(k, String(req.query[k]));
-    }
-    // Registry-pinned params (e.g. a leaner response shape) — applied last so a
-    // tab's own requirements can't be overridden by a caller's query string.
-    for (const [k, v] of Object.entries(tab.params || {})) params.set(k, String(v));
-    const dataUrl = `${base}${tab.endpoint}?${params.toString()}`;
-    const r = await fetch(dataUrl);
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.error || `data endpoint ${r.status}`);
-
     const hasCustomCompare = isDate(req.query.compare_start) && isDate(req.query.compare_end);
     const windowInfo = {
       start, end,
@@ -4198,11 +4434,59 @@ app.get('/api/tab-analysis', requireAuth, async (req, res) => {
         ? { start: req.query.compare_start, end: req.query.compare_end }
         : 'previous_period (prior equal-length window)',
     };
-    const brief = tab.reduce(data, windowInfo);
+
+    const fetchBrief = async (cfg) => {
+      const params = new URLSearchParams({ start, end });
+      for (const k of ['source', 'medium', 'sources', 'compare_start', 'compare_end']) {
+        if (req.query[k]) params.set(k, String(req.query[k]));
+      }
+      // Registry-pinned params (e.g. a leaner response shape) — applied last so a
+      // tab's own requirements can't be overridden by a caller's query string.
+      for (const [k, v] of Object.entries(cfg.params || {})) params.set(k, String(v));
+      const r = await fetch(`${base}${cfg.endpoint}?${params.toString()}`);
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || `data endpoint ${r.status}`);
+      return cfg.reduce(data, windowInfo);
+    };
+
     const storedCtx = await readTabContext().catch(() => null);
     const operatorContext = (storedCtx && typeof storedCtx.text === 'string') ? storedCtx.text : '';
+    const modelName = process.env.DAILY_REPORT_MODEL || 'claude-opus-4-8';
+
+    if (isAll) {
+      // In parallel: the tabs are independent, and serially they'd be ~6s of the
+      // 60s budget for no reason. One failing tab must not lose the other two —
+      // the synthesis still reconciles whatever came back, and says what didn't.
+      const keys = Object.keys(ANALYSIS_TABS);
+      const settled = await Promise.all(keys.map(k =>
+        fetchBrief(ANALYSIS_TABS[k])
+          .then(brief => ({ k, brief }))
+          .catch(err => {
+            console.warn(`[tab-analysis] tab '${k}' failed:`, err.message);
+            return { k, error: err.message };
+          })));
+      const briefs = {}, failed = {};
+      for (const r of settled) { if (r.brief) briefs[r.k] = r.brief; else failed[r.k] = r.error; }
+      if (!Object.keys(briefs).length) {
+        throw new Error(`every tab failed — ${Object.entries(failed).map(([k, v]) => `${k}: ${v}`).join('; ')}`);
+      }
+      const reconciliation = buildCrossTabReconciliation(briefs);
+      const summary = await callClaudeForCrossTabSummary(briefs, reconciliation, operatorContext);
+      return res.json({
+        ok: true, tab: 'all', label: 'All three · reconciled', window: windowInfo,
+        // The all-traffic brief also fills the page's KPI strip, which reads
+        // `brief.overall` — the site-wide line is the right headline for a
+        // cross-tab read.
+        brief: briefs['conversion-impact'] || briefs[Object.keys(briefs)[0]],
+        briefs, reconciliation, summary,
+        failed_tabs: Object.keys(failed).length ? failed : undefined,
+        context_applied: !!operatorContext.trim(), model: modelName,
+      });
+    }
+
+    const brief = await fetchBrief(tab);
     const summary = await callClaudeForTabSummary(tab.label, brief, operatorContext);
-    res.json({ ok: true, tab: tabKey, label: tab.label, window: windowInfo, brief, summary, context_applied: !!operatorContext.trim(), model: process.env.DAILY_REPORT_MODEL || 'claude-opus-4-8' });
+    res.json({ ok: true, tab: tabKey, label: tab.label, window: windowInfo, brief, summary, context_applied: !!operatorContext.trim(), model: modelName });
   } catch (err) {
     console.error('[tab-analysis] error:', err);
     res.status(500).json({ error: err.message });

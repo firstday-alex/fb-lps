@@ -34,6 +34,13 @@
     .kpi .v { font-size:1.15rem; font-weight:700; margin-top:2px; }
     .kpi .d { font-size:.78rem; margin-top:1px; }
     .up { color:var(--good); } .down { color:var(--bad); }
+    /* Cross-tab reconciliation: where the site-wide move came from. */
+    table.recon { width:100%; border-collapse:collapse; margin:4px 0 16px; font-size:.85rem; }
+    table.recon th, table.recon td { padding:7px 9px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }
+    table.recon th { font-size:.68rem; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); font-weight:600; }
+    table.recon td.num, table.recon th.num { text-align:right; white-space:nowrap; }
+    table.recon tbody tr:first-child td { font-weight:600; }
+    table.recon .meta { margin:2px 0 0; font-size:.72rem; }
     details { margin-top:8px; } summary { cursor:pointer; color:var(--muted); font-size:.82rem; }
     .ctx { margin-top:14px; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; }
     .ctx > summary { font-size:.9rem; color:var(--ink); font-weight:600; }
@@ -56,8 +63,9 @@
       <div class="field">
         <label>Tab</label>
         <select id="tab">
+          <option value="all" selected>All three · reconciled</option>
           <option value="conversion-impact">CVR · All traffic</option>
-          <option value="meta-cvr-impact" selected>CVR · Meta Paid Social</option>
+          <option value="meta-cvr-impact">CVR · Meta Paid Social</option>
           <option value="google-cvr-impact">CVR · Google family</option>
         </select>
       </div>
@@ -134,6 +142,46 @@
       </div>`;
     }
 
+    // The trend anchor: how the window reads against its 7-day run-rate. Shown
+    // next to the prior-period deltas because the two can disagree, and when
+    // they do the run-rate is the one that says whether a move is real.
+    function runRateLine(t) {
+      if (!t || !t.vs_run_rate) return '';
+      const v = t.vs_run_rate;
+      if (v.unavailable) return `<div class="meta">vs 7-day run-rate: not available — ${v.unavailable}</div>`;
+      const base = v.baseline_excludes_analysed_window
+        ? `${t.excluding_analysed_window.days}-day run-rate to ${t.excluding_analysed_window.window.end}`
+        : `${t.window.days}-day window (overlaps this one)`;
+      return `<div class="meta">vs ${base}: sessions
+        <b class="${cls(v.sessions_per_day_pct_change)}">${signed(v.sessions_per_day_pct_change,'%')}</b>/day
+        &nbsp;·&nbsp; CVR <b class="${cls(v.cvr_delta_pts)}">${signed(v.cvr_delta_pts,'pp')}</b></div>`;
+    }
+
+    // Where the site-wide transaction move came from. Server-computed — this
+    // only formats it.
+    function reconTable(r) {
+      if (!r) return '';
+      const row = (label, sess, sharePct, txn, txnShare, scopeNote) => `<tr>
+        <td>${label}${scopeNote ? `<div class="meta">${scopeNote}</div>` : ''}</td>
+        <td class="num">${fmtN(sess)}</td>
+        <td class="num">${sharePct == null ? '—' : sharePct.toFixed(1) + '%'}</td>
+        <td class="num ${cls(txn)}">${signed(txn)}</td>
+        <td class="num">${txnShare == null ? '—' : txnShare.toFixed(0) + '%'}</td>
+      </tr>`;
+      const chans = (r.channels || []).map(c => row(
+        c.label, c.sessions_now, c.share_of_site_sessions_pct,
+        c.est_transactions_delta, c.share_of_site_txn_delta_pct,
+        c.scope ? ('scope: ' + (c.scope.scope || (c.scope.sources || []).join(', '))) : ''));
+      return `<table class="recon">
+        <thead><tr><th>Segment</th><th class="num">Sessions</th><th class="num">Share of site</th><th class="num">Est. txn Δ</th><th class="num">Share of site Δ</th></tr></thead>
+        <tbody>
+          ${row('<b>Site — all traffic</b>', r.site.sessions_now, 100, r.site.est_transactions_delta, 100, '')}
+          ${chans.join('')}
+          ${row('Residual — everything else', r.residual.sessions_now, r.residual.share_of_site_sessions_pct, r.residual.est_transactions_delta, null,
+                'not organic: excludes facebook/paid, which the Meta tab does not cover')}
+        </tbody></table>`;
+    }
+
     async function run() {
       const tab = $('tab').value, start = $('start').value, end = $('end').value;
       const out = $('out');
@@ -156,9 +204,12 @@
           <h2>${data.label}${ctxPill}</h2>
           <div class="meta">${w.start} → ${w.end} &nbsp;·&nbsp; compared to ${cmp} &nbsp;·&nbsp; ${data.model}</div>
           ${kpiRow(data.brief && data.brief.overall)}
+          ${runRateLine(data.brief && data.brief.trailing)}
+          ${data.failed_tabs ? `<div class="err">Some tabs failed and are missing from this read: ${Object.entries(data.failed_tabs).map(([k,v]) => k + ' (' + v + ')').join('; ')}</div>` : ''}
+          ${reconTable(data.reconciliation)}
           <div class="md">${mdToHtml(data.summary || '')}</div>
           <details><summary>Show the exact numbers Claude was given (grounding)</summary>
-            <pre>${JSON.stringify(data.brief, null, 2).replace(/</g,'&lt;')}</pre>
+            <pre>${JSON.stringify(data.reconciliation ? { reconciliation: data.reconciliation, briefs: data.briefs } : data.brief, null, 2).replace(/</g,'&lt;')}</pre>
           </details>
         </div>`;
       } catch (err) {
