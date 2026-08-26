@@ -1230,6 +1230,25 @@ app.get('/api/conversion-impact-data', async (req, res) => {
   // selected range vs previous period. Grouping by LP here is what lets the
   // frontend dice each source down to landing pages (aggregateByLp); the source
   // and channel views roll these rows back up via aggregateBySource/aggregate.
+  // ShopifyQL truncates at 1000 rows with no error or flag, and `utm_source ×
+  // landing_page_path` over ALL traffic blows that cap on a SINGLE day: measured
+  // 2026-08-25, the real result is ~4,100 rows, so the default returns under a
+  // quarter of them, biased toward rows with the most CURRENT sessions (that day
+  // it covered 97.85% of current sessions but only 96.63% of previous ones).
+  //
+  // The dashboard queries below deliberately do NOT lift that cap. This endpoint
+  // returns 38 columns per row, so the full 4126 rows serialise to ~11.8MB —
+  // past Vercel's 4.5MB function response limit, which would take the dashboard
+  // down entirely. Truncation is survivable HERE because the page renders a
+  // ranked head and reads its KPIs from the `__totals` columns, which ShopifyQL
+  // computes over the full dataset regardless of the cap.
+  //
+  // Analysis needs every row, so `?shape=brief` (below) serves it from a lean
+  // two-metric query: the same ~4,100 rows cost 2.8MB there instead of 11.8MB,
+  // which fits. That leaves little headroom, so the brief shape caps at 5000
+  // rows and flags when it hits the cap rather than pretending to be complete
+  // (a 7-day window already does — measured 3.4MB at the cap).
+
   const mainQuery = `FROM sessions
   SHOW sessions, conversion_rate, average_session_duration, sessions_with_cart_additions, sessions_that_reached_checkout, sessions_that_reached_and_completed_checkout
   GROUP BY utm_source, landing_page_path WITH TOTALS, PERCENT_CHANGE
@@ -1283,6 +1302,43 @@ VISUALIZE conversion_rate TYPE table`;
     if (!payload?.tableData) throw new Error('No data returned from Shopify');
     return payload.tableData;
   };
+
+  // Analysis shape: same dimensions and comparison as the dashboard query, but
+  // only the two metrics a brief actually reads, and with the row cap lifted.
+  // Dropping 36 unused columns is what buys the complete row set inside the
+  // response-size budget; skipping the correlation and trailing queries also
+  // takes this path from five Shopify round-trips to one, which matters when
+  // three tabs are analysed in a single request.
+  if (String(req.query.shape || '') === 'brief') {
+    const BRIEF_ROW_LIMIT = 5000;
+    const briefQuery = `FROM sessions
+  SHOW sessions, conversion_rate
+  GROUP BY utm_source, landing_page_path WITH TOTALS, PERCENT_CHANGE
+  SINCE ${start} UNTIL ${end}
+  COMPARE TO previous_period
+  ORDER BY sessions DESC
+  LIMIT ${BRIEF_ROW_LIMIT}`;
+    try {
+      const t = await runQuery(briefQuery);
+      const rows = t.rows || [];
+      // A full result AT the cap means rows were still dropped; say so rather
+      // than letting a truncated set read as complete.
+      if (rows.length >= BRIEF_ROW_LIMIT) {
+        console.warn(`[conversion-impact-data] shape=brief hit the ${BRIEF_ROW_LIMIT}-row cap — rows may be truncated`);
+      }
+      return res.json({
+        shape: 'brief',
+        query: briefQuery,
+        columns: t.columns,
+        rows,
+        row_cap: BRIEF_ROW_LIMIT,
+        truncated: rows.length >= BRIEF_ROW_LIMIT,
+      });
+    } catch (err) {
+      console.error('[conversion-impact-data] shape=brief error:', err);
+      return res.status(500).json({ error: err.message, details: err.details });
+    }
+  }
 
   try {
     const [main, correlation, compare, trail7, trail30] = await Promise.all([
@@ -2993,6 +3049,15 @@ app.get('/api/google-cvr-impact-data', async (req, res) => {
     }
   }`;
 
+  // The 4-dim grid is the highest-cardinality query in the app, so it hits
+  // ShopifyQL's silent 1000-row cap on any window wider than a day or two
+  // (~126 rows for one day, but campaign × source × medium × LP compounds fast).
+  // The KPI queries below already route around the cap by grouping at source
+  // grain; this lifts it for the grid itself, so the per-row CVR deltas the
+  // movement table and the analysis brief read are computed over every row
+  // rather than the current-session-heavy head. See /api/meta-cvr-impact-data.
+  const ROW_LIMIT = 5000;
+
   const mainQuery = `FROM sessions
   SHOW sessions, conversion_rate, average_session_duration, sessions_with_cart_additions, sessions_that_reached_checkout, sessions_that_reached_and_completed_checkout
   WHERE ${whereSources}
@@ -3000,6 +3065,7 @@ app.get('/api/google-cvr-impact-data', async (req, res) => {
   SINCE ${start} UNTIL ${end}
   COMPARE TO previous_period
   ORDER BY sessions DESC
+  LIMIT ${ROW_LIMIT}
 VISUALIZE conversion_rate TYPE table`;
 
   const compareQuery = useCustomCompare ? `FROM sessions
@@ -3007,7 +3073,8 @@ VISUALIZE conversion_rate TYPE table`;
   WHERE ${whereSources}
   GROUP BY utm_campaign, utm_source, utm_medium, landing_page_path WITH TOTALS
   SINCE ${cs} UNTIL ${ce}
-  ORDER BY sessions DESC` : null;
+  ORDER BY sessions DESC
+  LIMIT ${ROW_LIMIT}` : null;
 
   // Trailing 7-day window ending on the End date — powers "7d Avg CVR" / "vs 7d".
   const sevenStart = (() => {
@@ -3020,7 +3087,8 @@ VISUALIZE conversion_rate TYPE table`;
   WHERE ${whereSources}
   GROUP BY utm_campaign, utm_source, utm_medium, landing_page_path WITH TOTALS
   SINCE ${sevenStart} UNTIL ${end}
-  ORDER BY sessions DESC`;
+  ORDER BY sessions DESC
+  LIMIT ${ROW_LIMIT}`;
 
   // Low-cardinality per-source totals (one row per source + a grand __totals
   // row). Never truncated, so KPIs stay exact per source-scope even when the
@@ -3823,100 +3891,172 @@ app.get('/api/generate-daily-report', async (req, res) => {
 // day-prior figures. Auth: same DAILY_REPORT_TOKEN gate as the daily report.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Turn the /api/meta-cvr-impact-data response into a compact, grounded brief.
+// Turn a dashboard `-data` response into a compact, grounded brief.
+//
+// All three CVR dashboards return the same ShopifyQL shape — `columns` + `rows`
+// with `WITH TOTALS, PERCENT_CHANGE` — and differ only in which columns form a
+// row's identity:
+//
+//   conversion-impact   utm_source × landing_page_path              (all traffic)
+//   meta-cvr-impact     utm_campaign × landing_page_path            (Meta only)
+//   google-cvr-impact   utm_campaign × utm_source × utm_medium × landing_page_path
+//
+// So this is a factory over that dimension list rather than three near-copies.
+// The valuable part — ranking movers by session-weighted transaction impact
+// instead of raw pp — is worth having exactly one of.
+//
+// `dims` entries are { col, as }: `col` is the ShopifyQL column, `as` is the key
+// it lands under in the brief. Naming them per tab (campaign / source / medium /
+// landing_page) keeps each brief readable to the model instead of emitting a
+// generic dims blob.
+//
 // conversion_rate is a 0-1 fraction in ShopifyQL; we scale ×100 to match the
-// dashboard's "(cvr*100).toFixed(2)%" display. cvr_delta_pts is a
+// dashboards' "(cvr*100).toFixed(2)%" display. cvr_delta_pts is a
 // percentage-POINT change (now% − prev%).
-function reduceMetaCvrBrief(data, windowInfo) {
-  const colNames = (data.columns || []).map(c => String(c.name || ''));
-  const idx = (n) => colNames.findIndex(c => c.toLowerCase() === n);
-  const rows = Array.isArray(data.rows) ? data.rows : [];
-  // Rows can be objects keyed by column name OR positional arrays — handle both.
-  const cell = (row, name) => {
-    if (Array.isArray(row)) { const i = idx(name); return i >= 0 ? row[i] : null; }
-    if (row && typeof row === 'object') {
-      const key = colNames.find(c => c.toLowerCase() === name);
-      return key != null ? row[key] : null;
+function makeCvrBriefReducer({ label, dims }) {
+  return function reduceCvrBrief(data, windowInfo) {
+    const colNames = (data.columns || []).map(c => String(c.name || ''));
+    const idx = (n) => colNames.findIndex(c => c.toLowerCase() === n);
+    const rows = Array.isArray(data.rows) ? data.rows : [];
+    // Rows can be objects keyed by column name OR positional arrays — handle both.
+    const cell = (row, name) => {
+      if (Array.isArray(row)) { const i = idx(name); return i >= 0 ? row[i] : null; }
+      if (row && typeof row === 'object') {
+        const key = colNames.find(c => c.toLowerCase() === name);
+        return key != null ? row[key] : null;
+      }
+      return null;
+    };
+    const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
+    const pct2 = (v) => { const n = num(v); return n == null ? null : Math.round(n * 10000) / 100; }; // fraction→% (2dp)
+    const r2 = (n) => (n == null ? null : Math.round(n * 100) / 100);
+
+    // Grand totals ride on __totals columns of every row — read from row 0.
+    const r0 = rows[0] || [];
+    const sessionsNow  = num(cell(r0, 'sessions__totals'));
+    const sessionsPrev = num(cell(r0, 'comparison_sessions__previous_period__totals'));
+    const cvrNow  = pct2(cell(r0, 'conversion_rate__totals'));
+    const cvrPrev = pct2(cell(r0, 'comparison_conversion_rate__previous_period__totals'));
+    const txnsNow  = (sessionsNow != null && cvrNow  != null) ? Math.round(sessionsNow  * cvrNow  / 100) : null;
+    const txnsPrev = (sessionsPrev != null && cvrPrev != null) ? Math.round(sessionsPrev * cvrPrev / 100) : null;
+
+    // One entry per dimension-tuple row. The totals-only row (every dimension
+    // empty) is skipped; a row with SOME dimensions empty is real traffic —
+    // direct sessions have no utm_source but do have a landing page — so it is
+    // kept and the blank reads as '(none)'.
+    const detail = [];
+    for (const row of rows) {
+      const vals = dims.map(d => String(cell(row, d.col) ?? '').trim());
+      if (vals.every(v => !v)) continue;                // totals-only row
+      const s    = num(cell(row, 'sessions'));
+      const sP   = num(cell(row, 'comparison_sessions__previous_period'));
+      const cvr  = pct2(cell(row, 'conversion_rate'));
+      const cvrP = pct2(cell(row, 'comparison_conversion_rate__previous_period'));
+      const cvrDeltaPts = (cvr != null && cvrP != null) ? r2(cvr - cvrP) : null;
+      const identity = {};
+      dims.forEach((d, i) => { identity[d.as] = vals[i] || '(none)'; });
+      detail.push({
+        ...identity,
+        sessions: s,
+        sessions_prev: sP,
+        sessions_delta: (s != null && sP != null) ? s - sP : null,
+        cvr_pct: cvr,
+        cvr_prev_pct: cvrP,
+        cvr_delta_pts: cvrDeltaPts,
+        // Session-weighted impact: estimated transactions gained/lost from THIS
+        // row's CVR move over its current sessions. Ranking by this keeps
+        // low-volume rows (e.g. 30 sessions swinging to 0%) from dominating.
+        cvr_impact_txns: (s != null && cvrDeltaPts != null) ? r2(s * cvrDeltaPts / 100) : null,
+      });
     }
-    return null;
-  };
-  const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
-  const pct2 = (v) => { const n = num(v); return n == null ? null : Math.round(n * 10000) / 100; }; // fraction→% (2dp)
-  const r2 = (n) => (n == null ? null : Math.round(n * 100) / 100);
 
-  // Grand totals ride on __totals columns of every row — read from row 0.
-  const r0 = rows[0] || [];
-  const sessionsNow  = num(cell(r0, 'sessions__totals'));
-  const sessionsPrev = num(cell(r0, 'comparison_sessions__previous_period__totals'));
-  const cvrNow  = pct2(cell(r0, 'conversion_rate__totals'));
-  const cvrPrev = pct2(cell(r0, 'comparison_conversion_rate__previous_period__totals'));
-  const txnsNow  = (sessionsNow != null && cvrNow  != null) ? Math.round(sessionsNow  * cvrNow  / 100) : null;
-  const txnsPrev = (sessionsPrev != null && cvrPrev != null) ? Math.round(sessionsPrev * cvrPrev / 100) : null;
+    const bySessions = [...detail].filter(d => d.sessions != null).sort((a, b) => b.sessions - a.sessions);
+    // Rank CVR movers by session-weighted impact (transactions gained/lost), not
+    // raw pp, so meaningful-volume moves surface ahead of small-sample noise.
+    // Keep a light >=30-session floor to drop pure noise entirely.
+    const movers = detail.filter(d => d.cvr_impact_txns != null && (d.sessions || 0) >= 30);
+    const cvrDrops = [...movers].sort((a, b) => a.cvr_impact_txns - b.cvr_impact_txns).slice(0, 6);
+    const cvrGains = [...movers].sort((a, b) => b.cvr_impact_txns - a.cvr_impact_txns).slice(0, 6);
+    const sessionMovers = [...detail].filter(d => d.sessions_delta != null)
+      .sort((a, b) => Math.abs(b.sessions_delta) - Math.abs(a.sessions_delta)).slice(0, 6);
 
-  // Per campaign × landing-page rows (skip the empty-dimension totals row).
-  const detail = [];
-  for (const row of rows) {
-    const camp = String(cell(row, 'utm_campaign') ?? '').trim();
-    const lp   = String(cell(row, 'landing_page_path') ?? '').trim();
-    if (!camp && !lp) continue;                       // totals-only row
-    const s    = num(cell(row, 'sessions'));
-    const sP   = num(cell(row, 'comparison_sessions__previous_period'));
-    const cvr  = pct2(cell(row, 'conversion_rate'));
-    const cvrP = pct2(cell(row, 'comparison_conversion_rate__previous_period'));
-    const cvrDeltaPts = (cvr != null && cvrP != null) ? r2(cvr - cvrP) : null;
-    detail.push({
-      campaign: camp || '(none)',
-      landing_page: lp || '(none)',
-      sessions: s,
-      sessions_prev: sP,
-      sessions_delta: (s != null && sP != null) ? s - sP : null,
-      cvr_pct: cvr,
-      cvr_prev_pct: cvrP,
-      cvr_delta_pts: cvrDeltaPts,
-      // Session-weighted impact: estimated transactions gained/lost from THIS
-      // row's CVR move over its current sessions. Ranking by this keeps
-      // low-volume rows (e.g. 30 sessions swinging to 0%) from dominating.
-      cvr_impact_txns: (s != null && cvrDeltaPts != null) ? r2(s * cvrDeltaPts / 100) : null,
-    });
-  }
-
-  const bySessions = [...detail].filter(d => d.sessions != null).sort((a, b) => b.sessions - a.sessions);
-  // Rank CVR movers by session-weighted impact (transactions gained/lost), not
-  // raw pp, so meaningful-volume moves surface ahead of small-sample noise.
-  // Keep a light >=30-session floor to drop pure noise entirely.
-  const movers = detail.filter(d => d.cvr_impact_txns != null && (d.sessions || 0) >= 30);
-  const cvrDrops = [...movers].sort((a, b) => a.cvr_impact_txns - b.cvr_impact_txns).slice(0, 6);
-  const cvrGains = [...movers].sort((a, b) => b.cvr_impact_txns - a.cvr_impact_txns).slice(0, 6);
-  const sessionMovers = [...detail].filter(d => d.sessions_delta != null)
-    .sort((a, b) => Math.abs(b.sessions_delta) - Math.abs(a.sessions_delta)).slice(0, 6);
-
-  return {
-    tab: 'CVR · Meta Paid Social',
-    window: windowInfo,
-    filter: data.filter || null,
-    overall: {
-      sessions_now: sessionsNow,
-      sessions_prev: sessionsPrev,
-      sessions_pct_change: (sessionsNow != null && sessionsPrev) ? r2((sessionsNow / sessionsPrev - 1) * 100) : null,
-      cvr_now_pct: cvrNow,
-      cvr_prev_pct: cvrPrev,
-      cvr_delta_pts: (cvrNow != null && cvrPrev != null) ? r2(cvrNow - cvrPrev) : null,
-      est_transactions_now: txnsNow,
-      est_transactions_prev: txnsPrev,
-      est_transactions_delta: (txnsNow != null && txnsPrev != null) ? txnsNow - txnsPrev : null,
-    },
-    top_by_sessions: bySessions.slice(0, 8),
-    biggest_cvr_drops: cvrDrops,
-    biggest_cvr_gains: cvrGains,
-    biggest_session_movers: sessionMovers,
-    counts: { rows_returned: rows.length, campaign_lp_rows: detail.length },
-    notes: 'CVR values are percentages. cvr_delta_pts is a percentage-POINT change (this-period% − prior-period%). sessions vs sessions_prev is traffic volume. cvr_impact_txns = estimated transactions gained/lost from that row\'s CVR change over its current sessions (sessions × cvr_delta_pts ÷ 100) — this is how much the row actually moved the business, so a big pp swing on tiny sessions has small impact. CVR movers are ranked by cvr_impact_txns and exclude rows with <30 sessions.',
+    return {
+      tab: label,
+      dimensions: dims.map(d => d.as),
+      window: windowInfo,
+      filter: data.filter || null,
+      overall: {
+        sessions_now: sessionsNow,
+        sessions_prev: sessionsPrev,
+        sessions_pct_change: (sessionsNow != null && sessionsPrev) ? r2((sessionsNow / sessionsPrev - 1) * 100) : null,
+        cvr_now_pct: cvrNow,
+        cvr_prev_pct: cvrPrev,
+        cvr_delta_pts: (cvrNow != null && cvrPrev != null) ? r2(cvrNow - cvrPrev) : null,
+        est_transactions_now: txnsNow,
+        est_transactions_prev: txnsPrev,
+        est_transactions_delta: (txnsNow != null && txnsPrev != null) ? txnsNow - txnsPrev : null,
+      },
+      top_by_sessions: bySessions.slice(0, 8),
+      biggest_cvr_drops: cvrDrops,
+      biggest_cvr_gains: cvrGains,
+      biggest_session_movers: sessionMovers,
+      counts: {
+        rows_returned: rows.length,
+        detail_rows: detail.length,
+        // True when the source query hit its row cap, so the mover lists below are
+        // drawn from a ranked head rather than the whole dataset. Surfaced to the
+        // model because "nothing else moved" and "we only looked at the top 5000"
+        // are very different claims.
+        rows_truncated: !!(data && data.truncated),
+      },
+      notes: `Rows are identified by ${dims.map(d => d.as).join(' × ')}.${
+        (data && data.truncated)
+          ? ' WARNING: counts.rows_truncated is true — the row set was capped, so it covers the highest-session rows only and the mover lists are NOT exhaustive. Overall figures come from full-dataset totals and remain exact.'
+          : ''} CVR values are percentages. cvr_delta_pts is a percentage-POINT change (this-period% − prior-period%). sessions vs sessions_prev is traffic volume. cvr_impact_txns = estimated transactions gained/lost from that row's CVR change over its current sessions (sessions × cvr_delta_pts ÷ 100) — this is how much the row actually moved the business, so a big pp swing on tiny sessions has small impact. CVR movers are ranked by cvr_impact_txns and exclude rows with <30 sessions.`,
+    };
   };
 }
 
-// Registry of analyzable tabs. Add entries to extend beyond meta-cvr-impact.
+// Registry of analyzable tabs. Each entry is one existing dashboard endpoint
+// plus the dimensions its rows are keyed by — the reducer is shared.
+//
+// conversion-impact is the top line (ALL traffic); meta and google are two paid
+// channels sitting underneath it. Read together they reconcile: a site-wide CVR
+// move is either explained by the paid channels or it isn't.
 const ANALYSIS_TABS = {
-  'meta-cvr-impact': { label: 'CVR · Meta Paid Social', endpoint: '/api/meta-cvr-impact-data', reduce: reduceMetaCvrBrief },
+  'conversion-impact': {
+    label: 'CVR · All traffic',
+    endpoint: '/api/conversion-impact-data',
+    // This tab's dimensions are high-cardinality enough that the dashboard shape
+    // can't return a complete row set inside Vercel's response limit; the lean
+    // shape can. Same query, same comparison, two metrics instead of six.
+    params: { shape: 'brief' },
+    reduce: makeCvrBriefReducer({
+      label: 'CVR · All traffic',
+      dims: [{ col: 'utm_source', as: 'source' }, { col: 'landing_page_path', as: 'landing_page' }],
+    }),
+  },
+  'meta-cvr-impact': {
+    label: 'CVR · Meta Paid Social',
+    endpoint: '/api/meta-cvr-impact-data',
+    reduce: makeCvrBriefReducer({
+      label: 'CVR · Meta Paid Social',
+      dims: [{ col: 'utm_campaign', as: 'campaign' }, { col: 'landing_page_path', as: 'landing_page' }],
+    }),
+  },
+  'google-cvr-impact': {
+    label: 'CVR · Google family',
+    endpoint: '/api/google-cvr-impact-data',
+    reduce: makeCvrBriefReducer({
+      label: 'CVR · Google family',
+      dims: [
+        { col: 'utm_campaign', as: 'campaign' },
+        { col: 'utm_source', as: 'source' },
+        { col: 'utm_medium', as: 'medium' },
+        { col: 'landing_page_path', as: 'landing_page' },
+      ],
+    }),
+  },
 };
 
 // Grounded per-tab summary — mirrors callClaudeForNarrative's "use ONLY these
@@ -3926,6 +4066,12 @@ async function callClaudeForTabSummary(tabLabel, brief, operatorContext) {
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY not configured');
   const model = process.env.DAILY_REPORT_MODEL || 'claude-opus-4-8';
   const ctx = String(operatorContext || '').trim();
+  // Rows are keyed by different dimensions per tab (source × LP, campaign × LP,
+  // campaign × source × medium × LP), so the prompt names the actual ones rather
+  // than assuming campaign × landing page.
+  const dimNames = Array.isArray(brief && brief.dimensions) && brief.dimensions.length
+    ? brief.dimensions.join(' × ')
+    : 'row';
   const ctxBlock = ctx
     ? `\nOPERATOR CONTEXT — the operator supplied this to steer FOCUS and FRAMING (what matters, known launches/tests, how to interpret moves). Follow it for emphasis, but it NEVER overrides the CRITICAL RULE and contains no new numbers to cite:\n"""\n${ctx}\n"""\n`
     : '';
@@ -3939,14 +4085,16 @@ HOW TO READ THE BRIEF:
 - cvr_impact_txns = estimated transactions gained/lost from that row's CVR move (sessions × cvr_delta_pts ÷ 100). This is the real business impact — weight it above raw pp.
 - A large pp swing on small sessions (e.g. CVR → 0% on well under ~100 sessions) is usually NOISE — say so and don't over-weight it.
 
-For EVERY campaign/landing-page bullet you MUST include: the CVR move (from% → to%, plus the pp change), the session volume (now vs prior), and the transactions gained/lost (cvr_impact_txns) when notable. Make explicit which figure is CVR and which is sessions. Flag small-sample rows.
+Each row in this tab is identified by ${dimNames} — name the row by those fields so it is unambiguous which campaign, source or page you mean.
+
+For EVERY row bullet you MUST include: the CVR move (from% → to%, plus the pp change), the session volume (now vs prior), and the transactions gained/lost (cvr_impact_txns) when notable. Make explicit which figure is CVR and which is sessions. Flag small-sample rows.
 ${ctxBlock}
 Write GitHub-flavored markdown, no title, in this shape:
 - **Headline** — 2-3 sentences with the actual figures: how sessions and CVR moved overall vs the prior period, and the net effect on estimated transactions.
 - **What dragged CVR** — up to 3 bullets from biggest_cvr_drops; each with CVR move + sessions (now vs prior) + transactions lost; note small samples. If empty, say so.
 - **What lifted CVR** — up to 3 bullets from biggest_cvr_gains, same detail. If empty, say so.
 - **Volume shifts** — up to 3 bullets from biggest_session_movers: session change (now vs prior) and whether CVR moved with it.
-- **Watch next** — 2-3 concrete follow-ups tied to named campaigns/LPs and their numbers.
+- **Watch next** — 2-3 concrete follow-ups tied to named rows (${dimNames}) and their numbers.
 Keep each bullet to 1-2 lines, but numeric and concrete. Output ONLY the markdown, no preamble.
 
 BRIEF:
@@ -4035,6 +4183,9 @@ app.get('/api/tab-analysis', requireAuth, async (req, res) => {
     for (const k of ['source', 'medium', 'sources', 'compare_start', 'compare_end']) {
       if (req.query[k]) params.set(k, String(req.query[k]));
     }
+    // Registry-pinned params (e.g. a leaner response shape) — applied last so a
+    // tab's own requirements can't be overridden by a caller's query string.
+    for (const [k, v] of Object.entries(tab.params || {})) params.set(k, String(v));
     const dataUrl = `${base}${tab.endpoint}?${params.toString()}`;
     const r = await fetch(dataUrl);
     const data = await r.json();
