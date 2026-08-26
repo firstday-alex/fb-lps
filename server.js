@@ -4003,7 +4003,22 @@ function makeCvrBriefReducer({ label, dims }) {
         // Session-weighted impact: estimated transactions gained/lost from THIS
         // row's CVR move over its current sessions. Ranking by this keeps
         // low-volume rows (e.g. 30 sessions swinging to 0%) from dominating.
+        // Identical to rate_effect below; kept under its original name too.
         cvr_impact_txns: (s != null && cvrDeltaPts != null) ? r2(s * cvrDeltaPts / 100) : null,
+        // ── Why this row moved ──
+        // A transaction change is either traffic-led or conversion-led, and the
+        // split is exact rather than an approximation:
+        //   volume_effect = (sessions_now − sessions_prev) × cvr_prev
+        //   rate_effect   = sessions_now × (cvr_now − cvr_prev)
+        // which sum to sessions_now×cvr_now − sessions_prev×cvr_prev = txn_delta.
+        // Without this a row that simply lost half its traffic looks calm — its
+        // CVR barely moved — while quietly costing the most transactions.
+        txns_now: (s != null && cvr != null) ? r2(s * cvr / 100) : null,
+        txns_prev: (sP != null && cvrP != null) ? r2(sP * cvrP / 100) : null,
+        txn_delta: (s != null && cvr != null && sP != null && cvrP != null)
+          ? r2((s * cvr / 100) - (sP * cvrP / 100)) : null,
+        volume_effect: (s != null && sP != null && cvrP != null) ? r2((s - sP) * cvrP / 100) : null,
+        rate_effect: (s != null && cvrDeltaPts != null) ? r2(s * cvrDeltaPts / 100) : null,
       });
     }
 
@@ -4091,6 +4106,79 @@ function makeCvrBriefReducer({ label, dims }) {
       return out;
     })();
 
+    // ── Biggest movers, with the drivers underneath them ──
+    //
+    // Ranking raw rows answers "which row moved most" but not "what moved".
+    // Rows are a dimension TUPLE, so the same campaign appears once per landing
+    // page and a campaign-wide shift is scattered across a dozen rows, none of
+    // which looks big on its own. So roll up to the first dimension (campaign,
+    // or source on the all-traffic tab) and rank those by transactions
+    // gained/lost, then name the child rows that drove each one.
+    //
+    // Ranked by txn_delta — the whole move — not by rate_effect alone. A row
+    // that halved its traffic at flat CVR has a rate_effect near zero and can be
+    // the largest loss on the page.
+    //
+    // These aggregates sum the rows that came back, NOT the full-dataset
+    // `__totals`. When counts.rows_truncated is true they cover the returned
+    // head only; overall.* stays exact either way.
+    const entityDim = dims[0].as;
+    const childDims = dims.slice(1).map(d => d.as);
+    const entities = new Map();
+    for (const d of detail) {
+      const key = d[entityDim];
+      if (!entities.has(key)) {
+        entities.set(key, { entity: key, entity_dim: entityDim, sessions: 0, sessions_prev: 0,
+          txns_now: 0, txns_prev: 0, volume_effect: 0, rate_effect: 0, rows: [] });
+      }
+      const e = entities.get(key);
+      e.sessions      += d.sessions || 0;
+      e.sessions_prev += d.sessions_prev || 0;
+      e.txns_now      += d.txns_now || 0;
+      e.txns_prev     += d.txns_prev || 0;
+      e.volume_effect += d.volume_effect || 0;
+      e.rate_effect   += d.rate_effect || 0;
+      e.rows.push(d);
+    }
+    const finishEntity = (e) => {
+      const cvr = e.sessions > 0 ? (e.txns_now / e.sessions) * 100 : null;
+      const cvrPrev = e.sessions_prev > 0 ? (e.txns_prev / e.sessions_prev) * 100 : null;
+      // Top child rows by absolute transaction move — the drivers. Only rows
+      // that moved in the SAME direction as the parent are listed: on a losing
+      // campaign the question is what lost it, and a gaining page mixed into
+      // that list reads as though it were part of the problem.
+      const sameWay = e.rows.filter(r => r.txn_delta != null && (e.txns_now - e.txns_prev >= 0 ? r.txn_delta > 0 : r.txn_delta < 0));
+      const drivers = sameWay.sort((a, b) => Math.abs(b.txn_delta) - Math.abs(a.txn_delta)).slice(0, 3)
+        .map(r => ({
+          ...Object.fromEntries(childDims.map(k => [k, r[k]])),
+          sessions: r.sessions, sessions_prev: r.sessions_prev,
+          cvr_pct: r.cvr_pct, cvr_prev_pct: r.cvr_prev_pct, cvr_delta_pts: r.cvr_delta_pts,
+          txn_delta: r.txn_delta, volume_effect: r.volume_effect, rate_effect: r.rate_effect,
+        }));
+      const txnDelta = r2(e.txns_now - e.txns_prev);
+      return {
+        entity: e.entity, entity_dim: e.entity_dim,
+        sessions: e.sessions, sessions_prev: e.sessions_prev,
+        sessions_delta: e.sessions - e.sessions_prev,
+        cvr_pct: r2(cvr), cvr_prev_pct: r2(cvrPrev),
+        cvr_delta_pts: (cvr != null && cvrPrev != null) ? r2(cvr - cvrPrev) : null,
+        txn_delta: txnDelta,
+        volume_effect: r2(e.volume_effect),
+        rate_effect: r2(e.rate_effect),
+        // Which half of the move dominates, so the narrative doesn't have to
+        // eyeball two signed numbers.
+        led_by: (Math.abs(e.volume_effect) === 0 && Math.abs(e.rate_effect) === 0) ? null
+          : (Math.abs(e.volume_effect) >= Math.abs(e.rate_effect) ? 'traffic' : 'conversion'),
+        rows_in_group: e.rows.length,
+        drivers,
+      };
+    };
+    const ranked = [...entities.values()].map(finishEntity).filter(e => e.txn_delta != null);
+    const biggestDecreases = ranked.filter(e => e.txn_delta < 0)
+      .sort((a, b) => a.txn_delta - b.txn_delta).slice(0, 3);
+    const biggestIncreases = ranked.filter(e => e.txn_delta > 0)
+      .sort((a, b) => b.txn_delta - a.txn_delta).slice(0, 3);
+
   const bySessions = [...detail].filter(d => d.sessions != null).sort((a, b) => b.sessions - a.sessions);
     // Rank CVR movers by session-weighted impact (transactions gained/lost), not
     // raw pp, so meaningful-volume moves surface ahead of small-sample noise.
@@ -4121,6 +4209,12 @@ function makeCvrBriefReducer({ label, dims }) {
       // a move that reverses against the run-rate is a different story from one
       // the run-rate confirms.
       trailing: trailing,
+      // The 3 biggest transaction gains and losses, rolled up to the primary
+      // dimension, each carrying the child rows that drove it.
+      biggest_decreases: biggestDecreases,
+      biggest_increases: biggestIncreases,
+      grouped_by: entityDim,
+      driver_dims: childDims,
       top_by_sessions: bySessions.slice(0, 8),
       biggest_cvr_drops: cvrDrops,
       biggest_cvr_gains: cvrGains,
@@ -4137,7 +4231,7 @@ function makeCvrBriefReducer({ label, dims }) {
       notes: `Rows are identified by ${dims.map(d => d.as).join(' × ')}.${
         (data && data.truncated)
           ? ' WARNING: counts.rows_truncated is true — the row set was capped, so it covers the highest-session rows only and the mover lists are NOT exhaustive. Overall figures come from full-dataset totals and remain exact.'
-          : ''} CVR values are percentages. cvr_delta_pts is a percentage-POINT change (this-period% − prior-period%). sessions vs sessions_prev is traffic volume. cvr_impact_txns = estimated transactions gained/lost from that row's CVR change over its current sessions (sessions × cvr_delta_pts ÷ 100) — this is how much the row actually moved the business, so a big pp swing on tiny sessions has small impact. CVR movers are ranked by cvr_impact_txns and exclude rows with <30 sessions. trailing is the 7-day run-rate baseline: trailing.vs_run_rate compares the analysed window against it, and when baseline_excludes_analysed_window is true the analysed days have been netted out of that baseline so the comparison is clean. Sessions are compared as per-day rates because the analysed window can be any length.`,
+          : ''} CVR values are percentages. cvr_delta_pts is a percentage-POINT change (this-period% − prior-period%). sessions vs sessions_prev is traffic volume. cvr_impact_txns = estimated transactions gained/lost from that row's CVR change over its current sessions (sessions × cvr_delta_pts ÷ 100) — this is how much the row actually moved the business, so a big pp swing on tiny sessions has small impact. CVR movers are ranked by cvr_impact_txns and exclude rows with <30 sessions. trailing is the 7-day run-rate baseline: trailing.vs_run_rate compares the analysed window against it, and when baseline_excludes_analysed_window is true the analysed days have been netted out of that baseline so the comparison is clean. Sessions are compared as per-day rates because the analysed window can be any length. biggest_decreases and biggest_increases are the 3 largest transaction losses and gains, rolled up to ${entityDim} and ranked by txn_delta (the WHOLE move, not just the CVR part). Each carries an exact split of that move: volume_effect = (sessions_now − sessions_prev) × cvr_prev is the traffic contribution, rate_effect = sessions_now × cvr_delta_pts is the conversion contribution, and the two sum to txn_delta. led_by names whichever dominates. drivers are the ${childDims.join(' × ') || 'child'} rows inside that group that moved it, largest first, filtered to those moving the SAME direction as the group. These roll-ups sum the rows returned, not the full dataset, so when counts.rows_truncated is true they cover the returned head only.`,
     };
   };
 }
@@ -4285,13 +4379,18 @@ State both figures when they disagree.
 
 Each row in this tab is identified by ${dimNames} — name the row by those fields so it is unambiguous which campaign, source or page you mean.
 
-For EVERY row bullet you MUST include: the CVR move (from% → to%, plus the pp change), the session volume (now vs prior), and the transactions gained/lost (cvr_impact_txns) when notable. Make explicit which figure is CVR and which is sessions. Flag small-sample rows.
+THE MAIN JOB: for the 3 biggest transaction DECREASES and the 3 biggest INCREASES (biggest_decreases / biggest_increases), say what DROVE each one. Every such bullet must answer three things:
+1. How much — txn_delta, with sessions (now vs prior) and CVR (from% → to%, pp change).
+2. Traffic-led or conversion-led — read led_by, and quote volume_effect vs rate_effect. They sum exactly to txn_delta, so say which half did the damage. "Lost 38 transactions, almost all of it traffic (−34 volume vs −4 rate)" is the shape. A group can lose on traffic while its CVR actually improved — say so when that happens, it is the most commonly misread case.
+3. Which children drove it — name the top entries in that group's \`drivers\` list with their own numbers. That is the answer to "what was the largest driver", so never skip it. If drivers is empty, say the move was spread across the group rather than concentrated.
+
+Flag small-sample rows. Do not add up the numbers yourself — every figure you need is already in the brief.
 ${ctxBlock}
 Write GitHub-flavored markdown, no title, in this shape:
 - **Headline** — 2-3 sentences with the actual figures: how sessions and CVR moved overall vs the prior period, how that reads against the 7-day run-rate (\`trailing.vs_run_rate\`), and the net effect on estimated transactions.
-- **What dragged CVR** — up to 3 bullets from biggest_cvr_drops; each with CVR move + sessions (now vs prior) + transactions lost; note small samples. If empty, say so.
-- **What lifted CVR** — up to 3 bullets from biggest_cvr_gains, same detail. If empty, say so.
-- **Volume shifts** — up to 3 bullets from biggest_session_movers: session change (now vs prior) and whether CVR moved with it.
+- **Biggest losses** — one bullet per entry in biggest_decreases (up to 3), each answering all three questions above: how much, traffic- or conversion-led with the split, and the named drivers underneath. If empty, say so.
+- **Biggest gains** — same, from biggest_increases.
+- **Also worth knowing** — up to 2 bullets for anything the two lists above missed: a CVR collapse on real volume from biggest_cvr_drops, or a session shift from biggest_session_movers that hasn't shown up in transactions yet. Skip the section if it would just repeat what you already said.
 - **Watch next** — 2-3 concrete follow-ups tied to named rows (${dimNames}) and their numbers.
 Keep each bullet to 1-2 lines, but numeric and concrete. Output ONLY the markdown, no preamble.
 
@@ -4342,6 +4441,7 @@ HOW TO READ A BRIEF:
 - cvr_pct / cvr_prev_pct are conversion rates (%); cvr_delta_pts is the percentage-POINT change.
 - sessions / sessions_prev is traffic volume; sessions_delta is the change.
 - cvr_impact_txns = estimated transactions gained/lost from that row's CVR move (sessions × cvr_delta_pts ÷ 100). Weight it above raw pp.
+- biggest_decreases / biggest_increases are the 3 largest transaction losses and gains, rolled up to that brief's grouped_by dimension and ranked by txn_delta — the WHOLE move, not just its CVR part. Each carries an exact split: volume_effect (traffic) + rate_effect (conversion) = txn_delta, with led_by naming the dominant half, and a drivers list of the child rows that moved it.
 - A large pp swing on small sessions is NOISE — say so rather than leading with it.
 - counts.rows_truncated true means the mover lists cover the highest-session rows only, NOT everything. Say so rather than implying the list is exhaustive.
 
@@ -4350,9 +4450,8 @@ ${ctxBlock}
 Write GitHub-flavored markdown, no title, in this shape:
 - **Site-wide** — 2-3 sentences: sessions and CVR vs the prior period AND vs the 7-day run-rate, and the net estimated-transaction effect.
 - **Where it came from** — reconcile using RECONCILIATION: how much of the site-wide transaction move each channel accounts for, and what is left in the residual. Say plainly whether paid explains the move. Name the scope caveat if the residual is doing heavy lifting.
-- **Meta** — 2-3 bullets from the Meta brief's movers: CVR move + sessions (now vs prior) + transactions gained/lost. Flag small samples.
-- **Google** — same, from the Google brief.
-- **All traffic** — up to 2 bullets for anything in the all-traffic brief that neither channel explains.
+- **Biggest movers and what drove them** — the 3 largest transaction decreases and the 3 largest increases across the briefs, drawn from their biggest_decreases / biggest_increases. Each bullet must answer: how much (txn_delta, with sessions and CVR), whether it was traffic-led or conversion-led (led_by, quoting volume_effect vs rate_effect — they sum to txn_delta), and WHICH children drove it (name the entries in that group's drivers list with their numbers). A group can shed transactions on falling traffic while its CVR improves — call that out explicitly, it is the most commonly misread case. Say which tab each mover comes from. Never omit the drivers.
+- **Anything else worth knowing** — up to 2 bullets the above missed: a CVR collapse on real volume, or a session shift that hasn't reached transactions yet.
 - **Watch next** — 2-3 concrete follow-ups tied to named rows and their numbers.
 Keep bullets to 1-2 lines, numeric and concrete. Output ONLY the markdown, no preamble.
 
