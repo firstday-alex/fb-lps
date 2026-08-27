@@ -24,6 +24,7 @@
         { href: '/conversion-impact.html',  name: 'CVR by Traffic Source',    desc: 'Every utm_source: which channels moved blended CVR' },
         { href: '/meta-cvr-impact.html',    name: 'CVR · Meta Paid Social',   desc: 'Meta campaigns, landing pages and ads behind the change' },
         { href: '/google-cvr-impact.html',  name: 'CVR · Google',             desc: 'Google-family campaigns, source/medium and landing pages' },
+        { href: '/owned-cvr-impact.html',   name: 'CVR · Email & SMS',      desc: 'Klaviyo and Attentive programs, flow steps and landing pages' },
         { href: '/cvr-decomposition.html',  name: 'Rate vs Mix Attribution',  desc: 'Splits a UTM slice into rate, mix, entry and exit effects' },
         { href: '/funnel-breakdown.html',   name: 'Funnel Drop-Off',          desc: 'Session → engaged → cart → checkout → purchase, by source' },
       ],

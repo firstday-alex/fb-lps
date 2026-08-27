@@ -3446,6 +3446,339 @@ VISUALIZE conversion_rate TYPE table`;
 });
 
 // ─────────────────────────────────────────────
+// OWNED (EMAIL + SMS) CVR IMPACT
+// ─────────────────────────────────────────────
+// Klaviyo email + Attentive SMS, the two channels the store pays nothing per
+// click for. Same shape as /api/meta-cvr-impact-data, with one extra grouping
+// dimension.
+//
+// Why utm_source is IN the GROUP BY rather than only the WHERE: this view spans
+// two platforms at once, and "email vs SMS" is the first cut anyone wants. Meta
+// gets away with campaign x landing_page because everything under it is one
+// source; here, folding klaviyo and attentive onto a single campaign axis would
+// merge the date-prefixed campaigns both platforms share (`08202026_...` exists
+// under both), silently averaging an email send with an SMS send.
+const OWNED_SOURCES = 'klaviyo,attentive,postscript';
+
+app.get('/api/owned-cvr-impact-data', async (req, res) => {
+  if (!SHOPIFY_URL || !SHOPIFY_TOKEN) {
+    return res.status(500).json({ error: 'Shopify credentials not configured' });
+  }
+
+  const { start, end } = req.query;
+  if (!start || !end || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+    return res.status(400).json({ error: 'start and end query params required (YYYY-MM-DD)' });
+  }
+
+  // Medium defaults to '*' (unconstrained). Klaviyo tags `email`, `email-flow`
+  // and a slice of blanks; Attentive tags `sms` and blanks; Postscript uses both
+  // `sms` and `SMS`. Naming every one of those would silently drop the blanks,
+  // and the blanks are real traffic.
+  const scope = utmScope(req.query.source, req.query.medium, { source: OWNED_SOURCES, medium: '*' });
+  const source = scope.sources.join(',');
+  const medium = scope.mediums.join(',');
+
+  const cs = req.query.compare_start;
+  const ce = req.query.compare_end;
+  const useCustomCompare = cs && ce
+    && /^\d{4}-\d{2}-\d{2}$/.test(cs) && /^\d{4}-\d{2}-\d{2}$/.test(ce);
+
+  const endpoint = `https://${SHOPIFY_URL}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
+  const gqlQuery = `query RunShopifyQL($q: String!) {
+    shopifyqlQuery(query: $q) {
+      tableData { columns { name dataType } rows }
+      parseErrors
+    }
+  }`;
+
+  // Higher than Meta's 5000. Three grouping dimensions instead of two, and
+  // `COMPARE TO previous_period` adds back every source x campaign x LP triple
+  // that had prior-period traffic but none now. Measured on a 29-day pull:
+  // 3,670 rows current-only, 5,176 with the comparison -- so Meta's 5000 would
+  // have clipped the tail and biased every previous-period delta downward.
+  const ROW_LIMIT = 20000;
+
+  const METRICS = 'sessions, conversion_rate, average_session_duration, sessions_with_cart_additions, sessions_that_reached_checkout, sessions_that_reached_and_completed_checkout';
+  const GROUP = 'utm_source, utm_campaign, landing_page_path';
+
+  const mainQuery = `FROM sessions
+  SHOW ${METRICS}
+  WHERE ${scope.where}
+  GROUP BY ${GROUP} WITH TOTALS, PERCENT_CHANGE
+  SINCE ${start} UNTIL ${end}
+  COMPARE TO previous_period
+  ORDER BY sessions DESC
+  LIMIT ${ROW_LIMIT}
+VISUALIZE conversion_rate TYPE table`;
+
+  const compareQuery = useCustomCompare ? `FROM sessions
+  SHOW sessions, conversion_rate
+  WHERE ${scope.where}
+  GROUP BY ${GROUP} WITH TOTALS
+  SINCE ${cs} UNTIL ${ce}
+  ORDER BY sessions DESC
+  LIMIT ${ROW_LIMIT}` : null;
+
+  const sevenStart = shiftDate(end, -6);
+  const avg7Query = `FROM sessions
+  SHOW sessions, conversion_rate
+  WHERE ${scope.where}
+  GROUP BY ${GROUP} WITH TOTALS
+  SINCE ${sevenStart} UNTIL ${end}
+  ORDER BY sessions DESC
+  LIMIT ${ROW_LIMIT}`;
+
+  const thirtyStart = shiftDate(end, -29);
+  const avg30Query = `FROM sessions
+  SHOW sessions, conversion_rate
+  WHERE ${scope.where}
+  GROUP BY ${GROUP} WITH TOTALS
+  SINCE ${thirtyStart} UNTIL ${end}
+  ORDER BY sessions DESC
+  LIMIT ${ROW_LIMIT}`;
+
+  // Every source x medium pair present for the scoped SOURCES, ignoring the
+  // medium filter -- same job as the Meta tab's mediumMix, but two-dimensional
+  // because "which platform" and "which medium" are separate questions here.
+  // A handful of rows, so it can never hit the cap.
+  const srcOnly = utmScope(req.query.source, '*', { source: OWNED_SOURCES });
+  const channelMixQuery = `FROM sessions
+  SHOW sessions, conversion_rate
+  WHERE ${srcOnly.where}
+  GROUP BY utm_source, utm_medium
+  SINCE ${start} UNTIL ${end}
+  ORDER BY sessions DESC`;
+
+  // Site-wide totals for the same window. The whole argument for this tab is
+  // that owned punches above its session share, and that claim needs a
+  // denominator the page didn't invent.
+  const siteQuery = `FROM sessions
+  SHOW sessions, conversion_rate
+  SINCE ${start} UNTIL ${end}`;
+
+  console.log('\n[owned-cvr-impact-data] Main query:\n' + mainQuery);
+  if (compareQuery) console.log('\n[owned-cvr-impact-data] Compare query:\n' + compareQuery);
+
+  const runShopifyQL = async (q) => {
+    const resp = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
+      body: JSON.stringify({ query: gqlQuery, variables: { q } }),
+    });
+    const json = await resp.json();
+    const payload = json.data?.shopifyqlQuery;
+    if (payload?.parseErrors?.length) {
+      const err = new Error('ShopifyQL parse error: ' + JSON.stringify(payload.parseErrors));
+      err.parseErrors = payload.parseErrors;
+      throw err;
+    }
+    if (!payload?.tableData) throw new Error('No data returned from Shopify');
+    return payload.tableData;
+  };
+
+  try {
+    const [main, compare, avg7, avg30, channelMixT, siteT] = await Promise.all([
+      runShopifyQL(mainQuery),
+      compareQuery ? runShopifyQL(compareQuery) : Promise.resolve(null),
+      runShopifyQL(avg7Query).catch(e => {
+        console.warn('[owned-cvr-impact-data] 7d-avg query failed:', e.message);
+        return null;
+      }),
+      runShopifyQL(avg30Query).catch(e => {
+        console.warn('[owned-cvr-impact-data] 30d-avg query failed:', e.message);
+        return null;
+      }),
+      runShopifyQL(channelMixQuery).catch(e => {
+        console.warn('[owned-cvr-impact-data] channel-mix query failed:', e.message);
+        return null;
+      }),
+      runShopifyQL(siteQuery).catch(e => {
+        console.warn('[owned-cvr-impact-data] site-total query failed:', e.message);
+        return null;
+      }),
+    ]);
+
+    const channelMix = (() => {
+      if (!channelMixT || !Array.isArray(channelMixT.rows)) return null;
+      const g = qlAccessor(channelMixT.columns);
+      const iS = g.idx('utm_source'), iM = g.idx('utm_medium'), iSess = g.idx('sessions'), iC = g.idx('conversion_rate');
+      const out = [];
+      for (const row of channelMixT.rows) {
+        const src = String(g.get(row, iS) ?? '').trim();
+        const med = String(g.get(row, iM) ?? '').trim();
+        const sessions = Math.round(QL_NUM(g.get(row, iSess)));
+        if (!sessions) continue;
+        const c = QL_NUM(g.get(row, iC));
+        out.push({
+          source: src,
+          medium: med,
+          sessions,
+          cvr: c > 1 ? c / 100 : c,
+          included: (scope.sources.length === 0 || scope.sources.includes(src))
+                 && (scope.mediums.length === 0 || scope.mediums.includes(med)),
+        });
+      }
+      return out.sort((a, b) => b.sessions - a.sessions);
+    })();
+
+    const site = (() => {
+      if (!siteT || !Array.isArray(siteT.rows) || !siteT.rows.length) return null;
+      const g = qlAccessor(siteT.columns);
+      const sessions = Math.round(QL_NUM(g.get(siteT.rows[0], g.idx('sessions'))));
+      const c = QL_NUM(g.get(siteT.rows[0], g.idx('conversion_rate')));
+      if (!sessions) return null;
+      return { sessions, cvr: c > 1 ? c / 100 : c };
+    })();
+
+    // Trim the payload before it leaves. Two things make the raw ShopifyQL
+    // response enormous at this grouping: rows arrive as OBJECTS, so all 39
+    // column names are repeated on every one of ~5,000 rows (8 MB of key names
+    // alone on a 29-day pull), and six `percent_change_*` columns come back
+    // that nothing here reads. Emitting arrays and keeping only the columns the
+    // frontend actually indexes takes a 29-day pull from ~13.6 MB to ~2 MB,
+    // which matters because a serverless response has a hard size ceiling --
+    // the same wall that pushed /api/conversion-impact-data to its `brief`
+    // shape. parseShopifyQL() already reads either row form.
+    const compactTable = (t, keep) => {
+      if (!t || !Array.isArray(t.rows) || !Array.isArray(t.columns)) return null;
+      const names = t.columns.map(c => c.name);
+      const lc = names.map(n => (n || '').toLowerCase());
+      const idxs = [];
+      const cols = [];
+      keep.forEach(want => {
+        const i = lc.indexOf(want);
+        if (i >= 0) { idxs.push(i); cols.push(t.columns[i]); }
+      });
+      const rows = t.rows.map(row => {
+        const arr = Array.isArray(row) ? row : names.map(n => row[n]);
+        return idxs.map(i => arr[i]);
+      });
+      return { columns: cols, rows };
+    };
+
+    const MAIN_KEEP = [
+      'utm_source', 'utm_campaign', 'landing_page_path',
+      'sessions', 'conversion_rate', 'average_session_duration',
+      'sessions_with_cart_additions', 'sessions_that_reached_checkout',
+      'sessions_that_reached_and_completed_checkout',
+      'comparison_sessions__previous_period', 'comparison_conversion_rate__previous_period',
+      'sessions__totals', 'conversion_rate__totals',
+      'comparison_sessions__previous_period__totals', 'comparison_conversion_rate__previous_period__totals',
+    ];
+    const TRAIL_KEEP = [
+      'utm_source', 'utm_campaign', 'landing_page_path',
+      'sessions', 'conversion_rate', 'sessions__totals', 'conversion_rate__totals',
+    ];
+
+    const packTrail = (t, window) => {
+      const c = compactTable(t, TRAIL_KEEP);
+      return c ? { window, columns: c.columns, rows: c.rows } : null;
+    };
+    const avg7d  = packTrail(avg7,  { start: sevenStart,  end, days: 7  });
+    const avg30d = packTrail(avg30, { start: thirtyStart, end, days: 30 });
+
+    const base = {
+      query: mainQuery,
+      filter: { source, medium, scope: scope.label },
+      channelMix,
+      site,
+      row_limit: ROW_LIMIT,
+      truncated: main.rows.length >= ROW_LIMIT,
+      avg7d,
+      avg30d,
+    };
+
+    if (!compare) {
+      const c = compactTable(main, MAIN_KEEP);
+      return res.json({ ...base, columns: c.columns, rows: c.rows });
+    }
+
+    // Custom compare window: overwrite the built-in previous_period cells with
+    // values from that range, keeping the column shape identical so the
+    // frontend parser doesn't branch. Same merge the Meta endpoint does, keyed
+    // on the three-part dimension tuple. NUL joins the parts because campaign
+    // names and landing paths both contain every printable separator.
+    const mainColNames = main.columns.map(c => c.name);
+    const cmpColNames  = compare.columns.map(c => c.name);
+    const toArray = (row, names) => {
+      if (Array.isArray(row)) return row;
+      if (row && typeof row === 'object') return names.map(n => row[n]);
+      return [];
+    };
+    const cols = mainColNames.map(n => (n || '').toLowerCase());
+    const cmpCols = cmpColNames.map(n => (n || '').toLowerCase());
+    const idx = (arr, n) => arr.findIndex(s => s === n);
+    const NUL = ' ';
+
+    const iSrc  = idx(cols, 'utm_source');
+    const iCamp = idx(cols, 'utm_campaign');
+    const iLp   = idx(cols, 'landing_page_path');
+    const iMainPrevS      = idx(cols, 'comparison_sessions__previous_period');
+    const iMainPrevCvr    = idx(cols, 'comparison_conversion_rate__previous_period');
+    const iMainPrevSTot   = idx(cols, 'comparison_sessions__previous_period__totals');
+    const iMainPrevCvrTot = idx(cols, 'comparison_conversion_rate__previous_period__totals');
+
+    const cSrc  = idx(cmpCols, 'utm_source');
+    const cCamp = idx(cmpCols, 'utm_campaign');
+    const cLp   = idx(cmpCols, 'landing_page_path');
+    const cSess = idx(cmpCols, 'sessions');
+    const cCvr  = idx(cmpCols, 'conversion_rate');
+    const cSessTot = idx(cmpCols, 'sessions__totals');
+    const cCvrTot  = idx(cmpCols, 'conversion_rate__totals');
+
+    // `WITH TOTALS` adds __totals columns to every data row rather than
+    // emitting a totals row, so the grand totals come off row 0.
+    const cmpTotals = compare.rows.length ? toArray(compare.rows[0], cmpColNames) : null;
+    const cmpMap = new Map();
+    for (const row of compare.rows) {
+      const arr = toArray(row, cmpColNames);
+      const parts = [arr[cSrc], arr[cCamp], arr[cLp]].map(v => String(v ?? '').trim());
+      if (parts.every(p => !p)) continue;
+      cmpMap.set(parts.join(NUL), arr);
+    }
+
+    let matched = 0, unmatched = 0;
+    const newRows = main.rows.map(row => {
+      const arr = toArray(row, mainColNames).slice();
+      const parts = [arr[iSrc], arr[iCamp], arr[iLp]].map(v => String(v ?? '').trim());
+      const isTotalsRow = parts.every(p => !p);
+      const cmpRow = isTotalsRow ? cmpTotals : cmpMap.get(parts.join(NUL));
+      if (cmpRow) matched++; else if (!isTotalsRow) unmatched++;
+
+      if (iMainPrevS >= 0)   arr[iMainPrevS]   = cmpRow != null && cSess >= 0 ? cmpRow[cSess] : null;
+      if (iMainPrevCvr >= 0) arr[iMainPrevCvr] = cmpRow != null && cCvr  >= 0 ? cmpRow[cCvr]  : null;
+      if (iMainPrevSTot >= 0)   arr[iMainPrevSTot]   = cmpTotals != null && cSessTot >= 0 ? cmpTotals[cSessTot] : null;
+      if (iMainPrevCvrTot >= 0) arr[iMainPrevCvrTot] = cmpTotals != null && cCvrTot  >= 0 ? cmpTotals[cCvrTot]  : null;
+      return arr;
+    });
+
+    const mergeStats = {
+      main_rows: main.rows.length,
+      compare_rows: compare.rows.length,
+      compare_keys_indexed: cmpMap.size,
+      had_compare_totals: !!cmpTotals,
+      matched_keys: matched,
+      unmatched_keys: unmatched,
+    };
+    console.log('[owned-cvr-impact-data] custom-compare merge:', mergeStats);
+
+    res.json({
+      ...base,
+      compare_query: compareQuery,
+      compare_window: { start: cs, end: ce },
+      merge_stats: mergeStats,
+      ...(() => {
+        const c = compactTable({ columns: main.columns, rows: newRows }, MAIN_KEEP);
+        return { columns: c.columns, rows: c.rows };
+      })(),
+    });
+  } catch (err) {
+    console.error('Owned CVR impact data error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────
 // DIAGNOSTIC DASHBOARD — bucketing-criteria persistence
 // ─────────────────────────────────────────────
 // Storage strategy:
@@ -4396,6 +4729,20 @@ const ANALYSIS_TABS = {
       ],
     }),
   },
+  'owned-cvr-impact': {
+    label: 'CVR · Email & SMS',
+    endpoint: '/api/owned-cvr-impact-data',
+    reduce: makeCvrBriefReducer({
+      label: 'CVR · Email & SMS',
+      // utm_source leads because this tab spans two platforms and every other
+      // dimension reads differently for each of them.
+      dims: [
+        { col: 'utm_source', as: 'source' },
+        { col: 'utm_campaign', as: 'campaign' },
+        { col: 'landing_page_path', as: 'landing_page' },
+      ],
+    }),
+  },
 };
 
 // Reconcile the three tabs against each other, in code. conversion-impact is the
@@ -4404,9 +4751,11 @@ const ANALYSIS_TABS = {
 // arithmetic, not narration. Computing it here keeps the numbers deterministic
 // and leaves the model only the job of describing them.
 //
-// The residual is everything the two channel tabs don't cover, and it is still
-// NOT "non-paid" — it holds every other paid source (applovin, axon, attentive,
-// impact, ...) alongside organic and direct. It no longer hides paid Meta
+// The residual is everything the channel tabs don't cover, and it is still
+// NOT "non-paid" — it holds every other paid source (applovin, axon, impact,
+// ...) alongside organic and direct. Klaviyo and Attentive left the residual
+// when the owned tab was added, so a residual move is no longer explainable by
+// an email or SMS send. It no longer hides paid Meta
 // traffic: the Meta scope covers paid_social AND paid (see META_PAID_MEDIUMS).
 // Said explicitly below because a reader would otherwise take the residual for
 // organic and reach the wrong conclusion.
@@ -4460,7 +4809,7 @@ function buildCrossTabReconciliation(briefs) {
       share_of_site_sessions_pct: (o.sessions_now)
         ? r2((o.sessions_now - coveredSessions) / o.sessions_now * 100) : null,
     },
-    notes: 'site = ALL traffic (conversion-impact). channels are disjoint subsets of it. residual = site minus those channels: everything the two channel tabs do not cover. residual is NOT organic/non-paid — it holds every other paid source (applovin, axon, attentive, impact and the rest) as well as organic and direct traffic. The Meta scope covers facebook paid_social AND paid, so paid Meta traffic is fully inside the Meta channel and not in the residual. est_transactions figures are sessions × CVR and are estimates, so the channel deltas and the residual will not sum exactly. share_of_site_txn_delta_pct is signed: over 100% means the channel moved further than the site did, and a negative value means it moved against the site.',
+    notes: 'site = ALL traffic (conversion-impact). channels are disjoint subsets of it. residual = site minus those channels: everything the channel tabs do not cover. residual is NOT organic/non-paid — it holds every other paid source (applovin, axon, impact and the rest) as well as organic and direct traffic. The Meta scope covers facebook paid_social AND paid, so paid Meta traffic is fully inside the Meta channel and not in the residual. The owned channel covers klaviyo email and attentive/postscript SMS across every medium, so email and SMS sends are fully inside that channel and not in the residual either. est_transactions figures are sessions × CVR and are estimates, so the channel deltas and the residual will not sum exactly. share_of_site_txn_delta_pct is signed: over 100% means the channel moved further than the site did, and a negative value means it moved against the site.',
   };
 }
 
