@@ -1498,6 +1498,66 @@
     .kpi-row { grid-template-columns: repeat(4, 1fr); }
     @media (max-width: 1180px) { .kpi-row { grid-template-columns: repeat(2, 1fr); } }
     @media (max-width: 700px)  { .kpi-row { grid-template-columns: 1fr; } }
+    /* Platform scope control — narrows the page to one owned platform. */
+    .pscope { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
+    .pscope__label { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary); margin-right: 2px; }
+    .pscope__btn {
+      display: inline-flex; align-items: baseline; gap: 6px;
+      font: inherit; font-size: 0.8rem; font-weight: 600;
+      padding: 5px 11px; border-radius: 999px; cursor: pointer;
+      background: var(--surface); color: var(--text-secondary);
+      border: 1px solid var(--border);
+    }
+    .pscope__btn:hover { border-color: var(--fb-blue); color: var(--text-primary); }
+    .pscope__btn--on { background: var(--fb-blue); border-color: var(--fb-blue); color: #fff; }
+    .pscope__n { font-size: 0.7rem; font-weight: 500; opacity: 0.72; font-variant-numeric: tabular-nums; }
+
+    /* Flows vs campaigns — core metrics against prev / 7d / 30d. */
+    .fcm-group { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px 10px; margin-bottom: 12px; background: var(--surface); }
+    .fcm-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+    .fcm-head__label { font-size: 0.98rem; font-weight: 700; }
+    .fcm-head__meta { font-size: 0.74rem; color: var(--text-secondary); }
+    .fcm-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+    .fcm-table th, .fcm-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); }
+    .fcm-table thead th { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary); font-weight: 700; white-space: nowrap; }
+    .fcm-table tbody tr:last-child th, .fcm-table tbody tr:last-child td { border-bottom: none; }
+    .fcm-table .r { text-align: right; }
+    .fcm-metric { text-align: left; font-weight: 600; font-size: 0.78rem; white-space: nowrap; border-bottom: 1px solid var(--border); }
+    .fcm-now { font-weight: 700; font-size: 0.88rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .fcm-cmp { font-variant-numeric: tabular-nums; white-space: nowrap; font-weight: 600; }
+    .fcm-base { display: block; font-size: 0.68rem; font-weight: 400; color: var(--text-secondary); }
+    .fcm-muted { color: var(--text-secondary); font-weight: 500; }
+    .fcm-cmp--same { background: repeating-linear-gradient(45deg, transparent, transparent 5px, rgba(0,0,0,0.025) 5px, rgba(0,0,0,0.025) 10px); }
+    .fcm-drill-btn {
+      margin-top: 8px; background: none; border: none; padding: 2px 0;
+      font: inherit; font-size: 0.78rem; font-weight: 600; color: var(--fb-blue); cursor: pointer;
+    }
+    .fcm-drill-btn:hover { text-decoration: underline; }
+    .fcm-drill { display: none; margin-top: 8px; padding-top: 10px; border-top: 1px dashed var(--border); }
+    .fcm-drill.open { display: block; }
+    .fcm-drill__head { font-size: 0.82rem; font-weight: 700; margin-bottom: 8px; }
+    .fcm-parts { margin-bottom: 12px; }
+    .fcm-part { display: grid; grid-template-columns: 1fr 46px minmax(70px, 130px) 152px; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px dashed var(--border); }
+    .fcm-part:last-child { border-bottom: none; }
+    .fcm-part__label { font-size: 0.78rem; font-weight: 600; }
+    .fcm-part__detail { font-size: 0.7rem; color: var(--text-secondary); }
+    .fcm-part__count { font-size: 0.74rem; color: var(--text-secondary); text-align: right; font-variant-numeric: tabular-nums; }
+    .fcm-part__val { text-align: right; font-weight: 700; font-size: 0.82rem; font-variant-numeric: tabular-nums; }
+    .fcm-share { display: block; font-size: 0.68rem; font-weight: 500; color: var(--text-secondary); white-space: nowrap; }
+    .fcm-list { margin-top: 10px; }
+    .fcm-list__head { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary); margin-bottom: 4px; }
+    .fcm-list__note { text-transform: none; letter-spacing: 0; font-weight: 400; }
+    .fcm-prog { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) 74px; gap: 10px; align-items: baseline; padding: 4px 0; border-bottom: 1px dashed var(--border); }
+    .fcm-prog:last-child { border-bottom: none; }
+    .fcm-prog__name { font-size: 0.76rem; font-weight: 600; overflow-wrap: anywhere; }
+    .fcm-prog__detail { font-size: 0.72rem; color: var(--text-secondary); }
+    .fcm-prog__val { text-align: right; font-weight: 700; font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+    @media (max-width: 640px) {
+      .fcm-part { grid-template-columns: 1fr 84px; }
+      .fcm-part > :nth-child(2), .fcm-part > :nth-child(3) { display: none; }
+      .fcm-prog { grid-template-columns: 1fr 74px; }
+      .fcm-prog__detail { grid-column: 1 / -1; }
+    }
     .hyg-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; margin-bottom: 14px; }
     .hyg-tile { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; background: var(--surface); }
     .hyg-tile__label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-secondary); }
@@ -1565,6 +1625,9 @@
 
     <div id="scope-note" style="font-size:0.8rem;color:var(--text-secondary);margin:2px 0 14px"></div>
 
+    <!-- Narrows every card below to one platform. Populated at render time. -->
+    <div class="pscope" id="platform-scope"></div>
+
     <div class="kpi-row" id="kpi-row"></div>
 
     <!-- Always visible: the one-line answer shouldn't be behind a click. -->
@@ -1582,6 +1645,9 @@
 
     <!-- Flow vs one-off campaign -->
     <div class="card tvn-card" id="flow-vs-campaign-card"></div>
+
+    <!-- Flows vs campaigns: core metrics vs prev / 7d / 30d, and what moved them -->
+    <div class="card" id="flow-campaign-metrics-card"></div>
 
     <!-- CVR Movement by Program -->
     <div class="card cvr-movement-card" id="cvr-movement-card"></div>
@@ -1793,20 +1859,80 @@ function aggregateBy(rows, keyFn) {
 // GLOBAL STATE
 // ─────────────────────────────────────────────
 let _shopifyTotals = null;
-// Grand totals over the trailing 7- and 30-day windows ending on the End date,
-// for the KPI row's "vs 7d avg" / "vs 30d avg" baselines.
+// Totals over the trailing 7- and 30-day windows ending on the End date, for
+// the KPI row's "vs 7d avg" / "vs 30d avg" baselines. Recomputed on every
+// render from _trailTables so they follow the platform scope and the
+// transactional exclusion — otherwise a page filtered to email would compare
+// its 9,712 sessions against a baseline covering email AND SMS, and read as a
+// 53% collapse that never happened.
 let _trailingAvgs = { d7: null, d30: null };
+let _trailTables = { d7: null, d30: null };
+
+// Reduce one trailing table to a baseline, counting only the rows the current
+// scope and exclusion settings would have kept.
+//
+// Summed from the table's own rows rather than joined onto the main result:
+// over a short range the 30-day window contains programs that appear nowhere in
+// the current or comparison period, and joining would silently drop them and
+// understate the baseline.
+function reduceTrailing(block) {
+  if (!block || !Array.isArray(block.rows) || !Array.isArray(block.columns)) return null;
+  const days = block.window && block.window.days;
+  if (!days) return null;
+  const cols = block.columns.map(c => (c.name || '').toLowerCase());
+  const get = (row, i) => i < 0 ? undefined : (Array.isArray(row) ? row[i] : row[block.columns[i].name]);
+  const iSrc = cols.indexOf('utm_source'), iCamp = cols.indexOf('utm_campaign'), iLp = cols.indexOf('landing_page_path');
+  const iSess = cols.indexOf('sessions'), iCvr = cols.indexOf('conversion_rate');
+  if (iSess < 0) return null;
+
+  let sessions = 0, conv = 0;
+  for (const row of block.rows) {
+    const source   = String(get(row, iSrc) ?? '').trim();
+    const campaign = String(get(row, iCamp) ?? '').trim();
+    const lp       = String(get(row, iLp) ?? '').trim();
+    if (!source && !campaign && !lp) continue;
+    const probe = { source, campaign, lp, postConversion: POST_CONVERSION_LP_RE.test(lp) };
+    if (probe.postConversion) continue;
+    if (_excludeOn && isTransactionalRow(probe)) continue;
+    if (_platformScope !== 'all' && ownedPlatform(source).key !== _platformScope) continue;
+    const s = Math.round(parseFloat(get(row, iSess)) || 0);
+    if (!s) continue;
+    sessions += s;
+    conv += s * (normCvr(parseFloat(get(row, iCvr)) || 0) ?? 0);
+  }
+  if (!(sessions > 0)) return null;
+  const cvr = conv / sessions;
+  return {
+    days,
+    start: block.window.start,
+    end: block.window.end,
+    sessions,
+    cvr,
+    txns: conv,
+    sessPerDay: sessions / days,
+    txnPerDay: conv / days,
+  };
+}
+
+function computeTrailingAvgs() {
+  _trailingAvgs = { d7: reduceTrailing(_trailTables.d7), d30: reduceTrailing(_trailTables.d30) };
+}
 // Site-wide sessions + CVR for the same window. Owned's share of total
 // conversions is the number this tab exists to report, and it needs a
 // denominator the page didn't invent.
 let _siteTotals = null;
-// Rows after the transactional/portal filter — everything the cards read.
-let _rawRows = [];
-// Every row as loaded, plus the ones held out. The Data Quality card reports
-// from these so its numbers are complete regardless of the toggle.
+// Three row sets, narrowing left to right:
+//   _allRawRows   every row parsed out of the response
+//   _visibleRows  minus post-conversion pages and (when the box is ticked)
+//                 transactional and portal traffic
+//   _rawRows      minus whatever the platform scope excludes — what the cards read
 let _allRawRows = [];
+let _visibleRows = [];
+let _rawRows = [];
 let _excludedRows = [];
 let _excludeOn = true;
+// Held so the platform-scope control can re-render without re-querying.
+let _lastFilename = '';
 
 // The exact window + filters behind the current pull, so the lazy per-program
 // daily series re-queries on the same basis as the row it was expanded from.
@@ -1868,6 +1994,68 @@ function renderScopeNote(data, source, medium) {
   });
 }
 // ─────────────────────────────────────────────
+// PLATFORM SCOPE
+// ─────────────────────────────────────────────
+// Narrows the whole page to one platform. Email and SMS behave differently
+// enough that most cards describe neither channel when they are blended — the
+// flow-to-campaign CVR gap is wide on SMS and narrow on email, so a blended
+// "flows beat campaigns" reading is partly an artefact of the mix.
+//
+// Re-renders from the rows already in memory rather than re-querying: the pull
+// covers both platforms anyway, and a refetch would cost several seconds to
+// show numbers the browser is already holding.
+let _platformScope = 'all';      // 'all' | 'email' | 'sms'
+const SCOPE_KEY = 'ocvr:platformScope:v1';
+
+function loadScopePref() {
+  try {
+    const v = localStorage.getItem(SCOPE_KEY);
+    if (v === 'all' || v === 'email' || v === 'sms') _platformScope = v;
+  } catch { /* private browsing — scope just starts at 'all' */ }
+}
+
+function inScope(r) {
+  return _platformScope === 'all' || r.parsed.platform.key === _platformScope;
+}
+
+function renderScopeControl() {
+  const host = document.getElementById('platform-scope');
+  if (!host) return;
+  // Counts come from the post-exclusion set, so they match what the cards show.
+  const counts = { all: 0, email: 0, sms: 0 };
+  _visibleRows.forEach(r => {
+    counts.all += r.currS;
+    const k = r.parsed.platform.key;
+    if (k === 'email' || k === 'sms') counts[k] += r.currS;
+  });
+  const opts = [
+    { key: 'all',   label: 'Email + SMS' },
+    { key: 'email', label: 'Email only' },
+    { key: 'sms',   label: 'SMS only' },
+  ];
+  host.innerHTML = `<span class="pscope__label">Show</span>` + opts.map(o => `
+    <button type="button" class="pscope__btn${_platformScope === o.key ? ' pscope__btn--on' : ''}"
+            data-scope="${o.key}" aria-pressed="${_platformScope === o.key}">
+      ${esc(o.label)}<span class="pscope__n">${fmtN(Math.round(counts[o.key]))} sess</span>
+    </button>`).join('');
+
+  host.querySelectorAll('.pscope__btn').forEach(b => {
+    b.addEventListener('click', () => {
+      if (_platformScope === b.dataset.scope) return;
+      _platformScope = b.dataset.scope;
+      try { localStorage.setItem(SCOPE_KEY, _platformScope); } catch { /* ignore */ }
+      rerenderForScope();
+    });
+  });
+}
+
+// Everything downstream of the scope filter. Separate from loadFromShopify so
+// switching platform never re-hits Shopify.
+function rerenderForScope() {
+  render(_visibleRows.filter(inScope), _lastFilename);
+  renderScopeControl();
+}
+// ─────────────────────────────────────────────
 // TRAILING-AVERAGE KPI BASELINES
 // ─────────────────────────────────────────────
 function daysInclusive(start, end) {
@@ -1899,6 +2087,16 @@ function kpiTrailHtml(metric, curr, currDays) {
   // "0/day" next to a live percentage reads as broken.
   const rate = (v) => fmtN(v, v < 10 ? 1 : 0);
   const lines = windows.map(({ label, w }) => {
+    // Both trailing windows END on the range's End date, so they overlap it by
+    // min(currDays, w.days) days. Divided by the longer of the two, that ratio
+    // hits ~1 exactly when the baseline is the range wearing a different name.
+    const sim = Math.min(currDays, w.days) / Math.max(currDays, w.days);
+    if (currDays > 0 && sim >= 0.7) {
+      return `<div class="kpi__trail" title="${esc(
+        `This range is ${currDays} day${currDays === 1 ? '' : 's'} and this baseline covers ${w.days}, both ending ${w.end} — they share ${Math.round(sim * 100)}% of their days, so the comparison is near-zero by construction rather than by performance.`
+      )}"><span class="kpi__trail-label">${label}</span>`
+        + `<span class="kpi__trail-base">&asymp; same days</span></div>`;
+    }
     let valueHtml, delta, tip;
     if (metric === 'cvr') {
       delta = curr - w.cvr;
@@ -1990,6 +2188,10 @@ function render(rawRows, filename) {
   const cvrDelta = kpiCurrCvr - kpiPrevCvr;
   const cvrPct = kpiPrevCvr > 0 ? cvrDelta / kpiPrevCvr * 100 : 0;
   const txnPct = kpiPrevConv > 0 ? kpiTxnDelta / kpiPrevConv * 100 : 0;
+
+  // Trailing baselines follow the current scope and exclusion settings, so they
+  // have to be recomputed here rather than once at parse time.
+  computeTrailingAvgs();
 
   const currDays = _queryCtx ? daysInclusive(_queryCtx.start, _queryCtx.end) : 0;
   const currSessPerDay = currDays > 0 ? kpiCurrS / currDays : 0;
@@ -2168,7 +2370,10 @@ function render(rawRows, filename) {
   });
   renderCvrBuckets(campaignRows);
   renderCorrelation(lpRows);
-  renderHygiene(_allRawRows, _excludedRows, _excludeOn);
+  renderFlowCampaignMetrics(rawRows, currDays);
+  // Scoped alongside everything else, so a page filtered to email doesn't
+  // reconcile against a total that includes SMS.
+  renderHygiene(_allRawRows.filter(inScope), _excludedRows.filter(inScope), _excludeOn);
 
   // ── Contributors list ──
   const contribList = document.getElementById('contributors-list');
@@ -2384,8 +2589,8 @@ const SECTIONS = [
   {
     id: 'sec-channels',
     label: 'Channels',
-    hint: 'Email vs SMS, and automated flows vs scheduled sends.',
-    cards: ['platform-card', 'flow-vs-campaign-card'],
+    hint: 'Email vs SMS, flows vs scheduled sends, and what moved each of them.',
+    cards: ['platform-card', 'flow-vs-campaign-card', 'flow-campaign-metrics-card'],
   },
   {
     id: 'sec-programs',
@@ -2573,6 +2778,7 @@ function makeCardsCollapsible() {
     'session-volume-lp-card': { title: 'Session Volume by Landing Page', hint: 'Which landing pages gained or lost traffic' },
     'cvr-bucket-card':        { title: 'CVR Bucket Summary',      hint: 'Programs grouped by CVR tier' },
     'correlation-card':       { title: 'Duration to CVR Correlation', hint: 'Does time on page predict conversion?' },
+    'flow-campaign-metrics-card': { title: 'Flows vs Campaigns · Core Metrics', hint: 'Each side against prev / 7d / 30d, and what moved it' },
     'hygiene-card':           { title: 'Data Quality & Exclusions', hint: 'What was set aside, and which UTM names would not parse' },
   };
 
@@ -3310,6 +3516,334 @@ function renderHygiene(allRawRows, excluded, excludeOn) {
         Sessions can appear against more than one violation, so the column does not sum to the tile above.
       </div>`
       : '<div class="hyg-empty">Every campaign name in this window parsed cleanly.</div>'}
+  `;
+}
+// ─────────────────────────────────────────────
+// FLOWS vs CAMPAIGNS — CORE METRICS + WHAT DROVE IT
+// ─────────────────────────────────────────────
+// The two-way split card above answers "which is better". This one answers the
+// two questions that follow: how does each side sit against its own recent
+// run-rate, and what actually moved it.
+//
+// Scope it to one platform with the control in the top bar and this becomes
+// "email flows vs email campaigns" — which is the reading that matters, because
+// the flow/campaign gap is enormous on SMS and nearly flat on email, so the
+// blended version of this card describes neither.
+
+// Sums the raw rows in a bucket into current / previous / 7d / 30d totals.
+// Everything is kept as COUNTS and divided at the end: summing per-row rates
+// would weight a 12-session send the same as a 12,000-session one.
+function bucketTotals(rows) {
+  const t = {
+    currS: 0, currConv: 0, currAtc: 0, currRc: 0,
+    prevS: 0, prevConv: 0, prevAtc: 0, prevRc: 0,
+    a7S: 0, a7Conv: 0, a7Atc: 0, a7Rc: 0,
+    a30S: 0, a30Conv: 0, a30Atc: 0, a30Rc: 0,
+    programs: new Set(),
+  };
+  rows.forEach(r => {
+    t.currS    += r.currS;
+    t.currConv += r.currS * r.currC;
+    t.currAtc  += r.currAtc || 0;
+    t.currRc   += r.currRc || 0;
+    t.prevS    += r.prevSess;
+    t.prevConv += r.prevSess * r.prevCvr;
+    t.prevAtc  += r.prevAtc || 0;
+    t.prevRc   += r.prevRc || 0;
+    t.a7S      += r.avg7S || 0;
+    t.a7Conv   += (r.avg7S || 0) * (r.avg7C || 0);
+    t.a7Atc    += r.avg7Atc || 0;
+    t.a7Rc     += r.avg7Rc || 0;
+    t.a30S     += r.avg30S || 0;
+    t.a30Conv  += (r.avg30S || 0) * (r.avg30C || 0);
+    t.a30Atc   += r.avg30Atc || 0;
+    t.a30Rc    += r.avg30Rc || 0;
+    t.programs.add(r.ckey);
+  });
+  return t;
+}
+
+// The metrics the card compares, and how each one is normalised.
+//   'rate'    — already a rate, compared directly in percentage points
+//   'perDay'  — a volume, so it has to be divided by the days in each window
+//               before a 7-day total can be compared to a 90-day one
+const FC_METRICS = [
+  { key: 'sessions', label: 'Sessions / day', kind: 'perDay',
+    val: (t) => t.currS, prev: (t) => t.prevS, a7: (t) => t.a7S, a30: (t) => t.a30S,
+    tip: 'Sessions per day. Volume, so every window is divided by its own length before comparing.' },
+  { key: 'cvr', label: 'Conversion rate', kind: 'rate',
+    val: (t) => t.currS ? t.currConv / t.currS : 0,
+    prev: (t) => t.prevS ? t.prevConv / t.prevS : 0,
+    a7:  (t) => t.a7S  ? t.a7Conv  / t.a7S  : 0,
+    a30: (t) => t.a30S ? t.a30Conv / t.a30S : 0,
+    tip: 'Sessions-weighted conversion rate for the bucket.' },
+  { key: 'txns', label: 'Transactions / day', kind: 'perDay',
+    val: (t) => t.currConv, prev: (t) => t.prevConv, a7: (t) => t.a7Conv, a30: (t) => t.a30Conv,
+    tip: 'Sessions x CVR, per day. An estimate, so it will not tie exactly to an order count.' },
+  { key: 'atc', label: 'Added to cart', kind: 'rate',
+    val: (t) => t.currS ? t.currAtc / t.currS : 0,
+    prev: (t) => t.prevS ? t.prevAtc / t.prevS : 0,
+    a7:  (t) => t.a7S  ? t.a7Atc  / t.a7S  : 0,
+    a30: (t) => t.a30S ? t.a30Atc / t.a30S : 0,
+    tip: 'Share of sessions that added something to the cart. The earliest signal that a send brought the right people.' },
+  { key: 'rc', label: 'Reached checkout', kind: 'rate',
+    val: (t) => t.currS ? t.currRc / t.currS : 0,
+    prev: (t) => t.prevS ? t.prevRc / t.prevS : 0,
+    a7:  (t) => t.a7S  ? t.a7Rc  / t.a7S  : 0,
+    a30: (t) => t.a30S ? t.a30Rc / t.a30S : 0,
+    tip: 'Share of sessions that reached the checkout. The gap between this and CVR is checkout abandonment.' },
+];
+
+function renderFlowCampaignMetrics(rawRows, currDays) {
+  const card = document.getElementById('flow-campaign-metrics-card');
+  if (!card) return;
+
+  const BUCKETS = [
+    { key: 'flow',     label: 'Flows',        color: '#22c55e', desc: 'Automations that fire on a trigger' },
+    { key: 'campaign', label: 'Campaigns',    color: '#f59e0b', desc: 'Sends scheduled for a date' },
+    { key: 'unknown',  label: 'Unclassified', color: SEG_GRAY,  desc: 'Names matching neither convention' },
+  ];
+
+  const byBucket = new Map(BUCKETS.map(b => [b.key, []]));
+  rawRows.forEach(r => {
+    const k = r.parsed.kind;
+    (byBucket.get(k) || byBucket.get('unknown')).push(r);
+  });
+
+  const groups = BUCKETS
+    .map(b => ({ ...b, rows: byBucket.get(b.key) || [], totals: bucketTotals(byBucket.get(b.key) || []) }))
+    .filter(g => g.totals.currS > 0 || g.totals.prevS > 0);
+
+  if (!groups.length) {
+    card.innerHTML = `<h3>Flows vs Campaigns &middot; Core Metrics</h3><p class="card__sub">No program data in scope.</p>`;
+    return;
+  }
+
+  const days = Math.max(1, currDays || 1);
+  const prevDays = days;                 // the auto compare window is the same length
+  const fmtRate = (v) => (v * 100).toFixed(2) + '%';
+  const fmtPerDay = (v) => fmtN(v, v < 10 ? 1 : 0);
+
+  // How much a trailing baseline is just the current range wearing a different
+  // name. Both trailing windows END on the range's End date, so they overlap it
+  // by min(currDays, windowDays) days; dividing by the LONGER of the two gives
+  // ~1 exactly when the two windows are nearly the same set of days.
+  //
+  // This matters constantly here: on a 29-day range the "30d average" is 97% the
+  // same days, so it lands within a hundredth of a point of the current value on
+  // every metric. Reported as a flat "-0.01pp" it reads like a finding — a
+  // channel holding perfectly steady — when it is arithmetic. Marked instead.
+  const similarity = (windowDays) => Math.min(days, windowDays) / Math.max(days, windowDays);
+  const NEAR_SAME = 0.7;
+  // A percentage change off a baseline this small is noise dressed as precision:
+  // 4 sessions/day to 432 is a real move, but "+10,608%" is not how to say it.
+  const MIN_BASE_SESSIONS = 50;
+
+  // One comparison cell: the delta against a baseline, plus the baseline itself.
+  // `trailing` says whether the baseline window ends on the same date as this
+  // range (the 7d/30d columns) or sits entirely before it (the previous-period
+  // column). Only a trailing window can overlap the range, so only a trailing
+  // window can be degenerate — the previous period is disjoint by construction
+  // and an equal-length one must never be flagged as "the same days".
+  const cmpCell = (m, t, base, baseDays, baseSessions, baseLabel, trailing) => {
+    if (base == null || !isFinite(base)) return `<td class="r fcm-cmp"><span class="fcm-muted">&mdash;</span></td>`;
+    const curr = m.val(t);
+    const c = m.kind === 'perDay' ? curr / days : curr;
+    const b = m.kind === 'perDay' ? base / baseDays : base;
+    const baseShown = m.kind === 'rate' ? fmtRate(b) : fmtPerDay(b) + '/day';
+    const currShown = m.kind === 'rate' ? fmtRate(c) : fmtPerDay(c) + '/day';
+
+    if (!(b > 0) && !(c > 0)) return `<td class="r fcm-cmp"><span class="fcm-muted">&mdash;</span></td>`;
+
+    const sim = trailing ? similarity(baseDays) : 0;
+    if (sim >= NEAR_SAME) {
+      return `<td class="r fcm-cmp fcm-cmp--same" title="${esc(
+        `This range is ${days} days and the baseline window is ${baseDays}, both ending on the same date — they share ${Math.round(sim * 100)}% of their days, so the two are close to the same number by construction. Pick a shorter range to make this column mean something.`
+      )}"><span class="fcm-muted">&asymp; same days</span><span class="fcm-base">${esc(baseShown)}</span></td>`;
+    }
+
+    if (baseSessions != null && baseSessions < MIN_BASE_SESSIONS) {
+      return `<td class="r fcm-cmp" title="${esc(
+        `${baseLabel} had only ${fmtN(Math.round(baseSessions))} sessions in this bucket — too few for a percentage to mean anything, so the two values are shown instead. ${baseShown} then, ${currShown} now.`
+      )}"><span class="fcm-muted">${esc(baseShown)} &rarr; ${esc(currShown)}</span><span class="fcm-base">low base</span></td>`;
+    }
+
+    const d = c - b;
+    const pct = b > 0 ? d / b * 100 : null;
+    const shown = m.kind === 'rate' ? fmtPP(d * 100) : (pct == null ? fmtS(d, 1) : fmtP(pct, 1));
+    return `<td class="r fcm-cmp" title="${esc(`${baseLabel}: ${baseShown}. This period: ${currShown}.`)}">
+      <span class="${cls(d)}">${shown}</span><span class="fcm-base">${esc(baseShown)}</span></td>`;
+  };
+
+  const groupBlock = (g, gi) => {
+    const t = g.totals;
+    const rowsHtml = FC_METRICS.map(m => {
+      const shownCurr = m.kind === 'rate' ? fmtRate(m.val(t)) : fmtPerDay(m.val(t) / days);
+      return `
+        <tr>
+          <th scope="row" class="fcm-metric" title="${esc(m.tip)}">${esc(m.label)}</th>
+          <td class="r fcm-now">${shownCurr}</td>
+          ${cmpCell(m, t, m.prev(t), prevDays, t.prevS, 'The previous period', false)}
+          ${cmpCell(m, t, m.a7(t),  7,  t.a7S,  'The 7 days ending on the End date', true)}
+          ${cmpCell(m, t, m.a30(t), 30, t.a30S, 'The 30 days ending on the End date', true)}
+        </tr>`;
+    }).join('');
+
+    return `
+      <div class="fcm-group">
+        <div class="fcm-head">
+          <span class="tvn-swatch" style="background:${g.color}"></span>
+          <span class="fcm-head__label">${esc(g.label)}</span>
+          <span class="fcm-head__meta">${esc(g.desc)} &middot; ${fmtN(t.programs.size)} program${t.programs.size === 1 ? '' : 's'} &middot; ${fmtN(Math.round(t.currS))} sessions</span>
+        </div>
+        <div style="overflow-x:auto">
+          <table class="fcm-table">
+            <thead>
+              <tr>
+                <th></th>
+                <th class="r">This period</th>
+                <th class="r" title="Against the comparison window, which is the equal-length period immediately before this one.">vs prev</th>
+                <th class="r" title="Against the 7 days ending on the End date. That window OVERLAPS this period — it reads as 'vs recent run-rate', not as an independent baseline.">vs 7d avg</th>
+                <th class="r" title="Against the 30 days ending on the End date. Also overlaps this period.">vs 30d avg</th>
+              </tr>
+            </thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+        </div>
+        <button type="button" class="fcm-drill-btn" data-fcm-drill="${gi}">&#8627; What drove the change in ${esc(g.label.toLowerCase())}</button>
+        <div class="fcm-drill" data-fcm-panel="${gi}"></div>
+      </div>`;
+  };
+
+  card.innerHTML = `
+    <h3>Flows vs Campaigns &middot; Core Metrics</h3>
+    <p class="card__sub">Each side against its own recent run-rate, then what moved it. <strong>vs prev</strong> is the equal-length window immediately before this one. <strong>vs 7d</strong> and <strong>vs 30d</strong> end on the same date as this range, so they overlap it &mdash; they read as "vs recent run-rate", not as independent baselines. Volume metrics are compared per day; rates are compared in percentage points. A trailing column reading <em>&asymp; same days</em> means the range you picked already covers most of that window &mdash; on a month-long range the 30-day column is 97% the same data and can only come back flat. Shorten the range to make it say something. Use the <strong>Email / SMS</strong> control at the top of the page to read this one platform at a time &mdash; the flow-to-campaign gap is wide on SMS and narrow on email, so the blended version describes neither.</p>
+    ${groups.map(groupBlock).join('')}
+  `;
+
+  card.querySelectorAll('.fcm-drill-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const gi = btn.dataset.fcmDrill;
+      const panel = card.querySelector(`.fcm-drill[data-fcm-panel="${gi}"]`);
+      if (!panel) return;
+      const open = panel.classList.toggle('open');
+      btn.textContent = open
+        ? `↑ Hide what drove ${groups[gi].label.toLowerCase()}`
+        : `↳ What drove the change in ${groups[gi].label.toLowerCase()}`;
+      if (open && !panel.dataset.loaded) {
+        panel.dataset.loaded = '1';
+        renderBucketDrivers(panel, groups[gi]);
+      }
+    });
+  });
+}
+
+// What moved a bucket, decomposed the way the bucket actually changes.
+//
+// For campaigns the dominant mechanism is not that existing sends got better or
+// worse — it is that this period contains different sends than the last one. So
+// the transaction change is split three ways before any per-program ranking:
+// programs that are new this period, programs that ran last period and not this
+// one, and programs present in both. Only that third group can be decomposed
+// into a sessions effect and a CVR effect; treating a brand-new campaign as an
+// infinite CVR improvement is how a table like this ends up nonsense.
+function renderBucketDrivers(container, group) {
+  const byProgram = new Map();
+  group.rows.forEach(r => {
+    let g = byProgram.get(r.ckey);
+    if (!g) { g = { ckey: r.ckey, currS: 0, currConv: 0, prevS: 0, prevConv: 0 }; byProgram.set(r.ckey, g); }
+    g.currS    += r.currS;
+    g.currConv += r.currS * r.currC;
+    g.prevS    += r.prevSess;
+    g.prevConv += r.prevSess * r.prevCvr;
+  });
+
+  const all = [...byProgram.values()].map(g => ({
+    ...g,
+    currC: g.currS ? g.currConv / g.currS : 0,
+    prevC: g.prevS ? g.prevConv / g.prevS : 0,
+    txnDelta: g.currConv - g.prevConv,
+  }));
+
+  const isNew     = (g) => g.prevS === 0 && g.currS > 0;
+  const isRetired = (g) => g.currS === 0 && g.prevS > 0;
+  const fresh   = all.filter(isNew);
+  const retired = all.filter(isRetired);
+  const ongoing = all.filter(g => !isNew(g) && !isRetired(g));
+
+  const sum = (arr, f) => arr.reduce((a, x) => a + f(x), 0);
+  const freshTxn   = sum(fresh,   g => g.txnDelta);
+  const retiredTxn = sum(retired, g => g.txnDelta);
+  const ongoingTxn = sum(ongoing, g => g.txnDelta);
+  const totalTxn   = freshTxn + retiredTxn + ongoingTxn;
+
+  // Within the programs present in both periods, the classic split: how much of
+  // the move came from traffic and how much from conversion.
+  let sessEff = 0, cvrEff = 0, interact = 0;
+  ongoing.forEach(g => {
+    const d = decompose(g.prevS, g.prevC, g.currS, g.currC);
+    sessEff  += d.sessEffect;
+    cvrEff   += d.cvrEffect;
+    interact += d.interaction;
+  });
+
+  // Share of the bucket's total change. Shown only when the part pushes the same
+  // way as the total: when a bucket falls 106 transactions while its new sends
+  // add 127, the honest reading is "+127 against a −106 total", and rendering
+  // that as "−120% of the change" makes a clear fact look like a paradox.
+  const share = (v) => {
+    if (totalTxn === 0 || v === 0) return '';
+    if (Math.sign(v) !== Math.sign(totalTxn)) return ' <span class="fcm-share">against the move</span>';
+    return ` <span class="fcm-share">${fmtP(v / totalTxn * 100, 0)}</span>`;
+  };
+  const bar = (v, max) => {
+    const w = max > 0 ? Math.round(Math.abs(v) / max * 100) : 0;
+    return `<div class="contrib-bar-wrap"><div class="contrib-bar" style="width:${w}%;background:${v >= 0 ? 'var(--positive)' : 'var(--negative)'}"></div></div>`;
+  };
+  const maxPart = Math.max(Math.abs(freshTxn), Math.abs(retiredTxn), Math.abs(ongoingTxn), 1e-9);
+
+  const partRow = (label, detail, value, count) => `
+    <div class="fcm-part">
+      <div>
+        <div class="fcm-part__label">${label}</div>
+        <div class="fcm-part__detail">${detail}</div>
+      </div>
+      <div class="fcm-part__count">${fmtN(count)}</div>
+      <div>${bar(value, maxPart)}</div>
+      <div class="fcm-part__val ${cls(value)}">${fmtS(Math.round(value))}${share(value)}</div>
+    </div>`;
+
+  const topList = (arr, sortFn, title, note, render) => {
+    const picked = [...arr].sort(sortFn).slice(0, 8);
+    if (!picked.length) return '';
+    return `<div class="fcm-list">
+      <div class="fcm-list__head">${title}${note ? ` <span class="fcm-list__note">${note}</span>` : ''}</div>
+      ${picked.map(render).join('')}</div>`;
+  };
+
+  const progRow = (g, detail) => `
+    <div class="fcm-prog">
+      <div class="fcm-prog__name" title="${esc(programLabel(g.ckey))}">${esc(programLabel(g.ckey))}</div>
+      <div class="fcm-prog__detail">${detail}</div>
+      <div class="fcm-prog__val ${cls(g.txnDelta)}">${fmtS(Math.round(g.txnDelta))}</div>
+    </div>`;
+
+  container.innerHTML = `
+    <div class="fcm-drill__head">Transaction change in ${esc(group.label.toLowerCase())}: <span class="${cls(totalTxn)}">${fmtS(Math.round(totalTxn))}</span></div>
+    <div class="fcm-parts">
+      ${partRow('New this period', 'Programs with no traffic in the comparison window', freshTxn, fresh.length)}
+      ${partRow('Retired', 'Ran in the comparison window, nothing this period', retiredTxn, retired.length)}
+      ${partRow('Ran in both periods', `Sessions effect ${fmtS(Math.round(sessEff))} &middot; CVR effect ${fmtS(Math.round(cvrEff))} &middot; interaction ${fmtS(Math.round(interact))}`, ongoingTxn, ongoing.length)}
+    </div>
+    ${topList(ongoing, (a, b) => Math.abs(b.txnDelta) - Math.abs(a.txnDelta),
+      'Biggest movers among programs that ran in both periods', '',
+      g => progRow(g, `${fmtN(Math.round(g.prevS))} &rarr; ${fmtN(Math.round(g.currS))} sess &middot; ${(g.prevC * 100).toFixed(2)}% &rarr; ${(g.currC * 100).toFixed(2)}% CVR`))}
+    ${topList(fresh, (a, b) => b.txnDelta - a.txnDelta,
+      'Largest new programs', 'no prior-period traffic, so there is no CVR change to read',
+      g => progRow(g, `${fmtN(Math.round(g.currS))} sess at ${(g.currC * 100).toFixed(2)}% CVR`))}
+    ${topList(retired, (a, b) => a.txnDelta - b.txnDelta,
+      'Largest retired programs', 'ran last period only',
+      g => progRow(g, `was ${fmtN(Math.round(g.prevS))} sess at ${(g.prevC * 100).toFixed(2)}% CVR`))}
   `;
 }
 const SEG_GRAY = '#9aa4b2';
@@ -4582,40 +5116,6 @@ function renderCorrelation(lpRows) {
   });
   wrap.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
 }
-// ─────────────────────────────────────────────
-// SHOPIFY QL PARSING
-// ─────────────────────────────────────────────
-// Grand totals for one trailing-window block (avg7d / avg30d). ShopifyQL's
-// WITH TOTALS repeats the totals on every data row instead of emitting a totals
-// row, and it computes them over the full dataset even when the row list is
-// capped — so reading row[0] is both correct and cap-proof.
-// Sessions and transactions are returned as PER-DAY rates: the current period
-// can be any length, and comparing its total against a 7- or 30-day total would
-// be meaningless. CVR is a rate already, so it passes through.
-function parseTrailingWindow(block) {
-  if (!block || !Array.isArray(block.columns) || !Array.isArray(block.rows) || !block.rows.length) return null;
-  const days = block.window && block.window.days;
-  if (!days) return null;
-  const cols = block.columns.map(c => (c.name || '').toLowerCase());
-  const iS = cols.findIndex(s => s === 'sessions__totals');
-  const iC = cols.findIndex(s => s === 'conversion_rate__totals');
-  if (iS < 0) return null;
-  const row = block.rows[0];
-  const cell = (i) => i < 0 ? 0 : (parseFloat(Array.isArray(row) ? row[i] : row[block.columns[i].name]) || 0);
-  const sessions = cell(iS);
-  if (!(sessions > 0)) return null;
-  const cvr = normCvr(cell(iC)) ?? 0;
-  return {
-    days,
-    start: block.window.start,
-    end: block.window.end,
-    sessions,
-    cvr,
-    txns: sessions * cvr,
-    sessPerDay: sessions / days,
-    txnPerDay: sessions * cvr / days,
-  };
-}
 function parseShopifyQL(data) {
   const { columns, rows } = data;
   if (!columns || !rows || !rows.length) throw new Error('No data returned from Shopify.');
@@ -4639,8 +5139,12 @@ function parseShopifyQL(data) {
   const iSess     = colNames.findIndex(s => s === 'sessions');
   const iCvr      = colNames.findIndex(s => s === 'conversion_rate');
   const iDur      = colNames.findIndex(s => s === 'average_session_duration');
+  const iAtc      = colNames.findIndex(s => s === 'sessions_with_cart_additions');
+  const iRc       = colNames.findIndex(s => s === 'sessions_that_reached_checkout');
   const iPrevS    = findPrior('sessions');
   const iPrevCvr  = findPrior('conversion_rate');
+  const iPrevAtc  = findPrior('sessions_with_cart_additions');
+  const iPrevRc   = findPrior('sessions_that_reached_checkout');
 
   const iTotS       = colNames.findIndex(s => s === 'sessions__totals');
   const iTotCvr     = colNames.findIndex(s => s === 'conversion_rate__totals');
@@ -4666,35 +5170,41 @@ function parseShopifyQL(data) {
     _shopifyTotals = null;
   }
 
-  _trailingAvgs = {
-    d7:  parseTrailingWindow(data.avg7d),
-    d30: parseTrailingWindow(data.avg30d),
-  };
+  // Held whole rather than reduced to grand totals here: the KPI row's "vs 7d /
+  // vs 30d" lines have to answer for whatever the page is currently scoped to,
+  // and a grand total can only ever answer for all of it. Reduced per render in
+  // computeTrailingAvgs().
+  _trailTables = { d7: data.avg7d || null, d30: data.avg30d || null };
   _siteTotals = data.site && data.site.sessions > 0 ? data.site : null;
 
-  // Trailing-7-day CVR per source × campaign × landing page. Keyed on all three
-  // so it survives aggregation by any one of them.
-  const avg7Map = new Map();
-  if (data.avg7d && Array.isArray(data.avg7d.rows) && Array.isArray(data.avg7d.columns)) {
-    const a = data.avg7d;
-    const aCols = a.columns.map(c => (c.name || '').toLowerCase());
-    const aGet = (row, i) => i < 0 ? undefined : (Array.isArray(row) ? row[i] : row[a.columns[i].name]);
-    const aiSrc = aCols.findIndex(s => s === 'utm_source');
-    const aiC   = aCols.findIndex(s => s === 'utm_campaign');
-    const aiL   = aCols.findIndex(s => s === 'landing_page_path');
-    const aiS   = aCols.findIndex(s => s === 'sessions');
-    const aiCvr = aCols.findIndex(s => s === 'conversion_rate');
-    for (const row of a.rows) {
-      const src = String(aGet(row, aiSrc) ?? '').trim();
-      const c   = String(aGet(row, aiC) ?? '').trim();
-      const l   = String(aGet(row, aiL) ?? '').trim();
+  // Trailing-window metrics per source × campaign × landing page, keyed on all
+  // three so they survive aggregation by any one of them. Both the 7- and
+  // 30-day tables come back in the same shape, so one indexer serves both.
+  const indexTrailing = (block) => {
+    const map = new Map();
+    if (!block || !Array.isArray(block.rows) || !Array.isArray(block.columns)) return map;
+    const cols = block.columns.map(c => (c.name || '').toLowerCase());
+    const get = (row, i) => i < 0 ? undefined : (Array.isArray(row) ? row[i] : row[block.columns[i].name]);
+    const iS_ = cols.indexOf('utm_source'), iC_ = cols.indexOf('utm_campaign'), iL_ = cols.indexOf('landing_page_path');
+    const iSess_ = cols.indexOf('sessions'), iCvr_ = cols.indexOf('conversion_rate');
+    const iAtc_ = cols.indexOf('sessions_with_cart_additions');
+    const iRc_  = cols.indexOf('sessions_that_reached_checkout');
+    for (const row of block.rows) {
+      const src = String(get(row, iS_) ?? '').trim();
+      const c   = String(get(row, iC_) ?? '').trim();
+      const l   = String(get(row, iL_) ?? '').trim();
       if (!src && !c && !l) continue;                 // skip the totals-bearing shell
-      avg7Map.set(src + KSEP + c + KSEP + l, {
-        s: Math.round(parseFloat(aGet(row, aiS)) || 0),
-        c: normCvr(parseFloat(aGet(row, aiCvr)) || 0) ?? 0,
+      map.set(src + KSEP + c + KSEP + l, {
+        s:   Math.round(parseFloat(get(row, iSess_)) || 0),
+        c:   normCvr(parseFloat(get(row, iCvr_)) || 0) ?? 0,
+        atc: Math.round(parseFloat(get(row, iAtc_)) || 0),
+        rc:  Math.round(parseFloat(get(row, iRc_)) || 0),
       });
     }
-  }
+    return map;
+  };
+  const avg7Map  = indexTrailing(data.avg7d);
+  const avg30Map = indexTrailing(data.avg30d);
 
   // Klaviyo emits a fully lower-cased twin of most campaign names, carrying a
   // few percent of the real send's traffic. Those are two rows in ShopifyQL and
@@ -4725,7 +5235,9 @@ function parseShopifyQL(data) {
     // Skip the row that carries only totals (every dimension empty).
     if (!source && !campaign && !lp) continue;
 
-    const a7 = avg7Map.get(source + KSEP + campaign + KSEP + lp);
+    const trailKey = source + KSEP + campaign + KSEP + lp;
+    const a7  = avg7Map.get(trailKey);
+    const a30 = avg30Map.get(trailKey);
     const ckey = (source + KSEP + campaign).toLowerCase();
     const canon = _ckeyCanon.get(ckey) || { source, campaign };
     parsed.push({
@@ -4740,10 +5252,22 @@ function parseShopifyQL(data) {
       currS:    Math.round(parseFloat(getVal(row, iSess)) || 0),
       currC:    normCvr(parseFloat(getVal(row, iCvr)) || 0) ?? 0,
       currDur:  iDur >= 0 ? (parseFloat(getVal(row, iDur)) || 0) : 0,
+      // Funnel COUNTS, not rates -- counts sum cleanly across any grouping,
+      // rates don't.
+      currAtc:  iAtc >= 0 ? Math.round(parseFloat(getVal(row, iAtc)) || 0) : 0,
+      currRc:   iRc  >= 0 ? Math.round(parseFloat(getVal(row, iRc))  || 0) : 0,
       prevSess: Math.round(parseFloat(getVal(row, iPrevS)) || 0),
       prevCvr:  normCvr(parseFloat(getVal(row, iPrevCvr)) || 0) ?? 0,
+      prevAtc:  iPrevAtc >= 0 ? Math.round(parseFloat(getVal(row, iPrevAtc)) || 0) : 0,
+      prevRc:   iPrevRc  >= 0 ? Math.round(parseFloat(getVal(row, iPrevRc))  || 0) : 0,
       avg7S:    a7 ? a7.s : 0,
       avg7C:    a7 ? a7.c : 0,
+      avg7Atc:  a7 ? a7.atc : 0,
+      avg7Rc:   a7 ? a7.rc : 0,
+      avg30S:   a30 ? a30.s : 0,
+      avg30C:   a30 ? a30.c : 0,
+      avg30Atc: a30 ? a30.atc : 0,
+      avg30Rc:  a30 ? a30.rc : 0,
     });
   }
 
@@ -4838,12 +5362,14 @@ async function loadFromShopify() {
     _allRawRows   = all;
     _excludeOn    = excludeTx;
     _excludedRows = all.filter(isExcludedRow);
-    const rows    = all.filter(r => !r.postConversion && !(excludeTx && isTransactionalRow(r)));
+    _visibleRows  = all.filter(r => !r.postConversion && !(excludeTx && isTransactionalRow(r)));
 
     const compareLabel = useCustomCompare
       ? `${compareStart} → ${compareEnd}`
       : (auto ? `${auto.start} → ${auto.end} (auto · prev period)` : 'previous period');
-    render(rows, `Shopify · owned · ${startDate} → ${endDate} vs ${compareLabel}`);
+    _lastFilename = `Shopify · owned · ${startDate} → ${endDate} vs ${compareLabel}`;
+    render(_visibleRows.filter(inScope), _lastFilename);
+    renderScopeControl();
     renderScopeNote(data, source, medium);
 
     const info = document.getElementById('top-bar-info');
@@ -4891,6 +5417,7 @@ VISUALIZE conversion_rate`;
 // ─────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   setShopifyReportLink();
+  loadScopePref();
 
   document.getElementById('btn-reset').addEventListener('click', () => {
     document.getElementById('results-screen').style.display = 'none';

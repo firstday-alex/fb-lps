@@ -3519,9 +3519,17 @@ VISUALIZE conversion_rate TYPE table`;
   ORDER BY sessions DESC
   LIMIT ${ROW_LIMIT}` : null;
 
+  // The trailing windows carry the funnel counts as well as sessions and CVR, so
+  // the flow-vs-campaign card can put add-to-cart and reached-checkout against a
+  // 7- and 30-day baseline rather than only against the previous period. Both
+  // windows END on the range's End date -- the convention the KPI row already
+  // uses -- so they overlap the current range and read as "vs recent run-rate",
+  // not as an independent prior period.
+  const TRAIL_METRICS = 'sessions, conversion_rate, sessions_with_cart_additions, sessions_that_reached_checkout';
+
   const sevenStart = shiftDate(end, -6);
   const avg7Query = `FROM sessions
-  SHOW sessions, conversion_rate
+  SHOW ${TRAIL_METRICS}
   WHERE ${scope.where}
   GROUP BY ${GROUP} WITH TOTALS
   SINCE ${sevenStart} UNTIL ${end}
@@ -3530,7 +3538,7 @@ VISUALIZE conversion_rate TYPE table`;
 
   const thirtyStart = shiftDate(end, -29);
   const avg30Query = `FROM sessions
-  SHOW sessions, conversion_rate
+  SHOW ${TRAIL_METRICS}
   WHERE ${scope.where}
   GROUP BY ${GROUP} WITH TOTALS
   SINCE ${thirtyStart} UNTIL ${end}
@@ -3662,12 +3670,18 @@ VISUALIZE conversion_rate TYPE table`;
       'sessions_with_cart_additions', 'sessions_that_reached_checkout',
       'sessions_that_reached_and_completed_checkout',
       'comparison_sessions__previous_period', 'comparison_conversion_rate__previous_period',
+      // Previous-period funnel counts, so the flow-vs-campaign card can show a
+      // period-over-period move on add-to-cart and reached-checkout.
+      'comparison_sessions_with_cart_additions__previous_period',
+      'comparison_sessions_that_reached_checkout__previous_period',
       'sessions__totals', 'conversion_rate__totals',
       'comparison_sessions__previous_period__totals', 'comparison_conversion_rate__previous_period__totals',
     ];
     const TRAIL_KEEP = [
       'utm_source', 'utm_campaign', 'landing_page_path',
-      'sessions', 'conversion_rate', 'sessions__totals', 'conversion_rate__totals',
+      'sessions', 'conversion_rate',
+      'sessions_with_cart_additions', 'sessions_that_reached_checkout',
+      'sessions__totals', 'conversion_rate__totals',
     ];
 
     const packTrail = (t, window) => {
