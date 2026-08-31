@@ -8,6 +8,12 @@
    Adding a dashboard means adding one entry to NAV_GROUPS and one
    `<script src="/app-nav.js" defer></script>` tag to the new page. Names here
    are the app's canonical labels — each page's own <h1> and <title> match them.
+
+   It also carries the Facebook session pill. Every number on every tab is
+   Shopify data and needs no Facebook at all; the Meta connection is only for
+   creative previews, Ads Manager links and the ad-level Meta pulls. But when it
+   IS missing the symptom is silent — ad names sit on "resolving…" — so the pill
+   lives in the header of every page rather than in the drawer.
    ─────────────────────────────────────────────────────────────────────────── */
 (function () {
   const NAV_GROUPS = [
@@ -85,6 +91,36 @@
        would otherwise strand the page title in the middle of the bar. */
     header > h1 { margin-right: auto; }
 
+    /* Facebook session pill. Mirrors .appnav-btn so it sits in a coloured header,
+       with a float variant for the pages that have no <header> at all. */
+    .appnav-fb {
+      display: inline-flex; align-items: center; gap: 6px;
+      border-radius: 8px; font: inherit; font-size: 0.78rem; font-weight: 600;
+      padding: 6px 11px; white-space: nowrap; text-decoration: none;
+      flex-shrink: 0; cursor: pointer;
+      background: rgba(255,255,255,0.14); color: #fff;
+      border: 1px solid rgba(255,255,255,0.35);
+    }
+    .appnav-fb__dot {
+      width: 7px; height: 7px; border-radius: 50%; background: currentColor;
+      flex-shrink: 0; opacity: 0.9;
+    }
+    /* Connected is ambient: legible, not loud. */
+    .appnav-fb--on { opacity: 0.85; }
+    .appnav-fb--on:hover { opacity: 1; background: rgba(255,255,255,0.26); }
+    /* Disconnected is the only state worth interrupting for — previews are dead
+       until it's fixed, and nothing else on the page says so. */
+    .appnav-fb--off { background: #ffb020; color: #3d2b00; border-color: #ffb020; }
+    .appnav-fb--off:hover { background: #ffc248; }
+    .appnav-fb--pending { opacity: 0.6; }
+    .appnav-fb__count { font-weight: 500; opacity: 0.8; }
+    .appnav-fb--float {
+      position: fixed; top: 12px; right: 12px; z-index: 9000;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.18);
+      background: #1877f2; border-color: #1877f2; color: #fff;
+    }
+    .appnav-fb--float.appnav-fb--off { background: #ffb020; border-color: #ffb020; color: #3d2b00; }
+
     .appnav-scrim {
       position: fixed; inset: 0; background: rgba(15,22,36,0.45);
       opacity: 0; pointer-events: none; transition: opacity 0.16s;
@@ -139,6 +175,73 @@
     return s === '' ? '/' : s;
   };
 
+  // ── Facebook session pill ────────────────────────────────────────────────
+  // Only the Meta-backed features need it: creative previews, Ads Manager deep
+  // links, and the ad-level pulls on the Meta tabs. Shopify numbers are
+  // unaffected, so the pill never blocks anything — it just says what state the
+  // connection is in and offers the one-click fix.
+  const authHref = (path) => path + '?next=' + encodeURIComponent(location.pathname + location.search);
+
+  function buildFbPill(header) {
+    const pill = document.createElement('a');
+    pill.className = 'appnav-fb appnav-fb--pending';
+    pill.innerHTML = '<span class="appnav-fb__dot"></span>Facebook…';
+    pill.title = 'Checking the Facebook connection…';
+    pill.href = authHref('/auth/facebook');
+
+    if (header) header.insertBefore(pill, header.children[1] || null);
+    else { pill.classList.add('appnav-fb--float'); document.body.appendChild(pill); }
+
+    let connected = null;
+
+    const paint = () => {
+      pill.classList.remove('appnav-fb--pending', 'appnav-fb--on', 'appnav-fb--off');
+      if (connected === null) {
+        pill.classList.add('appnav-fb--pending');
+        return;
+      }
+      if (connected) {
+        pill.classList.add('appnav-fb--on');
+        pill.innerHTML = '<span class="appnav-fb__dot"></span>Facebook connected' + progressHtml();
+        pill.title = 'Connected to Facebook — creative previews and Ads Manager links work. Click to disconnect.';
+        pill.href = authHref('/auth/logout');
+      } else {
+        pill.classList.add('appnav-fb--off');
+        pill.innerHTML = '<span class="appnav-fb__dot"></span>Connect Facebook';
+        pill.title = 'Not connected to Facebook. Ad-name previews and Ads Manager links stay blank until you sign in; '
+          + 'every Shopify number on the page works without it.';
+        pill.href = authHref('/auth/facebook');
+      }
+    };
+
+    // Resolving an ad name is two Meta calls behind a 2-worker queue, so a big
+    // table takes a while. Showing the count is the difference between "working"
+    // and "stuck" — the question that sent us looking at the connection.
+    function progressHtml() {
+      const s = window.AdLink && window.AdLink.state;
+      if (!s || !s.seen.size) return '';
+      const done = s.resolved + s.failed;
+      if (done >= s.seen.size) return ` <span class="appnav-fb__count">· ${s.resolved}/${s.seen.size} previews</span>`;
+      return ` <span class="appnav-fb__count">· ${done}/${s.seen.size} previews…</span>`;
+    }
+
+    fetch('/api/auth-status')
+      .then(r => r.json())
+      .then(j => { connected = !!j.authenticated; paint(); })
+      .catch(() => { connected = false; paint(); });
+
+    // The resolver hit a 401 mid-flight: the status we fetched at load is stale.
+    document.addEventListener('adlink-auth-failed', () => { connected = false; paint(); });
+
+    if (window.AdLink) {
+      let tick = null;
+      window.AdLink.onProgress(() => {
+        if (tick) return;                       // one repaint per second is plenty
+        tick = setTimeout(() => { tick = null; if (connected) paint(); }, 1000);
+      });
+    }
+  }
+
   function build() {
     const style = document.createElement('style');
     style.textContent = CSS;
@@ -160,6 +263,8 @@
       btn.classList.add('appnav-btn--float');
       document.body.appendChild(btn);
     }
+
+    buildFbPill(header);
 
     const scrim = document.createElement('div');
     scrim.className = 'appnav-scrim';
@@ -185,6 +290,10 @@
           }).join('')}
         `).join('')}
         <div class="appnav-group"><span class="appnav-group__label">Session</span></div>
+        <a class="appnav-item" href="${authHref('/auth/facebook')}">
+          <div class="appnav-item__name">Connect Facebook</div>
+          <div class="appnav-item__desc">Needed only for creative previews, Ads Manager links and the Meta tabs — returns you to this page</div>
+        </a>
         <a class="appnav-item" href="/logout">
           <div class="appnav-item__name">Sign out</div>
           <div class="appnav-item__desc">Clears the shared-password session on this browser</div>

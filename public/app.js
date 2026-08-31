@@ -26,15 +26,16 @@ async function checkAuthStatus() {
   try {
     const res = await fetch('/api/auth-status');
     const data = await res.json();
-    const authSection = document.getElementById('auth-section');
     const accountSection = document.getElementById('account-section');
+    // The Facebook connect/disconnect control lives in the shared nav bar now
+    // (app-nav.js), on every page rather than only this one — so this page just
+    // decides whether the account picker can be used.
     if (data.authenticated) {
-      authSection.innerHTML = '<button class="btn btn-logout" onclick="logout()">Logout</button>';
       accountSection.classList.remove('hidden');
       loadAdAccounts();
     } else {
-      authSection.innerHTML = '<button class="btn btn-login" onclick="login()">Login with Facebook</button>';
       accountSection.classList.add('hidden');
+      showError('Not connected to Facebook — use “Connect Facebook” in the header to load ads.');
     }
   } catch {
     showError('Failed to check authentication status.');
@@ -49,9 +50,6 @@ function checkForErrors() {
     window.history.replaceState({}, '', '/');
   }
 }
-
-function login() { window.location.href = '/auth/facebook'; }
-function logout() { window.location.href = '/auth/logout'; }
 
 // --- Ad Accounts ---
 

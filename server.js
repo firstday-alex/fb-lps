@@ -276,23 +276,37 @@ function requireAuth(req, res, next) {
 
 // --- OAuth routes ---
 
+// Meta echoes `state` back to the callback untouched, so the page the operator
+// started from rides along in it. Without that, signing in from any dashboard
+// dumped them on the index and they had to navigate back and re-run the query.
+const encodeReturnTo = (v) => Buffer.from(safeNext(v), 'utf8').toString('base64url');
+const decodeReturnTo = (v) => {
+  try { return safeNext(Buffer.from(String(v || ''), 'base64url').toString('utf8')); }
+  catch { return '/'; }
+};
+// The return path may already carry a query string.
+const withParam = (url, key, value) =>
+  url + (url.includes('?') ? '&' : '?') + key + '=' + encodeURIComponent(value);
+
 app.get('/auth/facebook', (req, res) => {
   const authUrl = `https://www.facebook.com/${META_API_VERSION}/dialog/oauth`
     + `?client_id=${META_APP_ID}`
     + `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}`
     + `&scope=ads_read,pages_read_engagement,pages_show_list,business_management`
-    + `&response_type=code`;
+    + `&response_type=code`
+    + `&state=${encodeURIComponent(encodeReturnTo(req.query.next))}`;
   res.redirect(authUrl);
 });
 
 app.get('/auth/facebook/callback', async (req, res) => {
-  const { code, error, error_description } = req.query;
+  const { code, error, error_description, state } = req.query;
+  const back = decodeReturnTo(state);
 
   if (error) {
-    return res.redirect('/?error=' + encodeURIComponent(error_description || error));
+    return res.redirect(withParam(back, 'error', error_description || error));
   }
   if (!code) {
-    return res.redirect('/?error=No+authorization+code+received');
+    return res.redirect(withParam(back, 'error', 'No authorization code received'));
   }
 
   try {
@@ -306,20 +320,20 @@ app.get('/auth/facebook/callback', async (req, res) => {
     const tokenData = await tokenResponse.json();
 
     if (tokenData.error) {
-      return res.redirect('/?error=' + encodeURIComponent(tokenData.error.message));
+      return res.redirect(withParam(back, 'error', tokenData.error.message));
     }
 
     setTokenCookie(res, tokenData.access_token);
-    res.redirect('/');
+    res.redirect(back);
   } catch (err) {
     console.error('Token exchange failed:', err);
-    res.redirect('/?error=Token+exchange+failed');
+    res.redirect(withParam(back, 'error', 'Token exchange failed'));
   }
 });
 
 app.get('/auth/logout', (req, res) => {
   clearTokenCookie(res);
-  res.redirect('/');
+  res.redirect(safeNext(req.query.next));
 });
 
 app.get('/api/auth-status', (req, res) => {

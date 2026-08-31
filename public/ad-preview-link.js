@@ -147,6 +147,11 @@
           state.authFailed = true;
           state.lastError = e.message;
           state.queue.length = 0;
+          // Everything already on screen is showing "resolving…" and nothing is
+          // coming to replace it — the queue just stopped. Say so on every row,
+          // and tell the page so its nav can offer a Facebook sign-in.
+          applyAuthFailed();
+          document.dispatchEvent(new CustomEvent('adlink-auth-failed'));
           notify();
           return;
         }
@@ -271,6 +276,16 @@
     });
     document.querySelectorAll(`[data-admgr="${key}"]`).forEach(el => {
       el.outerHTML = adsSlotHtml(name, key);
+    });
+  }
+
+  // A 401 ends every outstanding resolution at once. Without this the pending
+  // chips sit on "resolving…" for the life of the page, which reads as a hang
+  // rather than as "you are not signed in to Facebook".
+  function applyAuthFailed() {
+    document.querySelectorAll('.adrill-pending[data-adkey]').forEach(el => {
+      el.outerHTML = noneHtml(el.dataset.adkey,
+        'Not signed in to Facebook — sign in from the nav bar to load creative previews');
     });
   }
 
