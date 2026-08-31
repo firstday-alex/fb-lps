@@ -1026,6 +1026,24 @@ function tokenChips(adName) {
   ).join('')}</div>`;
 }
 
+// The ad names in this table are utm_content values, and the source filter is
+// free text — so the Meta links are only offered when the run was actually
+// pointed at Facebook traffic. Same test as the other tabs. Copying the name is
+// useful either way.
+const META_SOURCE = /facebook/i;
+let _adScopeIsMeta = false;
+
+// A preview costs a name→id lookup plus a preview call, and this table can be
+// long, so only the top slice of the ranked contributors is resolved. The rest
+// would sit on "resolving…" forever, so they get the copy chip alone.
+const AD_LINK_CAP = 40;
+function adChips(name, rank) {
+  if (!name) return '';
+  if (!_adScopeIsMeta || rank >= AD_LINK_CAP) return AdLink.cellHtml(name, { links: false });
+  AdLink.enqueue([name]);
+  return AdLink.cellHtml(name);
+}
+
 function renderDrill(state) {
   const card = document.getElementById('drill-card');
   if (!_activeComponent) {
@@ -1061,7 +1079,7 @@ function renderDrill(state) {
     ? `<div class="drill-empty">No ads in this bucket.</div>`
     : '';
 
-  const rows = contribs.map(c => {
+  const rows = contribs.map((c, ci) => {
     const bp = c.bp * 10000;
     const bpCls = bp >= 0 ? 'pos' : 'neg';
     const dCvr = (c.cvrA != null && c.cvrB != null) ? (c.cvrB - c.cvrA) : null;
@@ -1071,7 +1089,7 @@ function renderDrill(state) {
     return `
       <tr>
         <td class="ad-name" title="${(c.ad || '').replace(/"/g, '&quot;')}">
-          ${c.ad || '<em>(unnamed)</em>'}
+          ${c.ad || '<em>(unnamed)</em>'}${adChips(c.ad, ci)}
           ${tokenChips(c.ad)}
         </td>
         <td class="r">${fmtInt(c.sessA)}</td>
@@ -1246,6 +1264,10 @@ async function runDecomposition() {
 
     const result = decompose(adsA, adsB, threshold);
     _state = result;
+    // Period B is the "after" window, so its end is what the Meta name lookup
+    // should search back from.
+    _adScopeIsMeta = META_SOURCE.test(source);
+    AdLink.setLookupEnd(bEnd);
     _activeComponent = null;
     _drillSort = { key: 'bpAbs', dir: 'desc' };
 
@@ -1363,9 +1385,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  dbg('init complete', { aStart, aEnd, bStart, bEnd });
+  // Read the inputs — these names are locals of runDecomposition, so logging
+  // them here threw a ReferenceError on every page load.
+  const val = (id) => document.getElementById(id).value;
+  dbg('init complete', { aStart: val('a-start'), aEnd: val('a-end'), bStart: val('b-start'), bEnd: val('b-end') });
 });
 </script>
+<script src="/ad-preview-link.js"></script>
 <script src="/app-nav.js" defer></script>
 </body>
 </html>

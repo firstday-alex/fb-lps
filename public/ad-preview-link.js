@@ -275,15 +275,21 @@
   }
 
   // All three chips, wrapped so they wrap as a group under a long ad name
-  // instead of stretching the column. `copy: false` drops the copy button;
-  // `links: false` drops the two Meta links, for rows a page has deliberately
-  // left out of the lookup queue (resolving a name costs two Meta calls, copying
-  // it costs nothing — so those rows still get the copy chip).
+  // instead of stretching the column. Each can be dropped:
+  //   copy: false     — no copy button
+  //   preview: false  — for a page that already has its own preview affordance
+  //                     on the ad name, so the trio isn't doubled up
+  //   links: false    — neither Meta link, for rows a page has deliberately left
+  //                     out of the lookup queue (resolving a name costs Meta
+  //                     calls; copying it costs nothing, so those rows keep copy)
   function cellHtml(adName, opts = {}) {
     if (!adName) return '';
     const key = domKey(adName);
     const parts = [];
-    if (opts.links !== false) parts.push(linkHtml(adName), adsSlotHtml(adName, key));
+    if (opts.links !== false) {
+      if (opts.preview !== false) parts.push(linkHtml(adName));
+      parts.push(adsSlotHtml(adName, key));
+    }
     if (opts.copy !== false) parts.push(copyHtml(adName));
     if (!parts.length) return '';
     return `<span class="adlink-tools">${parts.join('')}</span>`;

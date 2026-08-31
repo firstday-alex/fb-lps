@@ -595,7 +595,42 @@ function dimCell(color) {
 }
 const campCell = dimCell('#1877f2');
 const lpCell   = dimCell('#7c3aed');
-const adCell   = dimCell('#f97316');
+const adDim    = dimCell('#f97316');
+
+// This tab is Meta-only (utm_source is required and defaults to facebook), so
+// every ad name on it is a Facebook ad and gets the standard trio: creative
+// preview, Ads Manager, copy. Only the name is known here — the payload is
+// Shopify's — so the id is resolved by name in the background.
+const adCell = (label) => {
+  const cell = adDim(label);
+  if (!label || label === NONE) return cell;
+  // A name that isn't queued would sit on "resolving…" forever, so past the cap
+  // the preview chip is dropped and the row keeps Ads Manager + copy.
+  const queued = queueAdLink(label);
+  return cell + AdLink.cellHtml(label, queued ? {} : { preview: false });
+};
+
+// Each name costs a Meta call or two, so the number resolved per session is
+// capped; the tables can run to hundreds of rows.
+const AD_LINK_CAP = 60;
+const _adLinkPending = new Set();
+let _adLinkQueued = 0, _adLinkFlush = null;
+function queueAdLink(name) {
+  if (_adLinkPending.has(name)) return true;
+  if (AdLink.state.seen.has(AdLink.norm(name))) return true;   // queued by an earlier paint
+  if (_adLinkQueued >= AD_LINK_CAP) return false;
+  _adLinkPending.add(name);
+  _adLinkQueued++;
+  if (_adLinkFlush) return true;
+  // Cells are built inside a template literal; flush once the paint is done.
+  _adLinkFlush = setTimeout(() => {
+    _adLinkFlush = null;
+    const batch = [..._adLinkPending];
+    _adLinkPending.clear();
+    AdLink.enqueue(batch);
+  }, 0);
+  return true;
+}
 
 // ─────────────────────────────────────────────
 // FORMATTERS
@@ -1126,6 +1161,7 @@ async function load() {
 
 function render(payload, source, medium) {
   _rows = { cur: payload.current.rows, prev: payload.previous.rows };
+  AdLink.setLookupEnd(document.getElementById('date-end').value);
 
   const campaigns = aggregateBy(_rows.cur, _rows.prev, r => keyOr(r.utm_campaign));
   const landingPages = aggregateBy(_rows.cur, _rows.prev, r => keyOr(r.landing_page));
@@ -1206,6 +1242,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 </script>
 
+<script src="/ad-preview-link.js"></script>
 <script src="/app-nav.js" defer></script>
 </body>
 </html>

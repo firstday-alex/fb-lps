@@ -108,6 +108,8 @@ async function loadTopAds() {
       const until = document.getElementById('date-end').value;
       if (!since || !until) { showError('Please select start and end dates.'); return; }
       adsDateParam = `&since=${since}&until=${until}`;
+      // Anchor the preview lookup on the window being viewed, not on today.
+      if (typeof AdLink !== 'undefined') AdLink.setLookupEnd(until);
       shopifyDays = Math.ceil((new Date(until) - new Date(since)) / (1000 * 60 * 60 * 24)) + 1;
     } else {
       adsDateParam = `&date_preset=${dateRange}`;
@@ -242,6 +244,26 @@ function applyFilter() {
   countEl.textContent = campaignId ? `${filtered.length} ad${filtered.length !== 1 ? 's' : ''}` : '';
 }
 
+// --- Ad name chips: preview / Ads Manager / copy ---
+
+// These ads come straight from the Meta insights API, so the ad id is already
+// here: seeding it gives an instant Ads Manager deep link and turns the preview
+// into a single call. Only the first slice of rows is queued for a preview —
+// each one is a Meta call, and the table pages to hundreds of ads. Rows past the
+// cap still get Ads Manager and copy, which cost nothing.
+const AD_PREVIEW_CAP = 40;
+
+function adChips(ad, index) {
+  if (!ad.ad_name || typeof AdLink === 'undefined') return '';
+  const acct = document.getElementById('account-select').value;
+  AdLink.seed(ad.ad_name, ad.ad_id, acct);
+  // index === null is the detail panel: one ad the operator deliberately opened,
+  // always worth resolving.
+  if (index != null && index >= AD_PREVIEW_CAP) return AdLink.cellHtml(ad.ad_name, { preview: false });
+  AdLink.enqueue([ad.ad_name]);
+  return AdLink.cellHtml(ad.ad_name);
+}
+
 // --- Table rendering ---
 
 function buildTableRow(ad, index, metricsMap) {
@@ -267,7 +289,7 @@ function buildTableRow(ad, index, metricsMap) {
   tr.innerHTML = `
     <td class="col-rank">${index + 1}</td>
     <td class="col-name">
-      <div class="ad-name-segments">${segmentsHtml}</div>
+      <div class="ad-name-segments">${segmentsHtml}${adChips(ad, index)}</div>
       <div class="ad-name-campaign">${escapeHtml(ad.campaign_name || '')} <span class="muted">${escapeHtml(ad.adset_name || '')}</span></div>
     </td>
     <td class="col-lp">${lpDisplay}</td>
@@ -362,7 +384,7 @@ function openDetail(ad, metricsMap) {
     <h2>Ad Detail</h2>
     <div class="detail-section">
       <div class="detail-label">Full Ad Name</div>
-      <div class="detail-value detail-adname">${escapeHtml(ad.ad_name || '(unnamed)')}</div>
+      <div class="detail-value detail-adname">${escapeHtml(ad.ad_name || '(unnamed)')}${adChips(ad, null)}</div>
     </div>
 
     <div class="detail-section">

@@ -1941,6 +1941,7 @@ function renderTable() {
       <td>
         <a class="ad-name-link" href="#" data-key="${esc(rowKey)}" title="${esc(r.ad_name)}\nClick to open Meta preview in a new tab">${esc(adShort)}<span class="ad-name-link__chev"> ↗</span></a>
         ${r.ad_ids.length > 1 ? `<span class="ad-count-badge${r.ad_ids.length >= 5 ? ' warn' : ''}" title="Aggregated across ${r.ad_ids.length} ad_ids that share this name & landing page (different ad sets / campaigns). Spend is the sum across all of them.">+${r.ad_ids.length - 1} ads</span>` : ''}
+        ${adChips(r)}
       </td>
       <td><div class="lp-cell" title="${esc(r.landing_page_path)}">${esc(lpShort)}</div></td>
       ${cell(r.spend, p?.spend, fmtUSD(r.spend), { neutral: true })}
@@ -2060,6 +2061,16 @@ async function openAdPreview(linkEl) {
   }
 }
 
+// Ads Manager + copy next to the ad name. The PREVIEW is already there as the
+// ad-name link itself (openAdPreview), which resolves on demand rather than
+// queueing a Meta call per row -- so the trio here is name-link + these two.
+// The ad id comes free with this page's data, so the deep link needs no lookup.
+function adChips(r) {
+  if (!r.ad_name) return '';
+  AdLink.seed(r.ad_name, (r.ad_ids || [])[0], document.getElementById('acct-select').value);
+  return AdLink.cellHtml(r.ad_name, { preview: false });
+}
+
 function renderInsufficient() {
   const card = document.getElementById('insufficient-card');
   const tbody = document.getElementById('insufficient-tbody');
@@ -2070,13 +2081,19 @@ function renderInsufficient() {
   rows.sort((a,b) => b.spend - a.spend);
   tbody.innerHTML = rows.map(r => `
     <tr>
-      <td><div class="ad-name-cell" title="${esc(r.ad_name)}">${esc(r.ad_name)}</div></td>
+      <td><div class="ad-name-cell" title="${esc(r.ad_name)}"><a class="ad-name-link" href="#" data-key="${esc(r.ad_name + '||' + r.landing_page_path)}" title="${esc(r.ad_name)}\nClick to open Meta preview in a new tab">${esc(r.ad_name)}<span class="ad-name-link__chev"> ↗</span></a>${adChips(r)}</div></td>
       <td><div class="lp-cell" title="${esc(r.landing_page_path)}">${esc(r.landing_page_path)}</div></td>
       <td class="r">${fmtUSD(r.spend)}</td>
       <td class="r">${fmtN(r.impressions)}</td>
       <td class="muted">${esc((r.reasons || []).join('; '))}</td>
     </tr>
   `).join('');
+
+  // Same on-demand preview as the main table — these rows are in state.rows too,
+  // so openAdPreview resolves them from the same key.
+  tbody.querySelectorAll('.ad-name-link').forEach(a => {
+    a.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openAdPreview(a); });
+  });
 }
 
 // ─────────────────────────────────────────────
@@ -2644,6 +2661,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 });
 </script>
+<script src="/ad-preview-link.js"></script>
 <script src="/app-nav.js" defer></script>
 </body>
 </html>

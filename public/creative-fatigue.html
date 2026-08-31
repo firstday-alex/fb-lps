@@ -1004,6 +1004,7 @@ function groupByAdset(rows) {
 
 function renderGroups() {
   const filtered = applyFilters(_rows);
+  pickAdPreviews(filtered);            // must precede the paint: adChips reads it
   const groups = groupByAdset(filtered);
   const container = document.getElementById('groups-container');
   if (!filtered.length) {
@@ -1023,6 +1024,7 @@ function renderGroups() {
       toggleAdDetail(tr);
     });
   });
+  queueAdPreviews();                   // filter changes bring new ads on screen
 }
 
 function renderGroupCard(g, gi) {
@@ -1074,6 +1076,31 @@ function renderGroupCard(g, gi) {
   `;
 }
 
+// Preview / Ads Manager / copy next to the ad name. This page comes straight
+// from the Meta API, so the ad id is already in hand -- seeding it means the
+// Ads Manager chip is live on the first paint and the preview costs one call
+// instead of two.
+function adChips(r) {
+  if (!r.ad_name) return '';
+  AdLink.seed(r.ad_name, r.ad_id, _meta && _meta.account_id);
+  // A name that was never queued would sit on "resolving…" forever, so past the
+  // cap the preview chip is dropped and the row keeps Ads Manager + copy.
+  return AdLink.cellHtml(r.ad_name, _previewNames.has(r.ad_name) ? {} : { preview: false });
+}
+
+// Resolving a preview is a Meta call per ad, so only the ads actually on screen
+// are queued, and only the first slice of them.
+const AD_PREVIEW_CAP = 60;
+let _previewNames = new Set();
+function pickAdPreviews(filtered) {
+  _previewNames = new Set(filtered.slice(0, AD_PREVIEW_CAP).map(r => r.ad_name).filter(Boolean));
+}
+function queueAdPreviews() {
+  if (!_meta || !_previewNames.size) return;
+  AdLink.setLookupEnd(_meta.until);
+  AdLink.enqueue([..._previewNames]);
+}
+
 function renderAdRow(r, rowId) {
   const f = r.fatigue || { score: null, state: 'unknown' };
   const score = f.score == null ? '—' : Math.round(f.score);
@@ -1082,7 +1109,7 @@ function renderAdRow(r, rowId) {
   return `
     <tr class="row-main" data-rowid="${rowId}" data-rowindex="${rowIndex}" data-adid="${r.ad_id}">
       <td class="ad-name" title="${(r.ad_name || '').replace(/"/g, '&quot;')}">
-        ${adNameDisplay}
+        ${adNameDisplay}${adChips(r)}
         <div class="ad-meta">${r.effective_status || ''}</div>
       </td>
       <td class="r">${r.days_running == null ? '—' : r.days_running + 'd'}</td>
@@ -1256,6 +1283,7 @@ document.addEventListener('DOMContentLoaded', () => {
 // Expose renderRunway to inline `oninput` on the target-spend input.
 window.renderRunway = renderRunway;
 </script>
+<script src="/ad-preview-link.js"></script>
 <script src="/app-nav.js" defer></script>
 </body>
 </html>
