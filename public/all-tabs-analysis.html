@@ -292,7 +292,7 @@
           const tag = a.status ? ` <span class="lp">(${a.status})</span>` : '';
           body += `<tr>
             <td class="adname">${esc(a.ad_name)}${tag}
-              ${_metaReady ? AdLink.cellHtml(a.ad_name, { copy: true }) : AdLink.copyHtml(a.ad_name)}
+              ${_metaReady ? AdLink.cellHtml(a.ad_name) : AdLink.copyHtml(a.ad_name)}
               ${lp ? `<div class="lp">${esc(lp.landing_page)} · ${signed(lp.txn_delta)} txns</div>` : ''}</td>
             <td class="num ${cls(a.txn_delta)}">${signed(a.txn_delta)}</td>
             <td class="num">${signed(a.volume_effect)} / ${signed(a.rate_effect)}<div class="lp">${a.led_by || '—'}</div></td>

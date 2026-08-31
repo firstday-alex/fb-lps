@@ -5326,7 +5326,11 @@ function renderAdLp() {
     const adActive = _adLpFilter && _adLpFilter.type === 'ad' && _adLpFilter.value === r.ad;
     const lpActive = _adLpFilter && _adLpFilter.type === 'lp' && _adLpFilter.value === r.lp;
 
-    const adLink = r.ad && linkableNames.has(normAdName(r.ad)) ? adLinkCellHtml(r.ad) : '';
+    // Rows past the link cap are never queued, so they get no Meta links — but
+    // copying the name costs nothing, so every row keeps that chip.
+    const adLink = !r.ad ? ''
+      : linkableNames.has(normAdName(r.ad)) ? adLinkCellHtml(r.ad)
+      : AdLink.cellHtml(r.ad, { links: false });
 
     const tr = document.createElement('tr');
     tr.innerHTML = `

@@ -15,9 +15,13 @@
    Lifted out of meta-cvr-impact.html so a second dashboard could use it
    without a second copy of the retry/cache/auth handling.
 
+   Every ad name renders the same three chips: preview, Ads Manager, copy. The
+   two links need an ad id, so they arrive as the queue resolves; copy works
+   immediately and offline.
+
    Usage:
      AdLink.setLookupEnd('2026-08-13');            // window the lookup searches
-     html += AdLink.cellHtml(adName, { copy: true });
+     html += AdLink.cellHtml(adName);              // preview + Ads Manager + copy
      AdLink.enqueue(namesCurrentlyOnScreen);        // safe to call every paint
      AdLink.onProgress(repaintFn);                  // links landed
      AdLink.state.authFailed                        // → show a login prompt
@@ -25,9 +29,10 @@
 (function () {
   const norm = (s) => String(s || '').trim().replace(/\s+/g, ' ').toLowerCase();
 
-  // Bump when the matching logic changes — drops previously cached (possibly
-  // wrong) ids instead of serving them forever.
-  const CACHE_V = 'v1';
+  // Bump when the matching logic or the cached shape changes — drops previously
+  // cached (possibly wrong, or now incomplete) entries instead of serving them
+  // forever. v2 added `acct`, which the Ads Manager link needs.
+  const CACHE_V = 'v2';
   const AD_ID_TTL = 24 * 60 * 60 * 1000;   // name → ad id
   const AD_PREV_TTL = 20 * 60 * 60 * 1000; // name → preview URL
   const ID_KEY = `adlink:${CACHE_V}:id`;
@@ -36,12 +41,13 @@
   const lsGet = (k) => { try { return JSON.parse(localStorage.getItem(k) || '{}'); } catch { return {}; } };
   const lsSet = (k, o) => { try { localStorage.setItem(k, JSON.stringify(o)); } catch {} };
 
-  const cachedAdId = (name) => {
+  const cachedAd = (name) => {
     const e = lsGet(ID_KEY)[norm(name)];
-    return e && (Date.now() - e.ts) < AD_ID_TTL ? e.ad_id : null;
+    return e && (Date.now() - e.ts) < AD_ID_TTL ? e : null;
   };
-  const cacheAdId = (name, adId) => {
-    const all = lsGet(ID_KEY); all[norm(name)] = { ad_id: adId, ts: Date.now() }; lsSet(ID_KEY, all);
+  const cachedAdId = (name) => { const e = cachedAd(name); return e ? e.ad_id : null; };
+  const cacheAdId = (name, adId, acct) => {
+    const all = lsGet(ID_KEY); all[norm(name)] = { ad_id: adId, acct: acct || null, ts: Date.now() }; lsSet(ID_KEY, all);
   };
   const invalidateAdId = (name) => {
     const all = lsGet(ID_KEY); delete all[norm(name)]; lsSet(ID_KEY, all);
@@ -50,8 +56,25 @@
     const e = lsGet(PREV_KEY)[norm(name)];
     return e && (Date.now() - e.ts) < AD_PREV_TTL ? e : null;
   };
-  const cachePreview = (name, url, adId) => {
-    const all = lsGet(PREV_KEY); all[norm(name)] = { url, ad_id: adId, ts: Date.now() }; lsSet(PREV_KEY, all);
+  const cachePreview = (name, url, adId, acct) => {
+    const all = lsGet(PREV_KEY);
+    all[norm(name)] = { url, ad_id: adId, acct: acct || null, ts: Date.now() };
+    lsSet(PREV_KEY, all);
+  };
+
+  // The Ads Manager deep link needs an account as well as an ad id, and a page
+  // reloaded off the caches has no live account yet -- so the account is cached
+  // per name too, and state.accountId is only the last resort.
+  const accountFor = (name) => {
+    const term = state.terminal.get(norm(name));
+    const prev = cachedPreview(name);
+    const id = cachedAd(name);
+    return (term && term.acct) || (prev && prev.acct) || (id && id.acct) || state.accountId || null;
+  };
+  const adIdFor = (name) => {
+    const term = state.terminal.get(norm(name));
+    const prev = cachedPreview(name);
+    return (prev && prev.ad_id) || cachedAdId(name) || (term && term.adId) || null;
   };
 
   const adsManagerUrl = (accountId, adId) => {
@@ -116,7 +139,7 @@
         const url = await resolvePreview(name);
         if (url) {
           state.resolved++;
-          apply(name, url, cachedAdId(name), 'preview');
+          apply(name, 'preview');
         }
       } catch (e) {
         if (e.status === 401) {
@@ -131,12 +154,14 @@
         // Grab the id BEFORE invalidating — a failed *preview* call still leaves
         // a perfectly good id to deep-link Ads Manager with.
         const knownId = cachedAdId(name);
+        const knownAcct = accountFor(name);
         invalidateAdId(name);
         if (tries < 3) {
           state.queue.push(name);
         } else {
           state.failed++;
-          apply(name, knownId ? adsManagerUrl(state.accountId, knownId) : null, knownId, knownId ? 'adsmanager' : 'none');
+          // 'noPreview' still deep-links Ads Manager off the id; 'none' has nothing.
+          apply(name, knownId ? 'noPreview' : 'none', { adId: knownId, acct: knownAcct });
         }
       }
       notify();
@@ -156,48 +181,59 @@
       if (acctOverride) params.set('account_id', acctOverride);
       const r = await fetch(`/api/meta-ad-lookup?${params.toString()}`);
       const j = await r.json().catch(() => ({}));
+      // The 404 body carries the account it searched, and knowing which account
+      // this dashboard is pointed at is useful even when this name missed.
+      if (j.account_id) state.accountId = j.account_id;
       if (!r.ok) throw Object.assign(new Error(j.error || `lookup HTTP ${r.status}`), { status: r.status, needle: j.needle });
       adId = j.ad_id;
-      if (j.account_id) state.accountId = j.account_id;
-      cacheAdId(name, adId);
+      cacheAdId(name, adId, j.account_id || state.accountId);
     }
 
     const pr = await fetch(`/api/meta-ad-creative-preview?ad_id=${encodeURIComponent(adId)}`);
     const pj = await pr.json().catch(() => ({}));
     if (!pr.ok) throw Object.assign(new Error(pj.error || `preview HTTP ${pr.status}`), { status: pr.status });
-    cachePreview(name, pj.preview_url, adId);
+    cachePreview(name, pj.preview_url, adId, accountFor(name));
     return pj.preview_url;
   }
 
+  // ── The three chips ────────────────────────────────────────────────────────
+  // Every ad name carries the same trio: creative preview, Ads Manager, copy.
+  // The two links need an ad id from Meta, so they render as placeholders and
+  // are swapped in place when the queue resolves the name; copy needs nothing.
+  //
+  // Each chip is its own slot with its own attribute (data-adkey for the
+  // preview, data-admgr for Ads Manager) so a resolution can update one without
+  // touching the other -- the common case is "preview failed, id is fine".
+
   const previewHtml = (key, url, adId) =>
-    `<a class="adrill-preview" href="${url}" target="_blank" rel="noopener"`
+    `<a class="adrill-preview adlink-slot" href="${url}" target="_blank" rel="noopener"`
     + ` data-adkey="${key}" data-adid="${adId || ''}" title="Open Meta's creative preview">preview ↗</a>`;
 
+  const previewPendingHtml = (key) =>
+    `<span class="adrill-pending adlink-slot" data-adkey="${key}" title="Resolving this ad in Meta…">resolving…</span>`;
+
+  const noPreviewHtml = (key) =>
+    `<span class="adrill-noad adlink-slot" data-adkey="${key}"`
+    + ` title="Meta would not render a creative preview for this ad — use Ads Manager instead">no preview</span>`;
+
+  const noneHtml = (key, why) =>
+    `<span class="adrill-noad adlink-slot" data-adkey="${key}"`
+    + ` title="${why || 'Meta returned no ad matching this utm_content in the lookup window — it may have been renamed, or had no delivery'}">no link</span>`;
+
   const adsManagerHtml = (key, url, adId) =>
-    `<a class="adrill-preview adrill-preview--fallback" href="${url}" target="_blank" rel="noopener"`
-    + ` data-adkey="${key}" data-adid="${adId || ''}"`
-    + ` title="Creative preview unavailable right now — opens this ad in Ads Manager instead">Ads Manager ↗</a>`;
+    `<a class="adrill-ads adlink-slot-ads" href="${url}" target="_blank" rel="noopener"`
+    + ` data-admgr="${key}" data-adid="${adId || ''}"`
+    + ` title="Open this ad in Ads Manager">Ads Manager ↗</a>`;
 
-  const noneHtml = (key) =>
-    `<span class="adrill-noad" data-adkey="${key}"`
-    + ` title="Meta returned no ad matching this utm_content in the lookup window — it may have been renamed, or had no delivery">no link</span>`;
+  // Empty until an id exists — an Ads Manager link with no ad id would just open
+  // the account's ad list, which is not what the chip promises. `:empty` hides it.
+  const adsSlotHtml = (adName, key) => {
+    const adId = adIdFor(adName);
+    if (!adId) return `<span class="adlink-slot-ads" data-admgr="${key}"></span>`;
+    return adsManagerHtml(key, adsManagerUrl(accountFor(adName), adId), adId);
+  };
 
-  // Swap every placeholder for this ad name (one name can be on several rows).
-  function apply(name, url, adId, kind) {
-    const key = domKey(name);
-    // Remember non-preview outcomes so re-renders reproduce them (preview hits
-    // are already persisted in localStorage and read by the render path).
-    if (kind === 'preview') state.terminal.delete(norm(name));
-    else state.terminal.set(norm(name), { kind, url, adId });
-    document.querySelectorAll(`[data-adkey="${key}"]`).forEach(el => {
-      if (el.classList.contains('adlink-copy')) return;     // not a link slot
-      if (kind === 'preview') el.outerHTML = previewHtml(key, url, adId);
-      else if (kind === 'adsmanager' && url) el.outerHTML = adsManagerHtml(key, url, adId);
-      else el.outerHTML = noneHtml(key);
-    });
-  }
-
-  // The markup for one ad name in whatever state it's currently in. Anything
+  // The preview chip in whatever state this name is currently in. Anything
   // cached from a previous visit renders as a live link on the first paint; the
   // rest get a placeholder the queue upgrades in place.
   function linkHtml(adName) {
@@ -205,12 +241,12 @@
     const hit = cachedPreview(adName);
     if (hit) return previewHtml(key, hit.url, hit.ad_id);
     if (state.authFailed) {
-      return `<span class="adrill-noad" data-adkey="${key}" title="Not signed in to Facebook — sign in to load creative previews">no link</span>`;
+      return noneHtml(key, 'Not signed in to Facebook — sign in to load creative previews');
     }
     const term = state.terminal.get(norm(adName));
-    if (term && term.kind === 'adsmanager' && term.url) return adsManagerHtml(key, term.url, term.adId);
+    if (term && term.kind === 'noPreview') return noPreviewHtml(key);
     if (term) return noneHtml(key);
-    return `<span class="adrill-pending" data-adkey="${key}" title="Resolving this ad in Meta…">resolving…</span>`;
+    return previewPendingHtml(key);
   }
 
   // Copy the FULL ad name — they run past 100 characters and selecting one out
@@ -221,11 +257,38 @@
       + ` title="Copy this ad name">copy</button>`;
   }
 
-  function cellHtml(adName, opts = {}) {
-    const parts = [linkHtml(adName)];
-    if (opts.copy) parts.push(copyHtml(adName));
-    return parts.join('');
+  // Swap this name's chips for their current state, everywhere it appears (one
+  // name can be on several rows).
+  function apply(name, kind, extra) {
+    const key = domKey(name);
+    // Remember non-preview outcomes so re-renders reproduce them (preview hits
+    // are already persisted in localStorage and read by the render path).
+    if (kind === 'preview') state.terminal.delete(norm(name));
+    else state.terminal.set(norm(name), { kind, adId: (extra && extra.adId) || null, acct: (extra && extra.acct) || null });
+    document.querySelectorAll(`[data-adkey="${key}"]`).forEach(el => {
+      if (el.classList.contains('adlink-copy')) return;     // not a link slot
+      el.outerHTML = linkHtml(name);
+    });
+    document.querySelectorAll(`[data-admgr="${key}"]`).forEach(el => {
+      el.outerHTML = adsSlotHtml(name, key);
+    });
   }
+
+  // All three chips, wrapped so they wrap as a group under a long ad name
+  // instead of stretching the column. `copy: false` drops the copy button;
+  // `links: false` drops the two Meta links, for rows a page has deliberately
+  // left out of the lookup queue (resolving a name costs two Meta calls, copying
+  // it costs nothing — so those rows still get the copy chip).
+  function cellHtml(adName, opts = {}) {
+    if (!adName) return '';
+    const key = domKey(adName);
+    const parts = [];
+    if (opts.links !== false) parts.push(linkHtml(adName), adsSlotHtml(adName, key));
+    if (opts.copy !== false) parts.push(copyHtml(adName));
+    if (!parts.length) return '';
+    return `<span class="adlink-tools">${parts.join('')}</span>`;
+  }
+
 
   // Synchronous, inside the click gesture, no permission prompt and no promise
   // to wait on. Deliberately tried FIRST: navigator.clipboard.writeText() can
@@ -248,6 +311,24 @@
   }
 
   const CSS = `
+    /* The three chips travel together and wrap as a group under a long ad name
+       (they sit in cells with word-break: break-all, hence the reset). This
+       stylesheet is appended at runtime, so it out-specifies the pages' own
+       per-chip margins without needing !important. */
+    .adlink-tools {
+      display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px;
+      margin-left: 5px; vertical-align: middle; word-break: normal;
+    }
+    .adlink-tools > * { margin-left: 0; }
+    .adlink-slot-ads:empty { display: none; }   /* no ad id yet — no chip */
+    .adrill-ads {
+      display: inline-block; padding: 1px 6px;
+      background: #f3f0e8; color: #8a6d3b; border-radius: 3px;
+      font-size: 0.66rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.03em; text-decoration: none; vertical-align: 1px;
+      white-space: nowrap;
+    }
+    .adrill-ads:hover { background: #8a6d3b; color: #fff; }
     .adrill-preview {
       display: inline-block; margin-left: 5px; padding: 1px 6px;
       background: #eef3ff; color: var(--fb-blue, #1877f2); border-radius: 3px;
@@ -323,11 +404,11 @@
       }
     }, true);
 
-    // Same reason, same phase: opening a creative preview shouldn't also expand
-    // the row the link happens to sit in. Propagation only — the anchor's own
-    // default (open in a new tab) is left alone.
+    // Same reason, same phase: opening a creative preview or Ads Manager
+    // shouldn't also expand the row the link happens to sit in. Propagation
+    // only — the anchor's own default (open in a new tab) is left alone.
     document.addEventListener('click', (e) => {
-      if (e.target.closest && e.target.closest('.adrill-preview')) e.stopPropagation();
+      if (e.target.closest && e.target.closest('.adrill-preview, .adrill-ads')) e.stopPropagation();
     }, true);
   }
 
@@ -358,8 +439,21 @@
     return true;
   }
 
+  // Some pages already know the ad id (they came from the Meta API, not from a
+  // Shopify utm_content string). Seeding it means the Ads Manager chip renders
+  // on the first paint and the preview costs ONE call instead of two -- the
+  // name → id lookup is the slow, flaky half.
+  function seed(adName, adId, accountId) {
+    if (!adName || !adId) return;
+    if (accountId && !state.accountId) state.accountId = accountId;
+    const known = cachedAd(adName);
+    if (known && known.ad_id === String(adId) && known.acct) return;   // already fresh
+    cacheAdId(adName, String(adId), accountId || state.accountId);
+  }
+
   window.AdLink = {
     state,
+    seed,
     setAccount,
     getAccount() { return chosenAccount; },
     setLookupEnd(d) { lookupEnd = d || null; },

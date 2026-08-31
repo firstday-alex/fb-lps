@@ -653,7 +653,7 @@ function renderTable() {
 
   const adTools = (dim, label, row) => {
     if (dim !== 'ad' || label === '(none)') return '';
-    return rowCanPreview(row) ? AdLink.cellHtml(label, { copy: true }) : AdLink.copyHtml(label);
+    return rowCanPreview(row) ? AdLink.cellHtml(label) : AdLink.copyHtml(label);
   };
 
   // Ad names on screen at any depth that can actually resolve -- non-Meta rows are never
