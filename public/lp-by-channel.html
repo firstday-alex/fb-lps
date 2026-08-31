@@ -165,7 +165,13 @@
     </div>
     <div class="fld">
       <span>Channel</span>
-      <select id="f-channel"><option value="">All channels</option></select>
+      <!-- Seeded with facebook selected so the first load lands on Meta traffic,
+           which is what this tab is opened for. populateChannels() replaces the
+           list with the real utm_source universe once the response is in. -->
+      <select id="f-channel">
+        <option value="">All channels</option>
+        <option value="facebook" selected>facebook</option>
+      </select>
     </div>
     <div class="fld">
       <span>Campaign contains</span>
@@ -441,8 +447,15 @@ async function loadData() {
 function populateChannels() {
   const sel = document.getElementById('f-channel');
   const want = _data.channel || '';
+  const sources = (_data.channels || []).map(c => c.source);
   const opts = ['<option value="">All channels</option>']
     .concat((_data.channels || []).map(c => `<option value="${escapeAttr(c.source)}">${escapeHtml(c.source)} (${fmtInt(c.sessions)})</option>`));
+  // The filter that was actually applied has to stay visible even when it had no
+  // sessions in this window -- otherwise the select silently falls back to
+  // showing "All channels" over a table that is still filtered.
+  if (want && !sources.includes(want)) {
+    opts.push(`<option value="${escapeAttr(want)}">${escapeHtml(want)} (0)</option>`);
+  }
   sel.innerHTML = opts.join('');
   sel.value = want;
 }
