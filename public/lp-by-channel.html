@@ -102,6 +102,17 @@
       font-weight: 500; font-family: Menlo, Monaco, monospace; font-size: 0.76rem;
       padding-left: 26px; color: var(--text-secondary);
     }
+    /* Landing-page paths are stored without a host, so the link has to put one back
+       (LP_ORIGIN). It sits inside the drill-toggle cell, so the row click handler skips
+       clicks that land on a link or button. */
+    .lp-open {
+      display: inline-block; margin-left: 5px; padding: 1px 6px;
+      background: #eef3ff; color: var(--fb-blue); border-radius: 3px;
+      font-size: 0.66rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.02em; text-decoration: none; font-family: inherit;
+      vertical-align: middle; white-space: nowrap;
+    }
+    .lp-open:hover { background: var(--fb-blue); color: #fff; }
     .drill-share { margin-left: 7px; font-family: inherit; font-size: 0.7rem; color: var(--text-secondary); opacity: 0.8; }
     tr.drill-note td {
       background: #fafbfd; text-align: left; font-size: 0.74rem;
@@ -220,6 +231,7 @@ let _compareManualOverride = false;
 let _cmpTag = 'prev';
 
 const GROUP_LABEL = { lp: 'Landing page', ad: 'Ad name', campaign: 'Campaign' };
+const LP_ORIGIN = 'https://firstday.com';
 
 // Rows expand into the next dimension down, fetched on demand and cleared on every
 // fresh load so a drill can never show numbers from a different window or filter set.
@@ -629,6 +641,16 @@ function renderTable() {
     const m = rowMetaShare(row && row.sources);
     return m ? m.hasMeta : false;
   };
+  // Landing pages come out of ShopifyQL as bare paths ('/pages/foo'), so they need a host
+  // bolted on to be openable. Every store on this dashboard is firstday.com; if a second
+  // domain ever lands here this is the one place to branch.
+  const lpLink = (dim, label) => {
+    if (dim !== 'lp' || !label || !label.startsWith('/')) return '';   // '(none)' and any non-path row
+    const href = LP_ORIGIN + encodeURI(label);
+    return `<a class="lp-open" href="${escapeAttr(href)}" target="_blank" rel="noopener"`
+      + ` title="Open ${escapeAttr(href)}">open \u2197</a>`;
+  };
+
   const adTools = (dim, label, row) => {
     if (dim !== 'ad' || label === '(none)') return '';
     return rowCanPreview(row) ? AdLink.cellHtml(label, { copy: true }) : AdLink.copyHtml(label);
@@ -683,7 +705,7 @@ function renderTable() {
       const drillAttr = expandable ? ` data-drill="${childIdx}"` : '';
       const chev = expandable ? `<span class="chev">${open ? '&#9660;' : '&#9654;'}</span>` : '';
       const tds = COLS.map(c => c.kind === 'label'
-        ? `<td class="${labelCls}"${drillAttr} title="${escapeAttr(r.label)}">${chev}&#8627; ${escapeHtml(r.label)}${shareHtml}${adTools(childDim, r.label, r)}</td>`
+        ? `<td class="${labelCls}"${drillAttr} title="${escapeAttr(r.label)}">${chev}&#8627; ${escapeHtml(r.label)}${shareHtml}${lpLink(childDim, r.label)}${adTools(childDim, r.label, r)}</td>`
         : cell(c, r.cur, r.prev, true)).join('');
       return `<tr class="drill-row${depth > 1 ? ' drill-row--2' : ''}${open ? ' parent-open' : ''}">${tds}</tr>`
         + (expandable ? drillRowsHtml(childPath, r.cur.sessions) : '');
@@ -711,8 +733,8 @@ function renderTable() {
     const expandable = canExpand(topDim, r.label);
     const open = _drill.has(key);
     const labelCell = expandable
-      ? `<td class="col-label col-label--drill${open ? ' open' : ''}" data-drill="${idx}" title="${escapeAttr(r.label)}"><span class="chev">${open ? '&#9660;' : '&#9654;'}</span>${escapeHtml(r.label)}${adTools(topDim, r.label, r)}</td>`
-      : `<td class="col-label" title="${escapeAttr(DRILL[topDim] ? 'No ' + (GROUP_LABEL[topDim] || topDim).toLowerCase() + ' recorded on these sessions, so there is nothing to break down' : r.label)}">${escapeHtml(r.label)}${adTools(topDim, r.label, r)}</td>`;
+      ? `<td class="col-label col-label--drill${open ? ' open' : ''}" data-drill="${idx}" title="${escapeAttr(r.label)}"><span class="chev">${open ? '&#9660;' : '&#9654;'}</span>${escapeHtml(r.label)}${lpLink(topDim, r.label)}${adTools(topDim, r.label, r)}</td>`
+      : `<td class="col-label" title="${escapeAttr(DRILL[topDim] ? 'No ' + (GROUP_LABEL[topDim] || topDim).toLowerCase() + ' recorded on these sessions, so there is nothing to break down' : r.label)}">${escapeHtml(r.label)}${lpLink(topDim, r.label)}${adTools(topDim, r.label, r)}</td>`;
     const tds = COLS.map(c => c.kind === 'label' ? labelCell : cell(c, r.cur, r.prev, true)).join('');
     return `<tr${open ? ' class="parent-open"' : ''}>${tds}</tr>`
       + (expandable ? drillRowsHtml(path, r.cur.sessions) : '');
@@ -734,7 +756,12 @@ function renderTable() {
   }
 
   document.querySelectorAll('#tbody .col-label--drill').forEach(td => {
-    td.addEventListener('click', () => toggleDrill(_paths[Number(td.dataset.drill)]));
+    td.addEventListener('click', (e) => {
+      // The label cell also carries the "open" landing-page link and the ad copy/preview
+      // buttons. Those are their own actions -- a click on one shouldn't also expand the row.
+      if (e.target.closest('a, button')) return;
+      toggleDrill(_paths[Number(td.dataset.drill)]);
+    });
   });
 }
 
