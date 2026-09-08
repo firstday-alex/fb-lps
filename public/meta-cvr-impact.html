@@ -473,6 +473,15 @@
     /* Baseline (comparison-period) columns sit next to their current-period
        twin — greyed so the eye lands on the current number first. */
     .contrib-stat--prev strong { color: var(--text-secondary); font-weight: 500; }
+    /* Generic sortable-header cell. Every table on the page uses this; the
+       contributors grid keeps its own .sort-h rules because its header markup
+       is static HTML rather than generated. */
+    .tsort { cursor: pointer; user-select: none; border-radius: 3px; }
+    .tsort:hover { background: #eef3ff; color: var(--fb-blue); }
+    .tsort--active { color: var(--fb-blue); }
+    .tsort-arrow { margin-left: 3px; font-size: 0.75em; }
+    .tsort--center { text-align: center; }
+
     .contrib-bar-wrap { height: 8px; background: var(--neutral-bg); border-radius: 4px; overflow: hidden; }
     .contrib-bar { height: 100%; border-radius: 4px; min-width: 2px; }
     .contrib-val { text-align: right; font-weight: 700; font-size: 0.9rem; }
@@ -1619,9 +1628,9 @@
         <div class="r sort-h" data-sort="txns">Txns</div>
         <div class="r sort-h" data-sort="prevTxns" title="Transactions in the comparison period">Prev Txns</div>
         <div class="r sort-h" data-sort="txnDelta" title="Change in transactions vs the comparison period (current − previous)">Txn &Delta;</div>
-        <div>Impact</div>
+        <div class="sort-h" data-sort="impactBar" title="Sort by CVR impact">Impact</div>
         <div class="r sort-h" data-sort="cvrImpact" title="Contribution to blended CVR change (pp). Own CVR effect + share-shift effect. Sums to total blended ΔCvr. Negative = dragged blended CVR down.">CVR Impact ⓘ</div>
-        <div class="r">% of ΔCvr</div>
+        <div class="r sort-h" data-sort="pctOfDelta" title="This campaign's share of the blended CVR change">% of ΔCvr</div>
         <div></div>
       </div>
       <div id="contributors-list"></div>
@@ -1692,19 +1701,19 @@
         <table class="breakdown-table" id="breakdown-table">
           <thead>
             <tr>
-              <th>Campaign</th>
-              <th class="r">Prev Sess</th>
-              <th class="r">Curr Sess</th>
-              <th class="r">Δ Sess</th>
-              <th class="r">Prev CVR</th>
-              <th class="r">Curr CVR</th>
-              <th class="r">Δ CVR (pp)</th>
-              <th class="r">Prev Txns</th>
-              <th class="r">Curr Txns</th>
-              <th class="r">Δ Txn</th>
-              <th class="r">Sess Effect</th>
-              <th class="r">CVR Effect</th>
-              <th class="r">Interaction</th>
+              <th class="tsort" data-sort-table="breakdown-table" data-sort-key="campaign" data-sort-first="asc">Campaign</th>
+              <th class="r tsort" data-sort-table="breakdown-table" data-sort-key="prevSess">Prev Sess</th>
+              <th class="r tsort" data-sort-table="breakdown-table" data-sort-key="sessions">Curr Sess</th>
+              <th class="r tsort" data-sort-table="breakdown-table" data-sort-key="sessDelta">Δ Sess</th>
+              <th class="r tsort" data-sort-table="breakdown-table" data-sort-key="prevCvr">Prev CVR</th>
+              <th class="r tsort" data-sort-table="breakdown-table" data-sort-key="cvr">Curr CVR</th>
+              <th class="r tsort" data-sort-table="breakdown-table" data-sort-key="cvrDelta">Δ CVR (pp)</th>
+              <th class="r tsort" data-sort-table="breakdown-table" data-sort-key="prevTxns">Prev Txns</th>
+              <th class="r tsort" data-sort-table="breakdown-table" data-sort-key="txns">Curr Txns</th>
+              <th class="r tsort" data-sort-table="breakdown-table" data-sort-key="txnDelta">Δ Txn</th>
+              <th class="r tsort" data-sort-table="breakdown-table" data-sort-key="sessEffect">Sess Effect</th>
+              <th class="r tsort" data-sort-table="breakdown-table" data-sort-key="cvrEffect">CVR Effect</th>
+              <th class="r tsort" data-sort-table="breakdown-table" data-sort-key="interaction">Interaction</th>
             </tr>
           </thead>
           <tbody id="breakdown-tbody"></tbody>
@@ -1787,6 +1796,76 @@ const fmtS  = (n, d=0) => { if(!isFinite(n)) return '—'; return (n>0?'+':'')+f
 const fmtKS = n => { if (!isFinite(n)) return '—'; const r = Math.round(n); if (r === 0) return '0'; return (r > 0 ? '+' : '−') + fmtK(Math.abs(r)); };
 const fmtP  = (n, d=1) => { if(!isFinite(n)) return '—'; return (n>0?'+':'')+n.toFixed(d)+'%'; };
 const fmtPP = (n, d=2) => { if(!isFinite(n)) return '—'; return (n>0?'+':'')+n.toFixed(d)+'pp'; };
+
+// ─────────────────────────────────────────────
+// SORTABLE TABLES
+// ─────────────────────────────────────────────
+// Every table on this page sorts the same way: click a header to sort by that
+// column, click the active header again to flip direction. Each one opens on
+// sessions, highest first — volume is the question people ask before any
+// derived metric. Sort state is keyed by table id and lives outside the render
+// functions, because sorting repaints the table and the state has to survive
+// that. Repainting also closes any open drill, which is deliberate: drill
+// panels are addressed by row index, so a re-sort would otherwise leave them
+// pointing at the wrong row.
+const SORT_DEFAULT = { key: 'sessions', dir: 'desc' };
+const _tableSort = {};      // table id -> { key, dir }
+const _sortRepaint = {};    // table id -> () => void
+
+function sorterFor(id, accessors, firstClickDir = {}) {
+  const st = _tableSort[id] || (_tableSort[id] = { ...SORT_DEFAULT });
+  // A stored key that this table no longer offers (data reshaped between
+  // pulls) would silently sort by nothing — fall back instead.
+  if (!accessors[st.key]) { st.key = SORT_DEFAULT.key; st.dir = SORT_DEFAULT.dir; }
+  return {
+    id, key: st.key, dir: st.dir, firstClickDir,
+    apply(rows) {
+      const get = accessors[st.key] || accessors[SORT_DEFAULT.key];
+      if (!get) return [...rows];
+      const mul = st.dir === 'desc' ? -1 : 1;
+      return [...rows].sort((a, b) => {
+        const av = get(a), bv = get(b);
+        if (typeof av === 'string' || typeof bv === 'string') {
+          return String(av).localeCompare(String(bv)) * mul;
+        }
+        if (!isFinite(av) || !isFinite(bv)) return (isFinite(bv) ? 1 : 0) - (isFinite(av) ? 1 : 0);
+        if (av === bv) return 0;
+        return (av - bv) * mul;
+      });
+    },
+    // Header cell. A column with no accessor renders as plain text, so a
+    // decorative column (a bar, a chevron) can share the same call site.
+    th(key, label, extraCls = '', title = '') {
+      const t = title ? ` title="${title}"` : '';
+      if (!accessors[key]) return `<div class="${extraCls}"${t}>${label}</div>`;
+      const active = st.key === key;
+      const first = firstClickDir[key] ? ` data-sort-first="${firstClickDir[key]}"` : '';
+      return `<div class="tsort ${extraCls}${active ? ' tsort--active' : ''}"`
+        + ` data-sort-table="${id}" data-sort-key="${key}"${first}${t}>${label}`
+        + `${active ? `<span class="tsort-arrow">${st.dir === 'asc' ? '▲' : '▼'}</span>` : ''}</div>`;
+    },
+  };
+}
+
+// One delegated listener for every sortable table on the page. Capture phase +
+// stopPropagation so a header click never also collapses the card it sits in or
+// opens the drill on the row behind it.
+document.addEventListener('click', (e) => {
+  const h = e.target.closest('[data-sort-key][data-sort-table]');
+  if (!h) return;
+  const id = h.dataset.sortTable, key = h.dataset.sortKey;
+  const repaint = _sortRepaint[id];
+  if (!repaint) return;
+  e.stopPropagation();
+  e.preventDefault();
+  const st = _tableSort[id] || (_tableSort[id] = { ...SORT_DEFAULT });
+  if (st.key === key) st.dir = st.dir === 'desc' ? 'asc' : 'desc';
+  else { st.key = key; st.dir = (h.dataset.sortFirst || 'desc'); }
+  repaint();
+}, true);
+
+// Text columns read A→Z on first click; everything else opens biggest-first.
+const TEXT_FIRST_ASC = { label: 'asc', name: 'asc', campaign: 'asc', bucket: 'asc', lp: 'asc', ad: 'asc' };
 const cls   = n => n > 0 ? 'pos' : n < 0 ? 'neg' : '';
 const bcls  = n => n > 0 ? 'badge-pos' : n < 0 ? 'badge-neg' : 'badge-neu';
 function esc(s) { const d=document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
@@ -2182,11 +2261,15 @@ function render(rawRows, filename) {
     prevTxns:  g => g.prevSess * g.prevCvr,
     txnDelta:  g => g.txnDelta,
     cvrImpact: g => g.cvrImpact,
+    // The bar and the percentage both visualise cvrImpact; separate keys so only
+    // the header the user clicked carries the arrow.
+    impactBar:  g => g.cvrImpact,
+    pctOfDelta: g => g.cvrImpact,
   };
   // cvrImpact default 'asc' so the biggest blended-CVR draggers surface at top.
-  const defaultDir = { campaign: 'asc', sessions: 'desc', prevSess: 'desc', sessDelta: 'desc', cvr: 'desc', prevCvr: 'desc', cvrDelta: 'desc', txns: 'desc', prevTxns: 'desc', txnDelta: 'desc', cvrImpact: 'asc' };
-  let sortKey = 'cvrImpact';
-  let sortDir = 'asc';
+  const defaultDir = { campaign: 'asc', sessions: 'desc', prevSess: 'desc', sessDelta: 'desc', cvr: 'desc', prevCvr: 'desc', cvrDelta: 'desc', txns: 'desc', prevTxns: 'desc', txnDelta: 'desc', cvrImpact: 'asc', impactBar: 'asc', pctOfDelta: 'asc' };
+  let sortKey = 'sessions';
+  let sortDir = 'desc';
 
   // This table used to print every campaign — 130+ rows, which pushed every
   // section below it thousands of pixels down. The top of a sorted list is the
@@ -2329,13 +2412,43 @@ function render(rawRows, filename) {
 
   renderContributorsList();
 
-  // Campaign breakdown table — sorted by |Δ Conv|
+  // Campaign breakdown table. Its <thead> is static markup, so the paint step
+  // keeps the arrow in sync rather than regenerating the header.
+  const breakdownRows = campaignRows
+    .map(r => ({ r, d: decompose(r.prevSess, r.prevCvr, r.currS, r.currC) }));
+  const breakdownSorter = () => sorterFor('breakdown-table', {
+    campaign:    x => (x.r.key || '').toLowerCase(),
+    sessions:    x => x.r.currS,
+    prevSess:    x => x.r.prevSess,
+    sessDelta:   x => x.d.dS,
+    cvr:         x => x.r.currC,
+    prevCvr:     x => x.r.prevCvr,
+    cvrDelta:    x => x.d.dC,
+    txns:        x => x.d.currConv,
+    prevTxns:    x => x.d.prevConv,
+    txnDelta:    x => x.d.totalDelta,
+    sessEffect:  x => x.d.sessEffect,
+    cvrEffect:   x => x.d.cvrEffect,
+    interaction: x => x.d.interaction,
+  }, TEXT_FIRST_ASC);
+
+  const paintBreakdown = () => {
+  const sorter = breakdownSorter();
+  document.querySelectorAll('#breakdown-table th.tsort').forEach(th => {
+    const active = th.dataset.sortKey === sorter.key;
+    th.classList.toggle('tsort--active', active);
+    const old = th.querySelector('.tsort-arrow');
+    if (old) old.remove();
+    if (active) {
+      const a = document.createElement('span');
+      a.className = 'tsort-arrow';
+      a.textContent = sorter.dir === 'asc' ? '▲' : '▼';
+      th.appendChild(a);
+    }
+  });
   const tbody = document.getElementById('breakdown-tbody');
   tbody.innerHTML = '';
-  const sortedCampaigns = [...campaignRows]
-    .map(r => ({ r, d: decompose(r.prevSess, r.prevCvr, r.currS, r.currC) }))
-    .sort((a, b) => Math.abs(b.d.totalDelta) - Math.abs(a.d.totalDelta));
-  sortedCampaigns.forEach(({ r, d }) => {
+  sorter.apply(breakdownRows).forEach(({ r, d }) => {
     const prevCvrPct = r.prevCvr * 100;
     const currCvrPct = r.currC * 100;
     const tr = document.createElement('tr');
@@ -2359,6 +2472,9 @@ function render(rawRows, filename) {
     `;
     tbody.appendChild(tr);
   });
+  };
+  _sortRepaint['breakdown-table'] = paintBreakdown;
+  paintBreakdown();
 
   document.getElementById('breakdown-tfoot').innerHTML = `
     <tr>
@@ -2656,11 +2772,31 @@ function makeCardsCollapsible() {
 // ─────────────────────────────────────────────
 // CVR MOVEMENT (reusable: by campaign OR by LP)
 // ─────────────────────────────────────────────
+const CVR_ROW_ACCESSORS = {
+  label:     r => (r.key || '').toLowerCase(),
+  sessions:  r => r.currS,
+  prevSess:  r => r.prevSess,
+  sessDelta: r => r.currS - r.prevSess,
+  cvr:       r => r.currC,
+  prevCvr:   r => r.prevCvr,
+  cvrDelta:  r => r.currC - r.prevCvr,
+  cvrChange: r => r.currC - r.prevCvr,
+  avg7:      r => r.avg7C,
+  vs7d:      r => r.currC - r.avg7C,
+  txns:      r => r.currS * r.currC,
+  prevTxns:  r => r.prevSess * r.prevCvr,
+  txnDelta:  r => Math.round(r.currS * r.currC) - Math.round(r.prevSess * r.prevCvr),
+};
+
 function renderCvrMovement(cardId, rows, opts) {
   const card = document.getElementById(cardId);
+  // Re-render on a header click. Repainting from the original rows (rather than
+  // reordering the DOM) keeps the drill indices honest — see SORTABLE TABLES.
+  _sortRepaint[cardId] = () => renderCvrMovement(cardId, rows, opts);
+  const sorter = sorterFor(cardId, CVR_ROW_ACCESSORS, TEXT_FIRST_ASC);
   const minSess = opts.minSess ?? 20;
   const qualified = rows.filter(r => r.prevSess >= minSess || r.currS >= minSess);
-  const sorted = [...qualified].sort((a, b) => (b.currS * b.currC) - (a.currS * a.currC));
+  const sorted = sorter.apply(qualified);
   const maxAbsDelta = Math.max(...sorted.map(r => Math.abs(r.currC - r.prevCvr)), 0.001);
   // 'lp' = expand a campaign into its landing pages (client-side, from _rawRows);
   // 'ad' = expand a landing page into the ads that sent it traffic (lazy query).
@@ -2687,19 +2823,19 @@ function renderCvrMovement(cardId, rows, opts) {
     <div class="cvr-chart${show7d ? ' cvr-chart--7d' : ''}">
       ${drillHint ? `<div class="drill-hint">▶ ${drillHint}</div>` : ''}
       <div class="cvr-chart-row cvr-chart-row--header">
-        <div>${esc(opts.labelName)}</div>
-        <div class="r" title="Sessions in the current period">Sessions</div>
-        <div class="r" title="Sessions in the comparison period">Prev Sess</div>
-        <div class="r" title="Change in sessions vs the comparison period">Sess Δ</div>
-        <div style="text-align:center">CVR Change</div>
-        <div class="r">CVR</div>
-        <div class="r">Prev CVR</div>
-        ${show7d ? '<div style="text-align:center" title="Current CVR minus the 7-day average, in percentage points">vs 7d</div>' : ''}
-        ${show7d ? '<div class="r" title="Rolling conversion rate over the 7 days ending on the End date">7d Avg</div>' : ''}
-        <div class="r" title="Current-period CVR minus comparison-period CVR, in percentage points">Δ CVR</div>
-        <div class="r">Txns</div>
-        <div class="r" title="Transactions in the comparison period">Prev Txns</div>
-        <div class="r" title="Change in transactions vs the comparison period">Txns Δ</div>
+        ${sorter.th('label', esc(opts.labelName), '', 'Sort by name')}
+        ${sorter.th('sessions', 'Sessions', 'r', 'Sessions in the current period')}
+        ${sorter.th('prevSess', 'Prev Sess', 'r', 'Sessions in the comparison period')}
+        ${sorter.th('sessDelta', 'Sess Δ', 'r', 'Change in sessions vs the comparison period')}
+        ${sorter.th('cvrChange', 'CVR Change', 'tsort--center', 'Sort by CVR change')}
+        ${sorter.th('cvr', 'CVR', 'r')}
+        ${sorter.th('prevCvr', 'Prev CVR', 'r')}
+        ${show7d ? sorter.th('vs7d', 'vs 7d', 'tsort--center', 'Current CVR minus the 7-day average, in percentage points') : ''}
+        ${show7d ? sorter.th('avg7', '7d Avg', 'r', 'Rolling conversion rate over the 7 days ending on the End date') : ''}
+        ${sorter.th('cvrDelta', 'Δ CVR', 'r', 'Current-period CVR minus comparison-period CVR, in percentage points')}
+        ${sorter.th('txns', 'Txns', 'r')}
+        ${sorter.th('prevTxns', 'Prev Txns', 'r', 'Transactions in the comparison period')}
+        ${sorter.th('txnDelta', 'Txns Δ', 'r', 'Change in transactions vs the comparison period')}
       </div>`;
 
   sorted.forEach((r, idx) => {
@@ -2808,7 +2944,7 @@ function renderCvrMovement(cardId, rows, opts) {
           if (drillBy === 'ad') {
             renderLpAdDrill(panel, r.key, { currS: r.currS, prevSess: r.prevSess });
           } else {
-            panel.innerHTML = buildLpDrilldownHtml(r.key);
+            renderLpDrilldown(panel, r.key);
           }
         }
       });
@@ -2816,15 +2952,28 @@ function renderCvrMovement(cardId, rows, opts) {
   }
 }
 
-function buildLpDrilldownHtml(campaignKey) {
+function renderLpDrilldown(panel, campaignKey) {
   const campaign = campaignKey || '(empty)';
+  // One sort order shared by every open campaign panel — they are the same
+  // columns, so sorting one and finding the next still in txn order would read
+  // as a bug rather than a feature.
+  const sortId = 'cvr-lp-drill';
+  _sortRepaint[sortId] = () => {
+    document.querySelectorAll('.cvr-drill-panel.open[data-drill-campaign]').forEach(el => {
+      renderLpDrilldown(el, el.dataset.drillCampaign);
+    });
+  };
+  const sorter = sorterFor(sortId, CVR_ROW_ACCESSORS, TEXT_FIRST_ASC);
+  panel.dataset.drillCampaign = campaign;
+
   const filtered = _rawRows.filter(r => (r.campaign || '(empty)') === campaign);
   const lpRows = aggregateBy(filtered, r => r.lp)
     .filter(r => r.prevSess >= 5 || r.currS >= 5);
-  const sorted = [...lpRows].sort((a, b) => (b.currS * b.currC) - (a.currS * a.currC));
+  const sorted = sorter.apply(lpRows);
 
   if (sorted.length === 0) {
-    return '<div class="cvr-drill-empty">No landing pages with ≥5 sessions in this campaign.</div>';
+    panel.innerHTML = '<div class="cvr-drill-empty">No landing pages with ≥5 sessions in this campaign.</div>';
+    return;
   }
 
   const maxAbsDelta = Math.max(...sorted.map(r => Math.abs(r.currC - r.prevCvr)), 0.001);
@@ -2869,20 +3018,20 @@ function buildLpDrilldownHtml(campaignKey) {
 
   const headerHtml = `
       <div class="cvr-drill-row cvr-drill-row--header">
-        <div>Landing page</div>
-        <div class="r">Sessions</div>
-        <div class="r">Prev Sess</div>
-        <div class="r">Sess Δ</div>
-        <div style="text-align:center">CVR Change</div>
-        <div class="r">CVR</div>
-        <div class="r">Prev CVR</div>
-        <div class="r">Δ CVR</div>
-        <div class="r">Txns</div>
-        <div class="r">Prev Txns</div>
-        <div class="r">Txns Δ</div>
+        ${sorter.th('label', 'Landing page', '', 'Sort by path')}
+        ${sorter.th('sessions', 'Sessions', 'r')}
+        ${sorter.th('prevSess', 'Prev Sess', 'r')}
+        ${sorter.th('sessDelta', 'Sess Δ', 'r')}
+        ${sorter.th('cvrChange', 'CVR Change', 'tsort--center')}
+        ${sorter.th('cvr', 'CVR', 'r')}
+        ${sorter.th('prevCvr', 'Prev CVR', 'r')}
+        ${sorter.th('cvrDelta', 'Δ CVR', 'r')}
+        ${sorter.th('txns', 'Txns', 'r')}
+        ${sorter.th('prevTxns', 'Prev Txns', 'r')}
+        ${sorter.th('txnDelta', 'Txns Δ', 'r')}
       </div>`;
 
-  return `<div class="cvr-drill-heading">Landing pages within this campaign · ${sorted.length}</div>${headerHtml}${rowsHtml}`;
+  panel.innerHTML = `<div class="cvr-drill-heading">Landing pages within this campaign · ${sorted.length}</div>${headerHtml}${rowsHtml}`;
 }
 
 // ─────────────────────────────────────────────
@@ -3419,8 +3568,47 @@ const SEG_DIMENSIONS = [
   },
 ];
 
+const SEG_ROW_ACCESSORS = {
+  bucket:    g => (g.label || '').toLowerCase(),
+  camps:     g => g.entries.length,
+  cvr:       g => g.currCvr,
+  prevCvr:   g => g.prevCvr,
+  cvrDelta:  g => g.cvrDelta,
+  cvrChange: g => g.cvrDelta,
+  sessions:  g => g.currS,
+  prevSess:  g => g.prevS,
+  sessDelta: g => g.currS - g.prevS,
+  sessShare: g => g.sessShare,
+  txns:      g => g.currTxns,
+  prevTxns:  g => g.prevTxns,
+  txnDelta:  g => Math.round(g.currTxns) - Math.round(g.prevTxns),
+  txnShare:  g => g.txnShare,
+  index:     g => g.convIndex,
+};
+const SEG_DRILL_ACCESSORS = {
+  name:      e => (e.name || '').toLowerCase(),
+  sessions:  e => e.currS,
+  prevSess:  e => e.prevSess,
+  sessDelta: e => e.currS - e.prevSess,
+  cvr:       e => e.currC,
+  prevCvr:   e => e.prevCvr,
+  cvrDelta:  e => e.currC - e.prevCvr,
+  txns:      e => e.currS * e.currC,
+  prevTxns:  e => e.prevSess * e.prevCvr,
+  txnDelta:  e => Math.round(e.currS * e.currC) - Math.round(e.prevSess * e.prevCvr),
+};
+
 function renderCampaignSegments(rows) {
   const card = document.getElementById('campaign-segments-card');
+  _sortRepaint['campaign-segments-card'] = () => renderCampaignSegments(rows);
+  // One order across every dimension table, and one across every campaign drill.
+  _sortRepaint['campaign-segments-drill'] = () => renderCampaignSegments(rows);
+  const segSorter = sorterFor('campaign-segments-card', SEG_ROW_ACCESSORS, TEXT_FIRST_ASC);
+  const segDrillSorter = sorterFor('campaign-segments-drill', SEG_DRILL_ACCESSORS, TEXT_FIRST_ASC);
+  // Sorting a drill repaints the whole card, so the panels the user had open
+  // have to come back open or they never see the result of their click.
+  const openDrills = new Set(
+    [...card.querySelectorAll('.seg-drill.open[data-seg-drill]')].map(d => d.dataset.segDrill));
   if (!card) return;
 
   const parsed = rows.map(r => ({ r, c: parseCampaignName(r.key) }));
@@ -3503,31 +3691,31 @@ function renderCampaignSegments(rows) {
           sessShare, txnShare,
           convIndex: sessShare > 0 ? txnShare / sessShare : 0,
         };
-      })
-      .sort((a, b) => b.currS - a.currS);
+      });
+    const ordered = segSorter.apply(groups);
 
     const maxAbsDelta = Math.max(...groups.map(g => Math.abs(g.cvrDelta)), 0.001);
 
     let rowsHtml = `
       <div class="seg-row seg-row--header">
-        <div>Bucket</div>
-        <div class="r" title="Number of utm_campaigns in this bucket">Camps</div>
-        <div class="r">Curr CVR</div>
-        <div class="r">Prev CVR</div>
-        <div class="r" title="Current-period CVR minus comparison-period CVR, in percentage points">Δ CVR</div>
-        <div style="text-align:center">CVR Change</div>
-        <div class="r">Sessions</div>
-        <div class="r" title="Sessions in the comparison period">Prev Sess</div>
-        <div class="r" title="Change in sessions vs the previous period — context for whether the CVR move came with more or less traffic">Sess Δ</div>
-        <div class="r" title="Share of current-period sessions">Sess %</div>
-        <div class="r">Txns</div>
-        <div class="r" title="Transactions in the comparison period">Prev Txns</div>
-        <div class="r" title="Change in transactions vs the comparison period">Txn Δ</div>
-        <div class="r" title="Share of current-period transactions">Txn %</div>
-        <div class="r" title="Txn share ÷ session share. Above 1.00 = converts better than its traffic share implies.">Index</div>
+        ${segSorter.th('bucket', 'Bucket', '', 'Sort by bucket name')}
+        ${segSorter.th('camps', 'Camps', 'r', 'Number of utm_campaigns in this bucket')}
+        ${segSorter.th('cvr', 'Curr CVR', 'r')}
+        ${segSorter.th('prevCvr', 'Prev CVR', 'r')}
+        ${segSorter.th('cvrDelta', 'Δ CVR', 'r', 'Current-period CVR minus comparison-period CVR, in percentage points')}
+        ${segSorter.th('cvrChange', 'CVR Change', 'tsort--center', 'Sort by CVR change')}
+        ${segSorter.th('sessions', 'Sessions', 'r')}
+        ${segSorter.th('prevSess', 'Prev Sess', 'r', 'Sessions in the comparison period')}
+        ${segSorter.th('sessDelta', 'Sess Δ', 'r', 'Change in sessions vs the previous period — context for whether the CVR move came with more or less traffic')}
+        ${segSorter.th('sessShare', 'Sess %', 'r', 'Share of current-period sessions')}
+        ${segSorter.th('txns', 'Txns', 'r')}
+        ${segSorter.th('prevTxns', 'Prev Txns', 'r', 'Transactions in the comparison period')}
+        ${segSorter.th('txnDelta', 'Txn Δ', 'r', 'Change in transactions vs the comparison period')}
+        ${segSorter.th('txnShare', 'Txn %', 'r', 'Share of current-period transactions')}
+        ${segSorter.th('index', 'Index', 'r', 'Txn share ÷ session share. Above 1.00 = converts better than its traffic share implies.')}
       </div>`;
 
-    groups.forEach((g, gi) => {
+    ordered.forEach((g, gi) => {
       const barW = Math.round(Math.abs(g.cvrDelta) / maxAbsDelta * 45);
       const posD = g.cvrDelta >= 0;
       const barColor = posD ? 'var(--positive)' : 'var(--negative)';
@@ -3546,8 +3734,7 @@ function renderCampaignSegments(rows) {
         : `${sessDelta > 0 ? '+' : '−'}${fmtN(Math.abs(sessDelta))}`;
       const txnDelta = Math.round(g.currTxns) - Math.round(g.prevTxns);
 
-      const drillRows = [...g.entries]
-        .sort((a, b) => b.currS - a.currS)
+      const drillRows = segDrillSorter.apply(g.entries)
         .map(e => {
           const eSessD = Math.round(e.currS - e.prevSess);
           const eSessCls = eSessD === 0 ? '' : eSessD > 0 ? 'pos' : 'neg';
@@ -3598,11 +3785,18 @@ function renderCampaignSegments(rows) {
           <div class="r seg-num">${g.txnShare.toFixed(1)}%</div>
           <div class="r seg-idx" style="color:${idxColor}">${g.convIndex.toFixed(2)}×</div>
         </div>
-        <div class="seg-drill" data-seg-drill="${di}-${gi}">
+        <div class="seg-drill${openDrills.has(`${di}-${gi}`) ? ' open' : ''}" data-seg-drill="${di}-${gi}">
           <div class="seg-drill-row seg-drill-row--header">
-            <div>Campaign</div><div class="r">Sessions</div><div class="r">Prev Sess</div><div class="r">Sess Δ</div>
-            <div class="r">CVR</div><div class="r">Prev CVR</div><div class="r">Δ CVR</div>
-            <div class="r">Txns</div><div class="r">Prev Txns</div><div class="r">Txns Δ</div>
+            ${segDrillSorter.th('name', 'Campaign', '', 'Sort by campaign name')}
+            ${segDrillSorter.th('sessions', 'Sessions', 'r')}
+            ${segDrillSorter.th('prevSess', 'Prev Sess', 'r')}
+            ${segDrillSorter.th('sessDelta', 'Sess Δ', 'r')}
+            ${segDrillSorter.th('cvr', 'CVR', 'r')}
+            ${segDrillSorter.th('prevCvr', 'Prev CVR', 'r')}
+            ${segDrillSorter.th('cvrDelta', 'Δ CVR', 'r')}
+            ${segDrillSorter.th('txns', 'Txns', 'r')}
+            ${segDrillSorter.th('prevTxns', 'Prev Txns', 'r')}
+            ${segDrillSorter.th('txnDelta', 'Txns Δ', 'r')}
           </div>
           ${drillRows}
         </div>`;
@@ -3675,9 +3869,12 @@ function renderCampaignSegments(rows) {
   `;
 
   card.querySelectorAll('.seg-row--clickable').forEach(row => {
+    // A drill restored open across a sort repaint needs its row marked open too,
+    // or the chevron points the wrong way.
+    const key = row.dataset.segRow;
+    const panel = card.querySelector(`.seg-drill[data-seg-drill="${key}"]`);
+    if (panel && panel.classList.contains('open')) row.classList.add('seg-row--open');
     row.addEventListener('click', () => {
-      const key = row.dataset.segRow;
-      const panel = card.querySelector(`.seg-drill[data-seg-drill="${key}"]`);
       if (!panel) return;
       row.classList.toggle('seg-row--open', panel.classList.toggle('open'));
     });
@@ -3689,6 +3886,39 @@ function renderCampaignSegments(rows) {
 // ─────────────────────────────────────────────
 function renderCvrBuckets(rows) {
   const card = document.getElementById('cvr-bucket-card');
+  _sortRepaint['cvr-bucket-card'] = () => renderCvrBuckets(rows);
+  // The nested per-campaign lists all share one order — sorting one bucket's
+  // list and finding the next still in its own order would read as a bug.
+  _sortRepaint['cvr-bucket-campaigns'] = () => renderCvrBuckets(rows);
+  const openBuckets = new Set(
+    [...card.querySelectorAll('details[data-bucket][open]')].map(d => d.dataset.bucket));
+  const bucketSorter = sorterFor('cvr-bucket-card', {
+    // Sort on the tier's floor, not its label — alphabetical would put
+    // "Average" before "Extremely Low" and lose the ladder this card is about.
+    bucket:    b => b.min,
+    sessions:  b => b.currS,
+    prevSess:  b => b.prevS,
+    sessDelta: b => b.currS - b.prevS,
+    sessPct:   b => b.prevS > 0 ? (b.currS - b.prevS) / b.prevS : (b.currS > 0 ? 1 : 0),
+    cvr:       b => b.currS > 0 ? b.currWC / b.currS : 0,
+    prevCvr:   b => b.prevS > 0 ? b.prevWC / b.prevS : 0,
+    cvrDelta:  b => (b.currS > 0 ? b.currWC / b.currS : 0) - (b.prevS > 0 ? b.prevWC / b.prevS : 0),
+    txns:      b => b.currWC,
+    prevTxns:  b => b.prevWC,
+    txnDelta:  b => Math.round(b.currWC) - Math.round(b.prevWC),
+  }, TEXT_FIRST_ASC);
+  const entrySorter = sorterFor('cvr-bucket-campaigns', {
+    name:      e => (e.name || '').toLowerCase(),
+    sessions:  e => e.currS,
+    prevSess:  e => e.prevS,
+    sessDelta: e => e.delta,
+    cvr:       e => e.cvr,
+    prevCvr:   e => e.prevCvr,
+    cvrDelta:  e => e.cvr - e.prevCvr,
+    txns:      e => e.currS * e.cvr,
+    prevTxns:  e => e.prevS * e.prevCvr,
+    txnDelta:  e => Math.round(e.currS * e.cvr) - Math.round(e.prevS * e.prevCvr),
+  }, TEXT_FIRST_ASC);
   const minSess = 50;
   const qualified = rows.filter(r => r.currS >= minSess);
 
@@ -3731,18 +3961,18 @@ function renderCvrBuckets(rows) {
     <p class="card__sub">Campaigns with 50+ current sessions bucketed by current CVR. Shows how sessions shifted between conversion tiers.</p>
     <div class="bucket-scroll"><div class="bucket-table">
       <div class="bucket-row bucket-row--header">
-        <div>Bucket</div>
-        <div class="r">Curr Sess</div>
-        <div class="r">Prev Sess</div>
-        <div>Prev vs Curr Sessions</div>
-        <div class="r">Sess Δ</div>
-        <div class="r">Δ %</div>
-        <div class="r" title="Session-weighted CVR of the campaigns in this bucket, current period">CVR</div>
-        <div class="r" title="Same campaigns, comparison period">Prev CVR</div>
-        <div class="r" title="Current minus comparison CVR, in percentage points">Δ CVR</div>
-        <div class="r">Txns</div>
-        <div class="r" title="Transactions in the comparison period">Prev Txns</div>
-        <div class="r" title="Change in transactions vs the comparison period">Txns Δ</div>
+        ${bucketSorter.th('bucket', 'Bucket', '', 'Sort back to the CVR tier ladder')}
+        ${bucketSorter.th('sessions', 'Curr Sess', 'r')}
+        ${bucketSorter.th('prevSess', 'Prev Sess', 'r')}
+        ${bucketSorter.th('sessPct', 'Prev vs Curr Sessions', '', 'Sort by percentage change in sessions')}
+        ${bucketSorter.th('sessDelta', 'Sess Δ', 'r')}
+        ${bucketSorter.th('sessPct', 'Δ %', 'r')}
+        ${bucketSorter.th('cvr', 'CVR', 'r', 'Session-weighted CVR of the campaigns in this bucket, current period')}
+        ${bucketSorter.th('prevCvr', 'Prev CVR', 'r', 'Same campaigns, comparison period')}
+        ${bucketSorter.th('cvrDelta', 'Δ CVR', 'r', 'Current minus comparison CVR, in percentage points')}
+        ${bucketSorter.th('txns', 'Txns', 'r')}
+        ${bucketSorter.th('prevTxns', 'Prev Txns', 'r', 'Transactions in the comparison period')}
+        ${bucketSorter.th('txnDelta', 'Txns Δ', 'r', 'Change in transactions vs the comparison period')}
       </div>`;
 
   const invertedBuckets = new Set(['extreme_low', 'low']);
@@ -3759,7 +3989,7 @@ function renderCvrBuckets(rows) {
     return delta >= 0 ? 'var(--positive)' : 'var(--negative)';
   }
 
-  bucketData.forEach(b => {
+  bucketSorter.apply(bucketData).forEach(b => {
     const delta = b.currS - b.prevS;
     const deltaPct = b.prevS > 0 ? (delta / b.prevS * 100) : (b.currS > 0 ? 100 : 0);
     const currCvr = b.currS > 0 ? b.currWC / b.currS : 0;
@@ -3772,7 +4002,7 @@ function renderCvrBuckets(rows) {
     const currBarW = Math.max(1, Math.round(b.currS / maxSess * 100));
     const barColor = impactBarColor(delta, b.key);
     const deltaClass = impactCls(delta, b.key);
-    const sortedEntries = [...b.entries].sort((a, c) => Math.abs(c.delta) - Math.abs(a.delta));
+    const sortedEntries = entrySorter.apply(b.entries);
 
     let entryRows = '';
     sortedEntries.forEach(s => {
@@ -3817,13 +4047,20 @@ function renderCvrBuckets(rows) {
         <div class="r" style="font-size:0.78rem;color:var(--text-secondary)">${fmtN(prevTxns)}</div>
         <div class="r ${cls(txnDelta)}" style="font-size:0.78rem;font-weight:600">${fmtS(txnDelta)}</div>
       </div>
-      <details style="padding:0 0 4px 40px">
+      <details data-bucket="${b.key}"${openBuckets.has(b.key) ? ' open' : ''} style="padding:0 0 4px 40px">
         <summary style="font-size:0.72rem;color:var(--fb-blue);cursor:pointer;padding:4px 0;user-select:none">Show ${b.entries.length} campaign${b.entries.length !== 1 ? 's' : ''}</summary>
         <div style="padding:2px 0 4px">
           <div style="display:grid;grid-template-columns:minmax(220px,1fr) 55px 55px 50px 52px 52px 50px 50px 50px 48px;gap:6px;padding:2px 0;font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);border-bottom:1px solid var(--border)">
-            <div>Campaign</div><div class="r">Sess</div><div class="r">Prev Sess</div><div class="r">Δ Sess</div>
-            <div class="r">CVR</div><div class="r">Prev CVR</div><div class="r">Δ CVR</div>
-            <div class="r">Txns</div><div class="r">Prev Txns</div><div class="r">Δ Txns</div>
+            ${entrySorter.th('name', 'Campaign', '', 'Sort by campaign name')}
+            ${entrySorter.th('sessions', 'Sess', 'r')}
+            ${entrySorter.th('prevSess', 'Prev Sess', 'r')}
+            ${entrySorter.th('sessDelta', 'Δ Sess', 'r')}
+            ${entrySorter.th('cvr', 'CVR', 'r')}
+            ${entrySorter.th('prevCvr', 'Prev CVR', 'r')}
+            ${entrySorter.th('cvrDelta', 'Δ CVR', 'r')}
+            ${entrySorter.th('txns', 'Txns', 'r')}
+            ${entrySorter.th('prevTxns', 'Prev Txns', 'r')}
+            ${entrySorter.th('txnDelta', 'Δ Txns', 'r')}
           </div>
           ${entryRows || '<div style="font-size:0.73rem;color:var(--text-secondary);padding:4px 0">—</div>'}
         </div>
@@ -3872,7 +4109,11 @@ function cvrHeatColor(cvr) {
 
 function renderSessionVolume(cardId, rows, opts) {
   const card = document.getElementById(cardId);
-  const sorted = [...rows].sort((a, b) => b.currS - a.currS);
+  _sortRepaint[cardId] = () => renderSessionVolume(cardId, rows, opts);
+  const sorter = sorterFor(cardId, { ...CVR_ROW_ACCESSORS,
+    sessPct: r => r.prevSess > 0 ? (r.currS - r.prevSess) / r.prevSess : (r.currS > 0 ? 1 : 0),
+  }, TEXT_FIRST_ASC);
+  const sorted = sorter.apply(rows);
   const maxSess = Math.max(...sorted.map(r => Math.max(r.currS, r.prevSess)), 1);
   // 'ad' expands a landing page into the ads that sent it traffic (lazy query).
   const drillBy = opts.drillBy === 'ad' ? 'ad' : null;
@@ -3883,17 +4124,17 @@ function renderSessionVolume(cardId, rows, opts) {
     <div class="cvr-chart">
       ${drillBy === 'ad' ? '<div class="drill-hint">▶ Click a row to see which ads sent it that traffic.</div>' : ''}
       <div class="sess-chart-row sess-chart-row--header">
-        <div>${esc(opts.labelName)}</div>
-        <div class="r">Sessions</div>
-        <div class="r" title="Sessions in the comparison period">Prev Sess</div>
-        <div>Prev vs Curr Sessions</div>
-        <div class="r">Sess Δ</div>
-        <div class="r">CVR</div>
-        <div class="r" title="CVR in the comparison period">Prev CVR</div>
-        <div class="r" title="Current minus comparison CVR, in percentage points">Δ CVR</div>
-        <div class="r">Txns</div>
-        <div class="r" title="Transactions in the comparison period">Prev Txns</div>
-        <div class="r" title="Change in transactions vs the comparison period">Txns Δ</div>
+        ${sorter.th('label', esc(opts.labelName), '', 'Sort by name')}
+        ${sorter.th('sessions', 'Sessions', 'r')}
+        ${sorter.th('prevSess', 'Prev Sess', 'r', 'Sessions in the comparison period')}
+        ${sorter.th('sessPct', 'Prev vs Curr Sessions', '', 'Sort by percentage change in sessions')}
+        ${sorter.th('sessDelta', 'Sess Δ', 'r')}
+        ${sorter.th('cvr', 'CVR', 'r')}
+        ${sorter.th('prevCvr', 'Prev CVR', 'r', 'CVR in the comparison period')}
+        ${sorter.th('cvrDelta', 'Δ CVR', 'r', 'Current minus comparison CVR, in percentage points')}
+        ${sorter.th('txns', 'Txns', 'r')}
+        ${sorter.th('prevTxns', 'Prev Txns', 'r', 'Transactions in the comparison period')}
+        ${sorter.th('txnDelta', 'Txns Δ', 'r', 'Change in transactions vs the comparison period')}
       </div>`;
 
   sorted.forEach((r, idx) => {
@@ -4252,6 +4493,31 @@ function renderEffects(container, group, tCvrDelta, tDelta, tPrevConv) {
 }
 
 function renderDrillDown(container, campaign, tDelta, tPrevConv) {
+  // One order shared by every open campaign's landing-page panel.
+  const sortId = 'lp-effect-drill';
+  _sortRepaint[sortId] = () => {
+    document.querySelectorAll('.drill-panel.open[data-effect-campaign]').forEach(el => {
+      renderDrillDown(el, el.dataset.effectCampaign, el._tDelta, el._tPrevConv);
+    });
+  };
+  const sorter = sorterFor(sortId, {
+    lp:        c => (c.lp || '').toLowerCase(),
+    sessions:  c => c.currS,
+    prevSess:  c => c.prevSess,
+    sessDelta: c => c.currS - c.prevSess,
+    cvr:       c => c.currC,
+    prevCvr:   c => c.prevCvr,
+    cvrDelta:  c => c.currC - c.prevCvr,
+    txns:      c => c.currS * c.currC,
+    prevTxns:  c => c.prevSess * c.prevCvr,
+    txnDelta:  c => Math.round(c.currS * c.currC) - Math.round(c.prevSess * c.prevCvr),
+    effect:    c => Math.abs(c.value),
+    value:     c => c.value,
+  }, TEXT_FIRST_ASC);
+  container.dataset.effectCampaign = campaign;
+  container._tDelta = tDelta;
+  container._tPrevConv = tPrevConv;
+
   const filtered = _rawRows.filter(r => (r.campaign || '(empty)') === campaign);
   const lpRows = aggregateBy(filtered, r => r.lp);
   if (lpRows.length === 0) {
@@ -4271,10 +4537,10 @@ function renderDrillDown(container, campaign, tDelta, tPrevConv) {
     if (d.cvrEffect !== 0) contribs.push({ lp: lpLabel, ...stats, typeLabel: d.dC >= 0 ? 'CVR Increase' : 'CVR Decrease', value: d.cvrEffect, detail: `${fmtPP(d.dC*100)} (${(r.prevCvr*100).toFixed(2)}% → ${(r.currC*100).toFixed(2)}%)` });
     if (Math.abs(d.interaction) > 0.5) contribs.push({ lp: lpLabel, ...stats, typeLabel: 'Interaction Effect', value: d.interaction, detail: `${fmtS(Math.round(d.dS))} sessions × ${fmtPP(d.dC*100)} CVR` });
   });
-  contribs.sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
+  const ordered = sorter.apply(contribs);
 
-  const maxAbs = contribs.length > 0 ? Math.abs(contribs[0].value) : 1;
-  const html = contribs.map(c => {
+  const maxAbs = contribs.reduce((m, c) => Math.max(m, Math.abs(c.value)), 1e-9);
+  const html = ordered.map(c => {
     const barPct = Math.round(Math.abs(c.value) / maxAbs * 100);
     const barColor = c.value >= 0 ? 'var(--positive)' : 'var(--negative)';
     const pctOfDelta = tDelta !== 0 ? (c.value / tDelta * 100) : 0;
@@ -4305,11 +4571,19 @@ function renderDrillDown(container, campaign, tDelta, tPrevConv) {
   }).join('');
   const headerRow = `
       <div class="drill-row drill-row--header">
-        <div>Landing page · effect</div>
-        <div class="r">Sess</div><div class="r">Prev Sess</div><div class="r">Δ Sess</div>
-        <div class="r">CVR</div><div class="r">Prev CVR</div><div class="r">Δ CVR</div>
-        <div class="r">Txns</div><div class="r">Prev Txns</div><div class="r">Δ Txns</div>
-        <div>Effect</div><div class="r">Txn Δ</div><div class="r">% of total Δ</div>
+        ${sorter.th('lp', 'Landing page · effect', '', 'Sort by path')}
+        ${sorter.th('sessions', 'Sess', 'r')}
+        ${sorter.th('prevSess', 'Prev Sess', 'r')}
+        ${sorter.th('sessDelta', 'Δ Sess', 'r')}
+        ${sorter.th('cvr', 'CVR', 'r')}
+        ${sorter.th('prevCvr', 'Prev CVR', 'r')}
+        ${sorter.th('cvrDelta', 'Δ CVR', 'r')}
+        ${sorter.th('txns', 'Txns', 'r')}
+        ${sorter.th('prevTxns', 'Prev Txns', 'r')}
+        ${sorter.th('txnDelta', 'Δ Txns', 'r')}
+        ${sorter.th('effect', 'Effect', '', 'Sort by effect size, largest first')}
+        ${sorter.th('value', 'Txn Δ', 'r', "This effect's share of the transaction change")}
+        ${sorter.th('value', '% of total Δ', 'r')}
       </div>`;
   container.innerHTML = `<div class="drill-header">Landing page breakdown · ${contribs.length} row${contribs.length !== 1 ? 's' : ''}</div>${headerRow}${html}`;
 }
