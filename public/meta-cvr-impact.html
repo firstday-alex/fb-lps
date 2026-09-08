@@ -1523,6 +1523,10 @@
     [data-tt], [title] { cursor: help; }
     .btn-reset[title], .shopify-load-btn[title], button[title],
     a[title], input[title] { cursor: pointer; }
+    /* A sortable header usually also carries an explanatory title, and the rule
+       above turned every one of those into a help cursor — so the column looked
+       like a tooltip, not something you could click. Clickability wins. */
+    .tsort[title], .sort-h[title], .ad-lp-sort[title], .adrill-sort[title] { cursor: pointer; }
   </style>
 </head>
 <body>
