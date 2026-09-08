@@ -419,6 +419,9 @@
     .contrib-stat strong { display: block; font-size: 0.82rem; color: var(--text-primary); font-weight: 600; }
     .contrib-stat.pos strong { color: var(--positive); }
     .contrib-stat.neg strong { color: var(--negative); }
+    /* Baseline (comparison-period) columns sit next to their current-period
+       twin — greyed so the eye lands on the current number first. */
+    .contrib-stat--prev strong { color: var(--text-secondary); font-weight: 500; }
     .contrib-bar-wrap { height: 8px; background: var(--neutral-bg); border-radius: 4px; overflow: hidden; }
     .contrib-bar { height: 100%; border-radius: 4px; min-width: 2px; }
     .contrib-val { text-align: right; font-weight: 700; font-size: 0.9rem; }
@@ -426,9 +429,14 @@
     .contrib-chevron { font-size: 0.65rem; color: var(--text-secondary); text-align: right; }
 
     /* Contributors sticky header */
+    /* Sess / CVR / Txns each carry curr + prev + delta, so the grid no longer
+       fits a laptop viewport — header and rows share the min-width and scroll
+       together inside .contrib-scroll. */
+    .contrib-scroll { overflow-x: auto; }
+    .contrib-table { min-width: 1200px; }
     .contrib-header {
       display: grid;
-      grid-template-columns: minmax(260px, 2.2fr) 68px 58px 50px 58px 50px 56px minmax(120px, 1fr) 84px 72px 18px;
+      grid-template-columns: minmax(220px, 2.2fr) 60px 58px 56px 58px 52px 58px 52px 52px 56px minmax(110px, 1fr) 84px 72px 18px;
       gap: 8px;
       padding: 6px 4px;
       font-size: 0.68rem;
@@ -443,6 +451,14 @@
       z-index: 10;
     }
     .contrib-header .r { text-align: right; }
+    /* Generic sortable-header cell, shared by every generated table on the page.
+       The contributors grid keeps its own .sort-h rules because its header is
+       static markup rather than generated. */
+    .tsort { cursor: pointer; user-select: none; border-radius: 3px; }
+    .tsort:hover { background: #eef3ff; color: var(--fb-blue); }
+    .tsort--active { color: var(--fb-blue); }
+    .tsort-arrow { margin-left: 3px; font-size: 0.75em; }
+    .tsort--center { text-align: center; }
     .contrib-header .sort-h {
       cursor: pointer;
       user-select: none;
@@ -467,7 +483,7 @@
     .source-wrap:last-child { border-bottom: none; }
     .source-row {
       display: grid;
-      grid-template-columns: minmax(260px, 2.2fr) 68px 58px 50px 58px 50px 56px minmax(120px, 1fr) 84px 72px 18px;
+      grid-template-columns: minmax(220px, 2.2fr) 60px 58px 56px 58px 52px 58px 52px 52px 56px minmax(110px, 1fr) 84px 72px 18px;
       align-items: center;
       gap: 8px;
       padding: 11px 4px;
@@ -586,13 +602,18 @@
     }
     .drill-row {
       display: grid;
-      grid-template-columns: 1fr 52px 52px 130px 65px 80px;
+      grid-template-columns: minmax(200px, 1fr) 52px 52px 54px 58px 52px 56px 50px 54px 54px minmax(110px, 1fr) 62px 76px;
       align-items: center;
       gap: 10px;
       padding: 5px 0;
       border-top: 1px solid #e4e8f4;
       font-size: 0.77rem;
     }
+    .drill-row--header {
+      font-size: 0.64rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--text-secondary); border-top: none;
+    }
+    .drill-row--header .r { text-align: right; }
     .drill-lp { font-weight: 500; font-size: 0.76rem; color: var(--text-primary); word-break: break-all; }
 
     .hidden { display: none !important; }
@@ -611,14 +632,18 @@
       letter-spacing: 0.06em; color: var(--text-secondary); margin-bottom: 4px;
     }
     .cvr-movement-card .card__sub { margin-bottom: 16px; }
+    /* Rows carry sessions, CVR and txns each as curr / prev / delta, so the grid
+       is always wider than the card. */
     .cvr-chart {
       display: flex;
       flex-direction: column;
       gap: 0;
+      overflow-x: auto;
     }
     .cvr-chart-row {
       display: grid;
-      grid-template-columns: minmax(280px, 1.8fr) 60px minmax(120px, 1fr) 60px 60px;
+      grid-template-columns: minmax(240px, 1.8fr) 52px 52px 54px minmax(130px, 1fr) 58px 52px 52px 54px 52px 54px;
+      min-width: 1040px;
       align-items: center;
       gap: 8px;
       padding: 6px 0;
@@ -684,7 +709,8 @@
     }
     .cvr-drill-row {
       display: grid;
-      grid-template-columns: minmax(260px, 1.8fr) 60px minmax(120px, 1fr) 60px 60px;
+      grid-template-columns: minmax(220px, 1.8fr) 52px 52px 54px minmax(130px, 1fr) 58px 52px 52px 54px 52px 54px;
+      min-width: 1040px;
       align-items: center;
       gap: 8px;
       padding: 5px 0;
@@ -692,6 +718,10 @@
       font-size: 0.76rem;
     }
     .cvr-drill-row .r { text-align: right; }
+    .cvr-drill-row--header {
+      font-size: 0.64rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--text-secondary); border-top: none;
+    }
     .cvr-drill-lp {
       font-family: Menlo, Monaco, monospace;
       font-size: 0.72rem;
@@ -712,7 +742,8 @@
     /* Session volume chart */
     .sess-chart-row {
       display: grid;
-      grid-template-columns: minmax(280px, 2fr) 70px minmax(120px, 1fr) 70px 90px;
+      grid-template-columns: minmax(220px, 2fr) 56px 56px minmax(100px, 1fr) 66px 66px 56px 56px 52px 54px 54px;
+      min-width: 1080px;
       align-items: center;
       gap: 8px;
       padding: 6px 0;
@@ -742,6 +773,7 @@
     .sess-delta-tag {
       font-size: 0.7rem; font-weight: 600; white-space: nowrap;
     }
+    .cvr-pill--sm { padding: 0 5px; font-size: 0.73rem; font-weight: 700; line-height: 1.5; }
     .cvr-pill {
       display: inline-block;
       padding: 3px 9px;
@@ -754,9 +786,11 @@
     }
 
     /* CVR Bucket rows */
+    .bucket-scroll { overflow-x: auto; }
+    .bucket-table { min-width: 1020px; }
     .bucket-row {
       display: grid;
-      grid-template-columns: 200px 80px 80px 1fr 80px 60px;
+      grid-template-columns: 190px 64px 64px minmax(90px, 1fr) 60px 52px 58px 58px 56px 58px 58px 56px;
       align-items: center;
       gap: 8px;
       padding: 10px 0;
@@ -1145,20 +1179,25 @@
     <div class="card breakdown-card">
       <h3>Top Contributors to Blended CVR Change</h3>
       <p class="card__sub">Each row is one utm_source. <strong>CVR Impact</strong> = this source's contribution (in pp) to the total blended CVR change for this data pull. Decomposed into: (a) <strong>own CVR effect</strong> — <em>prevShare × ΔCvr</em> (the source's own CVR movement, weighted by its baseline traffic share); plus (b) <strong>share-shift effect</strong> — <em>ΔShare × (currCvr − blended avg)</em> (gaining/losing share at a CVR above or below the blended average). Sums across all sources to the overall blended ΔCvr. Negative = dragged blended CVR down. So a below-average source whose CVR drops <em>and</em> gains share compounds on both terms. Dot = channel group. <em>Click a column header to sort.</em></p>
+      <div class="contrib-scroll"><div class="contrib-table">
       <div class="contrib-header">
         <div class="sort-h" data-sort="source">Source</div>
-        <div class="r sort-h" data-sort="sessions">Sessions</div>
+        <div class="r sort-h" data-sort="sessions">Sess</div>
+        <div class="r sort-h" data-sort="prevSess" title="Sessions in the comparison period">Prev Sess</div>
         <div class="r sort-h" data-sort="sessDelta" title="Change in sessions vs the comparison period (current − previous)">Sess &Delta;</div>
         <div class="r sort-h" data-sort="cvr">CVR</div>
+        <div class="r sort-h" data-sort="prevCvr" title="CVR in the comparison period">Prev CVR</div>
         <div class="r sort-h" data-sort="cvrDelta" title="Source's own CVR change in pp (current − previous)">CVR Δ</div>
         <div class="r sort-h" data-sort="txns">Txns</div>
+        <div class="r sort-h" data-sort="prevTxns" title="Transactions in the comparison period">Prev Txns</div>
         <div class="r sort-h" data-sort="txnDelta" title="Change in transactions vs the comparison period (current − previous)">Txn &Delta;</div>
-        <div>Impact</div>
+        <div class="sort-h" data-sort="impactBar" title="Sort by CVR impact">Impact</div>
         <div class="r sort-h" data-sort="cvrImpact" title="Contribution to blended CVR change (pp). Own CVR effect + share-shift effect. Sums to total blended ΔCvr. Negative = dragged blended CVR down.">CVR Impact ⓘ</div>
-        <div class="r">% of ΔCvr</div>
+        <div class="r sort-h" data-sort="pctOfDelta" title="This source's share of the blended CVR change">% of ΔCvr</div>
         <div></div>
       </div>
       <div id="contributors-list"></div>
+      </div></div>
     </div>
 
     <!-- Channel breakdown table -->
@@ -1168,19 +1207,19 @@
         <table class="breakdown-table" id="breakdown-table">
           <thead>
             <tr>
-              <th>Channel</th>
-              <th class="r">Prev Sessions</th>
-              <th class="r">Curr Sessions</th>
-              <th class="r">Δ Sessions</th>
-              <th class="r">Prev CVR</th>
-              <th class="r">Curr CVR</th>
-              <th class="r">Δ CVR (pp)</th>
-              <th class="r">Prev Txns</th>
-              <th class="r">Curr Txns</th>
-              <th class="r">Δ Txn</th>
-              <th class="r">Sessions Effect</th>
-              <th class="r">CVR Effect</th>
-              <th class="r">Interaction</th>
+              <th class="tsort" data-sort-table="breakdown-table" data-sort-key="channel" data-sort-first="asc">Channel</th>
+              <th class="r tsort" data-sort-table="breakdown-table" data-sort-key="prevSess">Prev Sessions</th>
+              <th class="r tsort" data-sort-table="breakdown-table" data-sort-key="sessions">Curr Sessions</th>
+              <th class="r tsort" data-sort-table="breakdown-table" data-sort-key="sessDelta">Δ Sessions</th>
+              <th class="r tsort" data-sort-table="breakdown-table" data-sort-key="prevCvr">Prev CVR</th>
+              <th class="r tsort" data-sort-table="breakdown-table" data-sort-key="cvr">Curr CVR</th>
+              <th class="r tsort" data-sort-table="breakdown-table" data-sort-key="cvrDelta">Δ CVR (pp)</th>
+              <th class="r tsort" data-sort-table="breakdown-table" data-sort-key="prevTxns">Prev Txns</th>
+              <th class="r tsort" data-sort-table="breakdown-table" data-sort-key="txns">Curr Txns</th>
+              <th class="r tsort" data-sort-table="breakdown-table" data-sort-key="txnDelta">Δ Txn</th>
+              <th class="r tsort" data-sort-table="breakdown-table" data-sort-key="sessEffect">Sessions Effect</th>
+              <th class="r tsort" data-sort-table="breakdown-table" data-sort-key="cvrEffect">CVR Effect</th>
+              <th class="r tsort" data-sort-table="breakdown-table" data-sort-key="interaction">Interaction</th>
             </tr>
           </thead>
           <tbody id="breakdown-tbody"></tbody>
@@ -1194,13 +1233,17 @@
         <table class="raw-table" id="raw-table">
           <thead>
             <tr>
-              <th>UTM Source</th>
-              <th>Channel</th>
-              <th class="r">Prev Sessions</th>
-              <th class="r">Curr Sessions</th>
-              <th class="r">Prev CVR</th>
-              <th class="r">Curr CVR</th>
-              <th class="r">Curr Txns</th>
+              <th class="tsort" data-sort-table="raw-table" data-sort-key="source" data-sort-first="asc">UTM Source</th>
+              <th class="tsort" data-sort-table="raw-table" data-sort-key="channel" data-sort-first="asc">Channel</th>
+              <th class="r tsort" data-sort-table="raw-table" data-sort-key="sessions">Curr Sessions</th>
+              <th class="r tsort" data-sort-table="raw-table" data-sort-key="prevSess">Prev Sessions</th>
+              <th class="r tsort" data-sort-table="raw-table" data-sort-key="sessDelta">Δ Sessions</th>
+              <th class="r tsort" data-sort-table="raw-table" data-sort-key="cvr">Curr CVR</th>
+              <th class="r tsort" data-sort-table="raw-table" data-sort-key="prevCvr">Prev CVR</th>
+              <th class="r tsort" data-sort-table="raw-table" data-sort-key="cvrDelta">Δ CVR (pp)</th>
+              <th class="r tsort" data-sort-table="raw-table" data-sort-key="txns">Curr Txns</th>
+              <th class="r tsort" data-sort-table="raw-table" data-sort-key="prevTxns">Prev Txns</th>
+              <th class="r tsort" data-sort-table="raw-table" data-sort-key="txnDelta">Δ Txns</th>
             </tr>
           </thead>
           <tbody id="raw-tbody"></tbody>
@@ -1419,6 +1462,116 @@ const fmtKS = n => { if (!isFinite(n)) return '—'; const r = Math.round(n); if
 const fmtS  = (n, d=0) => { if(!isFinite(n)) return '—'; return (n>0?'+':'')+fmtN(n,d); };
 const fmtP  = (n, d=1) => { if(!isFinite(n)) return '—'; return (n>0?'+':'')+n.toFixed(d)+'%'; };
 const fmtPP = (n, d=2) => { if(!isFinite(n)) return '—'; return (n>0?'+':'')+n.toFixed(d)+'pp'; };
+
+// ─────────────────────────────────────────────
+// SORTABLE TABLES
+// ─────────────────────────────────────────────
+// Every table on this page sorts the same way: click a header to sort by that
+// column, click the active header again to flip direction. Each one opens on
+// sessions, highest first. Sort state is keyed by table id and lives outside the
+// render functions, because sorting repaints the table and the state has to
+// survive that. Repainting also closes any open drill, which is deliberate:
+// drill panels are addressed by row index, so a re-sort would otherwise leave
+// them pointing at the wrong row.
+const SORT_DEFAULT = { key: 'sessions', dir: 'desc' };
+const _tableSort = {};      // table id -> { key, dir }
+const _sortRepaint = {};    // table id -> () => void
+
+function sorterFor(id, accessors, firstClickDir = {}) {
+  const st = _tableSort[id] || (_tableSort[id] = { ...SORT_DEFAULT });
+  // A stored key this table no longer offers would silently sort by nothing.
+  if (!accessors[st.key]) { st.key = SORT_DEFAULT.key; st.dir = SORT_DEFAULT.dir; }
+  return {
+    id, key: st.key, dir: st.dir,
+    apply(rows) {
+      const get = accessors[st.key] || accessors[SORT_DEFAULT.key];
+      if (!get) return [...rows];
+      const mul = st.dir === 'desc' ? -1 : 1;
+      return [...rows].sort((a, b) => {
+        const av = get(a), bv = get(b);
+        if (typeof av === 'string' || typeof bv === 'string') {
+          return String(av).localeCompare(String(bv)) * mul;
+        }
+        if (!isFinite(av) || !isFinite(bv)) return (isFinite(bv) ? 1 : 0) - (isFinite(av) ? 1 : 0);
+        if (av === bv) return 0;
+        return (av - bv) * mul;
+      });
+    },
+    // A column with no accessor renders as plain text, so a decorative column
+    // (a bar, a chevron) can share the same call site.
+    th(key, label, extraCls = '', title = '') {
+      const t = title ? ` title="${title}"` : '';
+      if (!accessors[key]) return `<div class="${extraCls}"${t}>${label}</div>`;
+      const active = st.key === key;
+      const first = firstClickDir[key] ? ` data-sort-first="${firstClickDir[key]}"` : '';
+      return `<div class="tsort ${extraCls}${active ? ' tsort--active' : ''}"`
+        + ` data-sort-table="${id}" data-sort-key="${key}"${first}${t}>${label}`
+        + `${active ? `<span class="tsort-arrow">${st.dir === 'asc' ? '▲' : '▼'}</span>` : ''}</div>`;
+    },
+  };
+}
+
+// One delegated listener for every sortable table. Capture phase +
+// stopPropagation so a header click never also collapses the card it sits in or
+// opens the drill on the row behind it.
+document.addEventListener('click', (e) => {
+  const h = e.target.closest('[data-sort-key][data-sort-table]');
+  if (!h) return;
+  const repaint = _sortRepaint[h.dataset.sortTable];
+  if (!repaint) return;
+  e.stopPropagation();
+  e.preventDefault();
+  const st = _tableSort[h.dataset.sortTable] || (_tableSort[h.dataset.sortTable] = { ...SORT_DEFAULT });
+  if (st.key === h.dataset.sortKey) st.dir = st.dir === 'desc' ? 'asc' : 'desc';
+  else { st.key = h.dataset.sortKey; st.dir = (h.dataset.sortFirst || 'desc'); }
+  repaint();
+}, true);
+
+// Text columns read A→Z on first click; everything else opens biggest-first.
+const TEXT_FIRST_ASC = { source: 'asc', name: 'asc', label: 'asc', bucket: 'asc', lp: 'asc', channel: 'asc' };
+
+// ─────────────────────────────────────────────
+// CVR HEAT SCALE
+// ─────────────────────────────────────────────
+// Fixed scale so a CVR reads the same in every table: ≤0.3% bright red, fading
+// to white at 1%, pretty green at 2%, bright green from 3% up.
+function cvrHeatColor(cvr) {
+  const pct = cvr * 100;
+  if (pct <= 0.3) {
+    return { bg: '#dc2626', text: '#fff' };
+  } else if (pct < 1.0) {
+    const t = (pct - 0.3) / 0.7;
+    const r = Math.round(220 + t * 35);
+    const g = Math.round(38 + t * 217);
+    const b = Math.round(38 + t * 217);
+    return {
+      bg: `rgb(${r},${g},${b})`,
+      text: t < 0.5 ? '#fff' : `rgb(${Math.round(180 - t * 60)},${Math.round(50 + t * 20)},${Math.round(50 + t * 20)})`
+    };
+  } else if (pct <= 2.0) {
+    const t = (pct - 1.0) / 1.0;
+    const r = Math.round(255 - t * 221);
+    const g = Math.round(255 - t * 95);
+    const b = Math.round(255 - t * 181);
+    return { bg: `rgb(${r},${g},${b})`, text: t < 0.4 ? '#555' : '#fff' };
+  } else if (pct < 3.0) {
+    const t = (pct - 2.0) / 1.0;
+    const r = Math.round(34 - t * 13);
+    const g = Math.round(160 - t * 32);
+    const b = Math.round(74 - t * 13);
+    return { bg: `rgb(${r},${g},${b})`, text: '#fff' };
+  } else {
+    return { bg: '#15803d', text: '#fff' };
+  }
+}
+
+function cvrPill(cvr, opts = {}) {
+  if (!isFinite(cvr)) return '—';
+  const h = cvrHeatColor(cvr);
+  return `<span class="cvr-pill${opts.small ? ' cvr-pill--sm' : ''}"`
+    + ` style="background:${h.bg};color:${h.text}"${opts.title ? ` title="${opts.title}"` : ''}>`
+    + `${(cvr * 100).toFixed(2)}%</span>`;
+}
 const cls   = n => n > 0 ? 'pos' : n < 0 ? 'neg' : '';
 const bcls  = n => n > 0 ? 'badge-pos' : n < 0 ? 'badge-neg' : 'badge-neu';
 function esc(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
@@ -1699,17 +1852,24 @@ function render(rawRows, filename) {
   const sortKeyFns = {
     source:    g => g.source.toLowerCase(),
     sessions:  g => g.currS,
+    prevSess:  g => g.prevSess,
     sessDelta: g => g.currS - g.prevSess,
     cvr:       g => g.currC,
+    prevCvr:   g => g.prevCvr,
     cvrDelta:  g => Math.abs(g.deltaCvr),
     txns:      g => g.currS * g.currC,
+    prevTxns:  g => g.prevSess * g.prevCvr,
     txnDelta:  g => g.txnDelta,
     cvrImpact: g => g.cvrImpact,
+    // The bar and the percentage both visualise cvrImpact; separate keys so only
+    // the header the user clicked carries the arrow.
+    impactBar:  g => g.cvrImpact,
+    pctOfDelta: g => g.cvrImpact,
   };
   // cvrImpact default 'asc' so the biggest blended-CVR draggers surface at top.
-  const defaultDir = { source: 'asc', sessions: 'desc', sessDelta: 'desc', cvr: 'desc', cvrDelta: 'desc', txns: 'desc', txnDelta: 'desc', cvrImpact: 'asc' };
-  let sortKey = 'cvrImpact';
-  let sortDir = 'asc';
+  const defaultDir = { source: 'asc', sessions: 'desc', prevSess: 'desc', sessDelta: 'desc', cvr: 'desc', prevCvr: 'desc', cvrDelta: 'desc', txns: 'desc', prevTxns: 'desc', txnDelta: 'desc', cvrImpact: 'asc', impactBar: 'asc', pctOfDelta: 'asc' };
+  let sortKey = 'sessions';
+  let sortDir = 'desc';
 
   const renderContributorsList = () => {
     const keyFn = sortKeyFns[sortKey] || sortKeyFns.cvrImpact;
@@ -1748,10 +1908,13 @@ function render(rawRows, filename) {
           </div>
         </div>
         <div class="contrib-stat"><strong>${esc(fmtK(g.currS))}</strong>sess</div>
+        <div class="contrib-stat contrib-stat--prev" title="Sessions in the comparison period"><strong>${esc(fmtK(g.prevSess))}</strong>prev</div>
         <div class="contrib-stat ${cls(g.currS - g.prevSess)}" title="Sessions ${fmtN(g.prevSess)} → ${fmtN(g.currS)}${g.prevSess > 0 ? ` (${fmtP((g.currS - g.prevSess) / g.prevSess * 100, 1)})` : ''}"><strong>${fmtKS(g.currS - g.prevSess)}</strong></div>
-        <div class="contrib-stat"><strong>${(g.currC*100).toFixed(2)}%</strong>CVR</div>
+        <div class="contrib-stat"><strong>${cvrPill(g.currC, { small: true })}</strong>CVR</div>
+        <div class="contrib-stat contrib-stat--prev" title="CVR in the comparison period"><strong>${(g.prevCvr*100).toFixed(2)}%</strong>prev</div>
         <div class="contrib-stat ${cls(g.deltaCvr)}" title="This source's own CVR change (${(g.prevCvr*100).toFixed(2)}% → ${(g.currC*100).toFixed(2)}%)"><strong>${fmtPP(g.deltaCvr*100)}</strong></div>
         <div class="contrib-stat"><strong>${esc(fmtK(Math.round(g.currS * g.currC)))}</strong>txns</div>
+        <div class="contrib-stat contrib-stat--prev" title="Transactions in the comparison period"><strong>${esc(fmtK(Math.round(g.prevSess * g.prevCvr)))}</strong>prev</div>
         <div class="contrib-stat ${cls(g.txnDelta)}" title="Transactions ${fmtN(Math.round(g.prevSess * g.prevCvr))} → ${fmtN(Math.round(g.currS * g.currC))}${g.prevSess * g.prevCvr > 0 ? ` (${fmtP(g.txnDelta / (g.prevSess * g.prevCvr) * 100, 1)})` : ''}"><strong>${fmtKS(g.txnDelta)}</strong></div>
         <div>
           <div class="contrib-bar-wrap">
@@ -1814,12 +1977,42 @@ function render(rawRows, filename) {
 
   renderContributorsList();
 
-  // Breakdown table
+  // Breakdown table. Its <thead> is static markup, so the paint step keeps the
+  // arrow in sync rather than regenerating the header.
+  const breakdownSorter = () => sorterFor('breakdown-table', {
+    channel:     ch => chLabel(ch.key).toLowerCase(),
+    sessions:    ch => ch.currS,
+    prevSess:    ch => ch.prevS,
+    sessDelta:   ch => ch.dS,
+    cvr:         ch => ch.currC,
+    prevCvr:     ch => ch.prevC,
+    cvrDelta:    ch => ch.dC,
+    txns:        ch => ch.currConv,
+    prevTxns:    ch => ch.prevConv,
+    txnDelta:    ch => ch.totalDelta,
+    sessEffect:  ch => ch.sessEffect,
+    cvrEffect:   ch => ch.cvrEffect,
+    interaction: ch => ch.interaction,
+  }, TEXT_FIRST_ASC);
+
+  const paintBreakdown = () => {
+  const bSorter = breakdownSorter();
+  document.querySelectorAll('#breakdown-table th.tsort').forEach(th => {
+    const active = th.dataset.sortKey === bSorter.key;
+    th.classList.toggle('tsort--active', active);
+    const old = th.querySelector('.tsort-arrow');
+    if (old) old.remove();
+    if (active) {
+      const a = document.createElement('span');
+      a.className = 'tsort-arrow';
+      a.textContent = bSorter.dir === 'asc' ? '▲' : '▼';
+      th.appendChild(a);
+    }
+  });
   const tbody = document.getElementById('breakdown-tbody');
   tbody.innerHTML = '';
-  channels.forEach(ch => {
+  bSorter.apply(channels).forEach(ch => {
     const prevConvPct = ch.prevS > 0 ? ch.prevC * 100 : 0;
-    const currConvPct = ch.currS > 0 ? ch.currC * 100 : 0;
     const srcList = ch.sources.slice(0,3).join(', ') + (ch.sources.length > 3 ? ` +${ch.sources.length-3}` : '');
     const tr = document.createElement('tr');
     tr.innerHTML = `
@@ -1832,7 +2025,7 @@ function render(rawRows, filename) {
       <td class="r">${fmtN(ch.currS)}</td>
       <td class="r ${cls(ch.dS)}">${fmtS(Math.round(ch.dS))}</td>
       <td class="r">${prevConvPct.toFixed(2)}%</td>
-      <td class="r">${currConvPct.toFixed(2)}%</td>
+      <td class="r">${cvrPill(ch.currS > 0 ? ch.currC : 0, { small: true })}</td>
       <td class="r ${cls(ch.dC)}">${fmtPP(ch.dC*100)}</td>
       <td class="r">${fmtN(Math.round(ch.prevConv))}</td>
       <td class="r">${fmtN(Math.round(ch.currConv))}</td>
@@ -1843,6 +2036,9 @@ function render(rawRows, filename) {
     `;
     tbody.appendChild(tr);
   });
+  };
+  _sortRepaint['breakdown-table'] = paintBreakdown;
+  paintBreakdown();
 
   // Totals footer
   document.getElementById('breakdown-tfoot').innerHTML = `
@@ -1852,7 +2048,7 @@ function render(rawRows, filename) {
       <td class="r">${fmtN(tCurrS)}</td>
       <td class="r ${cls(tCurrS-tPrevS)}">${fmtS(Math.round(tCurrS-tPrevS))}</td>
       <td class="r">${(tPrevCvr*100).toFixed(2)}%</td>
-      <td class="r">${(tCurrCvr*100).toFixed(2)}%</td>
+      <td class="r">${cvrPill(tCurrCvr, { small: true })}</td>
       <td class="r ${cls(tCurrCvr-tPrevCvr)}">${fmtPP((tCurrCvr-tPrevCvr)*100)}</td>
       <td class="r">${fmtN(Math.round(tPrevConv))}</td>
       <td class="r">${fmtN(Math.round(tCurrConv))}</td>
@@ -1864,23 +2060,48 @@ function render(rawRows, filename) {
   `;
 
   // Raw rows table
-  const rawTbody = document.getElementById('raw-tbody');
-  rawTbody.innerHTML = '';
-  const sorted = [...rows].sort((a,b) => b.currS - a.currS);
-  sorted.forEach(r => {
-    const tr = document.createElement('tr');
-    if (r.channel === 'other') tr.className = 'unmapped';
-    tr.innerHTML = `
-      <td>${esc(r.source || '(empty)')}</td>
-      <td><span class="ch-dot" style="background:${esc(chColor(r.channel))}"></span>${esc(chLabel(r.channel))}</td>
-      <td class="r">${fmtN(r.prevSess)}</td>
-      <td class="r">${fmtN(r.currS)}</td>
-      <td class="r">${(r.prevCvr*100).toFixed(3)}%</td>
-      <td class="r">${(r.currC*100).toFixed(3)}%</td>
-      <td class="r">${fmtN(Math.round(r.currS*r.currC))}</td>
-    `;
-    rawTbody.appendChild(tr);
-  });
+  const paintRaw = () => {
+    const rSorter = sorterFor('raw-table', { ...CVR_ROW_ACCESSORS,
+      source:  r => String(r.source || '').toLowerCase(),
+      channel: r => chLabel(r.channel).toLowerCase(),
+    }, TEXT_FIRST_ASC);
+    document.querySelectorAll('#raw-table th.tsort').forEach(th => {
+      const active = th.dataset.sortKey === rSorter.key;
+      th.classList.toggle('tsort--active', active);
+      const old = th.querySelector('.tsort-arrow');
+      if (old) old.remove();
+      if (active) {
+        const a = document.createElement('span');
+        a.className = 'tsort-arrow';
+        a.textContent = rSorter.dir === 'asc' ? '▲' : '▼';
+        th.appendChild(a);
+      }
+    });
+    const rawTbody = document.getElementById('raw-tbody');
+    rawTbody.innerHTML = '';
+    rSorter.apply(rows).forEach(r => {
+      const currTxn = Math.round(r.currS * r.currC);
+      const prevTxn = Math.round(r.prevSess * r.prevCvr);
+      const tr = document.createElement('tr');
+      if (r.channel === 'other') tr.className = 'unmapped';
+      tr.innerHTML = `
+        <td>${esc(r.source || '(empty)')}</td>
+        <td><span class="ch-dot" style="background:${esc(chColor(r.channel))}"></span>${esc(chLabel(r.channel))}</td>
+        <td class="r">${fmtN(r.currS)}</td>
+        <td class="r" style="color:var(--text-secondary)">${fmtN(r.prevSess)}</td>
+        <td class="r ${cls(r.currS - r.prevSess)}">${fmtS(Math.round(r.currS - r.prevSess))}</td>
+        <td class="r">${cvrPill(r.currC, { small: true })}</td>
+        <td class="r" style="color:var(--text-secondary)">${(r.prevCvr*100).toFixed(2)}%</td>
+        <td class="r ${cls(r.currC - r.prevCvr)}">${fmtPP((r.currC - r.prevCvr) * 100)}</td>
+        <td class="r">${fmtN(currTxn)}</td>
+        <td class="r" style="color:var(--text-secondary)">${fmtN(prevTxn)}</td>
+        <td class="r ${cls(currTxn - prevTxn)}">${fmtS(currTxn - prevTxn)}</td>
+      `;
+      rawTbody.appendChild(tr);
+    });
+  };
+  _sortRepaint['raw-table'] = paintRaw;
+  paintRaw();
 
   // Make all analysis cards collapsible (collapsed by default)
   makeCardsCollapsible();
@@ -1953,23 +2174,50 @@ function makeCardsCollapsible() {
 // ─────────────────────────────────────────────
 // CVR MOVEMENT BY SOURCE
 // ─────────────────────────────────────────────
+// Row accessors shared by CVR Movement and its landing-page drill. `source` and
+// `lp` are different fields on the two row shapes, so the label accessor reads
+// whichever is present.
+const CVR_ROW_ACCESSORS = {
+  label:     r => String(r.source != null ? r.source : (r.lp || '')).toLowerCase(),
+  sessions:  r => r.currS,
+  prevSess:  r => r.prevSess,
+  sessDelta: r => r.currS - r.prevSess,
+  cvr:       r => r.currC,
+  prevCvr:   r => r.prevCvr,
+  cvrDelta:  r => r.currC - r.prevCvr,
+  cvrChange: r => r.currC - r.prevCvr,
+  txns:      r => r.currS * r.currC,
+  prevTxns:  r => r.prevSess * r.prevCvr,
+  txnDelta:  r => Math.round(r.currS * r.currC) - Math.round(r.prevSess * r.prevCvr),
+};
+
 function renderCvrMovement(rows, blendedPrev, blendedCurr) {
   const card = document.getElementById('cvr-movement-card');
+  // Re-render on a header click. Repainting from the original rows (rather than
+  // reordering the DOM) keeps the drill indices honest — see SORTABLE TABLES.
+  _sortRepaint['cvr-movement-card'] = () => renderCvrMovement(rows, blendedPrev, blendedCurr);
+  const sorter = sorterFor('cvr-movement-card', CVR_ROW_ACCESSORS, TEXT_FIRST_ASC);
   const minSess = 20;
   const qualified = rows.filter(r => r.prevSess >= minSess || r.currS >= minSess);
-  const sorted = [...qualified].sort((a, b) => (b.currS * b.currC) - (a.currS * a.currC));
+  const sorted = sorter.apply(qualified);
   const maxAbsDelta = Math.max(...sorted.map(r => Math.abs(r.currC - r.prevCvr)), 0.001);
 
   let html = `
     <h3>CVR Movement by Source</h3>
-    <p class="card__sub">Each row shows how a source's CVR changed. Sorted by transactions (highest first). Bar length = magnitude of CVR change. <em style="color:var(--text-secondary)">· click a row to break down by landing page</em></p>
+    <p class="card__sub">Each row shows how a source's CVR changed. Bar length = magnitude of CVR change. <em style="color:var(--text-secondary)">· click any column header to sort · click a row to break down by landing page</em></p>
     <div class="cvr-chart">
       <div class="cvr-chart-row cvr-chart-row--header">
-        <div>Source</div>
-        <div class="r">Prev CVR</div>
-        <div style="text-align:center">CVR Change</div>
-        <div class="r">Curr CVR</div>
-        <div class="r">Txns</div>
+        ${sorter.th('label', 'Source', '', 'Sort by source name')}
+        ${sorter.th('sessions', 'Sessions', 'r', 'Sessions in the current period')}
+        ${sorter.th('prevSess', 'Prev Sess', 'r', 'Sessions in the comparison period')}
+        ${sorter.th('sessDelta', 'Sess Δ', 'r', 'Change in sessions vs the comparison period')}
+        ${sorter.th('cvrChange', 'CVR Change', 'tsort--center', 'Sort by CVR change')}
+        ${sorter.th('cvr', 'CVR', 'r')}
+        ${sorter.th('prevCvr', 'Prev CVR', 'r')}
+        ${sorter.th('cvrDelta', 'Δ CVR', 'r', 'Current-period CVR minus comparison-period CVR, in percentage points')}
+        ${sorter.th('txns', 'Txns', 'r')}
+        ${sorter.th('prevTxns', 'Prev Txns', 'r', 'Transactions in the comparison period')}
+        ${sorter.th('txnDelta', 'Txns Δ', 'r', 'Change in transactions vs the comparison period')}
       </div>`;
 
   sorted.forEach((r, idx) => {
@@ -1986,6 +2234,9 @@ function renderCvrMovement(rows, blendedPrev, blendedCurr) {
     const labelStyle = isPositive
       ? `left:calc(50% + ${barWidthPct}% + 4px);color:${barColor}`
       : `right:calc(50% + ${barWidthPct}% + 4px);color:${barColor}`;
+    const currTxn = Math.round(r.currS * r.currC);
+    const prevTxn = Math.round(r.prevSess * r.prevCvr);
+    const txnDelta = currTxn - prevTxn;
 
     html += `
       <div class="cvr-chart-row cvr-chart-row--clickable" data-drill-idx="${idx}">
@@ -1994,7 +2245,9 @@ function renderCvrMovement(rows, blendedPrev, blendedCurr) {
           <span class="ch-dot" style="background:${esc(chColor(r.channel))}"></span>
           ${esc(shortSrc)}
         </div>
-        <div class="r" style="font-size:0.78rem">${(r.prevCvr * 100).toFixed(2)}%</div>
+        <div class="r" style="font-size:0.78rem;font-weight:600">${fmtN(Math.round(r.currS))}</div>
+        <div class="r" style="font-size:0.78rem;color:var(--text-secondary)">${fmtN(Math.round(r.prevSess))}</div>
+        <div class="r ${cls(r.currS - r.prevSess)}" style="font-size:0.78rem;font-weight:600" title="${Math.round(r.prevSess).toLocaleString()} → ${Math.round(r.currS).toLocaleString()} sessions">${fmtS(Math.round(r.currS - r.prevSess))}</div>
         <div class="cvr-bar-cell">
           <div class="cvr-divider" style="left:50%"></div>
           <div class="cvr-bar-track" style="${barStyle}">
@@ -2002,8 +2255,12 @@ function renderCvrMovement(rows, blendedPrev, blendedCurr) {
           </div>
           <div class="cvr-bar-label" style="${labelStyle}">${fmtPP(deltaPP)}</div>
         </div>
-        <div class="r" style="font-size:0.78rem">${(r.currC * 100).toFixed(2)}%</div>
-        <div class="r" style="font-size:0.78rem;font-weight:600">${fmtN(Math.round(r.currS * r.currC))}</div>
+        <div class="r">${cvrPill(r.currC, { small: true })}</div>
+        <div class="r" style="font-size:0.78rem;color:var(--text-secondary)">${(r.prevCvr * 100).toFixed(2)}%</div>
+        <div class="r ${cls(delta)}" style="font-size:0.78rem;font-weight:600">${fmtPP(deltaPP)}</div>
+        <div class="r" style="font-size:0.78rem;font-weight:600">${fmtN(currTxn)}</div>
+        <div class="r" style="font-size:0.78rem;color:var(--text-secondary)">${fmtN(prevTxn)}</div>
+        <div class="r ${cls(txnDelta)}" style="font-size:0.78rem;font-weight:600" title="${prevTxn.toLocaleString()} → ${currTxn.toLocaleString()} transactions">${fmtS(txnDelta)}</div>
       </div>
       <div class="cvr-drill-panel" data-drill-panel="${idx}"></div>`;
   });
@@ -2022,20 +2279,33 @@ function renderCvrMovement(rows, blendedPrev, blendedCurr) {
       if (chev) chev.textContent = isOpen ? '▼' : '▶';
       if (isOpen && !panel.dataset.loaded) {
         panel.dataset.loaded = '1';
-        panel.innerHTML = buildLpDrilldownHtml(sorted[idx].source);
+        renderLpDrilldown(panel, sorted[idx].source);
       }
     });
   });
 }
 
-function buildLpDrilldownHtml(sourceKey) {
+function renderLpDrilldown(panel, sourceKey) {
   const source = sourceKey || '(direct / none)';
+  // One sort order shared by every open source panel — they are the same
+  // columns, so sorting one and finding the next still in txn order would read
+  // as a bug rather than a feature.
+  const sortId = 'cvr-lp-drill';
+  _sortRepaint[sortId] = () => {
+    document.querySelectorAll('.cvr-drill-panel.open[data-drill-source]').forEach(el => {
+      renderLpDrilldown(el, el.dataset.drillSource);
+    });
+  };
+  const sorter = sorterFor(sortId, CVR_ROW_ACCESSORS, TEXT_FIRST_ASC);
+  panel.dataset.drillSource = source;
+
   const lpRows = aggregateByLp(_rawRows, source)
     .filter(r => r.prevSess >= 5 || r.currS >= 5);
-  const sorted = [...lpRows].sort((a, b) => (b.currS * b.currC) - (a.currS * a.currC));
+  const sorted = sorter.apply(lpRows);
 
   if (sorted.length === 0) {
-    return '<div class="cvr-drill-empty">No landing pages with ≥5 sessions for this source.</div>';
+    panel.innerHTML = '<div class="cvr-drill-empty">No landing pages with ≥5 sessions for this source.</div>';
+    return;
   }
 
   const maxAbsDelta = Math.max(...sorted.map(r => Math.abs(r.currC - r.prevCvr)), 0.001);
@@ -2053,10 +2323,15 @@ function buildLpDrilldownHtml(sourceKey) {
     const labelStyle = isPositive
       ? `left:calc(50% + ${barWidthPct}% + 4px);color:${barColor}`
       : `right:calc(50% + ${barWidthPct}% + 4px);color:${barColor}`;
+    const currTxn = Math.round(r.currS * r.currC);
+    const prevTxn = Math.round(r.prevSess * r.prevCvr);
+    const txnDelta = currTxn - prevTxn;
     return `
       <div class="cvr-drill-row">
         <div class="cvr-drill-lp" title="${esc(label)}">${esc(shortLabel)}</div>
-        <div class="r">${(r.prevCvr * 100).toFixed(2)}%</div>
+        <div class="r" style="font-weight:600">${fmtN(Math.round(r.currS))}</div>
+        <div class="r" style="color:var(--text-secondary)">${fmtN(Math.round(r.prevSess))}</div>
+        <div class="r ${cls(r.currS - r.prevSess)}" style="font-weight:600">${fmtS(Math.round(r.currS - r.prevSess))}</div>
         <div class="cvr-bar-cell">
           <div class="cvr-divider" style="left:50%"></div>
           <div class="cvr-bar-track" style="${barStyle}">
@@ -2064,12 +2339,31 @@ function buildLpDrilldownHtml(sourceKey) {
           </div>
           <div class="cvr-bar-label" style="${labelStyle}">${fmtPP(deltaPP)}</div>
         </div>
-        <div class="r">${(r.currC * 100).toFixed(2)}%</div>
-        <div class="r" style="font-weight:600">${fmtN(Math.round(r.currS * r.currC))}</div>
+        <div class="r">${cvrPill(r.currC, { small: true })}</div>
+        <div class="r" style="color:var(--text-secondary)">${(r.prevCvr * 100).toFixed(2)}%</div>
+        <div class="r ${cls(delta)}" style="font-weight:600">${fmtPP(deltaPP)}</div>
+        <div class="r" style="font-weight:600">${fmtN(currTxn)}</div>
+        <div class="r" style="color:var(--text-secondary)">${fmtN(prevTxn)}</div>
+        <div class="r ${cls(txnDelta)}" style="font-weight:600">${fmtS(txnDelta)}</div>
       </div>`;
   }).join('');
 
-  return `<div class="cvr-drill-heading">Landing pages within this source · ${sorted.length}</div>${rowsHtml}`;
+  const headerHtml = `
+      <div class="cvr-drill-row cvr-drill-row--header">
+        ${sorter.th('label', 'Landing page', '', 'Sort by path')}
+        ${sorter.th('sessions', 'Sessions', 'r')}
+        ${sorter.th('prevSess', 'Prev Sess', 'r')}
+        ${sorter.th('sessDelta', 'Sess Δ', 'r')}
+        ${sorter.th('cvrChange', 'CVR Change', 'tsort--center')}
+        ${sorter.th('cvr', 'CVR', 'r')}
+        ${sorter.th('prevCvr', 'Prev CVR', 'r')}
+        ${sorter.th('cvrDelta', 'Δ CVR', 'r')}
+        ${sorter.th('txns', 'Txns', 'r')}
+        ${sorter.th('prevTxns', 'Prev Txns', 'r')}
+        ${sorter.th('txnDelta', 'Txns Δ', 'r')}
+      </div>`;
+
+  panel.innerHTML = `<div class="cvr-drill-heading">Landing pages within this source · ${sorted.length}</div>${headerHtml}${rowsHtml}`;
 }
 
 // ─────────────────────────────────────────────
@@ -2216,6 +2510,41 @@ function renderMixShift(rows, tPrevS, tCurrS, tPrevCvr, tCurrCvr) {
 // ─────────────────────────────────────────────
 function renderCvrBuckets(rows) {
   const card = document.getElementById('cvr-bucket-card');
+  _sortRepaint['cvr-bucket-card'] = () => renderCvrBuckets(rows);
+  // The nested per-source lists share one order — sorting one bucket's list and
+  // finding the next still in its own order would read as a bug.
+  _sortRepaint['cvr-bucket-sources'] = () => renderCvrBuckets(rows);
+  const bucketSorter = sorterFor('cvr-bucket-card', {
+    // Sort on the tier's floor, not its label — alphabetical would put
+    // "Average" before "Extremely Low" and lose the ladder this card is about.
+    bucket:    b => b.min,
+    sessions:  b => b.currS,
+    prevSess:  b => b.prevS,
+    sessDelta: b => b.currS - b.prevS,
+    sessPct:   b => b.prevS > 0 ? (b.currS - b.prevS) / b.prevS : (b.currS > 0 ? 1 : 0),
+    cvr:       b => b.currS > 0 ? b.currWC / b.currS : 0,
+    prevCvr:   b => b.prevS > 0 ? b.prevWC / b.prevS : 0,
+    cvrDelta:  b => (b.currS > 0 ? b.currWC / b.currS : 0) - (b.prevS > 0 ? b.prevWC / b.prevS : 0),
+    txns:      b => b.currWC,
+    prevTxns:  b => b.prevWC,
+    txnDelta:  b => Math.round(b.currWC) - Math.round(b.prevWC),
+  }, TEXT_FIRST_ASC);
+  const srcSorter = sorterFor('cvr-bucket-sources', {
+    name:      e => (e.name || '').toLowerCase(),
+    sessions:  e => e.currS,
+    prevSess:  e => e.prevS,
+    sessDelta: e => e.delta,
+    cvr:       e => e.cvr,
+    prevCvr:   e => e.prevCvr,
+    cvrDelta:  e => e.cvr - e.prevCvr,
+    txns:      e => e.currS * e.cvr,
+    prevTxns:  e => e.prevS * e.prevCvr,
+    txnDelta:  e => Math.round(e.currS * e.cvr) - Math.round(e.prevS * e.prevCvr),
+  }, TEXT_FIRST_ASC);
+  // Sorting the nested list repaints the whole card, so remember which buckets
+  // were expanded or the user never sees the result of their own click.
+  const openBuckets = new Set(
+    [...card.querySelectorAll('details[data-bucket][open]')].map(d => d.dataset.bucket));
   const minSess = 50;
   // Require 50+ current sessions for a meaningful current CVR to bucket on
   const qualified = rows.filter(r => r.currS >= minSess);
@@ -2229,15 +2558,21 @@ function renderCvrBuckets(rows) {
   ];
 
   // Assign each source to a bucket based on current CVR, keeping per-source detail
-  const bucketData = BUCKETS.map(b => ({ ...b, prevS: 0, currS: 0, sources: [] }));
+  // prevWC / currWC are session-weighted conversions, i.e. transactions. Summing
+  // those (rather than averaging CVRs) is what makes the bucket CVR match the
+  // sources inside it.
+  const bucketData = BUCKETS.map(b => ({ ...b, prevS: 0, currS: 0, prevWC: 0, currWC: 0, sources: [] }));
   qualified.forEach(r => {
     for (const bd of bucketData) {
       if (r.currC >= bd.min && r.currC < bd.max) {
-        bd.prevS += r.prevSess;
-        bd.currS += r.currS;
+        bd.prevS  += r.prevSess;
+        bd.currS  += r.currS;
+        bd.prevWC += r.prevSess * r.prevCvr;
+        bd.currWC += r.currS    * r.currC;
         bd.sources.push({
           name: r.source || '(direct)',
           cvr: r.currC,
+          prevCvr: r.prevCvr,
           currS: r.currS,
           prevS: r.prevSess,
           delta: r.currS - r.prevSess,
@@ -2252,14 +2587,20 @@ function renderCvrBuckets(rows) {
   let html = `
     <h3>Session Changes by CVR Bucket</h3>
     <p class="card__sub">Sources with 50+ current sessions bucketed by current CVR. Shows how sessions shifted between conversion tiers.</p>
-    <div>
+    <div class="bucket-scroll"><div class="bucket-table">
       <div class="bucket-row bucket-row--header">
-        <div>Bucket</div>
-        <div class="r">Prev Sess</div>
-        <div class="r">Curr Sess</div>
-        <div>Prev vs Curr Sessions</div>
-        <div class="r">Sess Δ</div>
-        <div class="r">Δ %</div>
+        ${bucketSorter.th('bucket', 'Bucket', '', 'Sort back to the CVR tier ladder')}
+        ${bucketSorter.th('sessions', 'Curr Sess', 'r')}
+        ${bucketSorter.th('prevSess', 'Prev Sess', 'r')}
+        ${bucketSorter.th('sessPct', 'Prev vs Curr Sessions', '', 'Sort by percentage change in sessions')}
+        ${bucketSorter.th('sessDelta', 'Sess Δ', 'r')}
+        ${bucketSorter.th('sessPct', 'Δ %', 'r')}
+        ${bucketSorter.th('cvr', 'CVR', 'r', 'Session-weighted CVR of the sources in this bucket, current period')}
+        ${bucketSorter.th('prevCvr', 'Prev CVR', 'r', 'Same sources, comparison period')}
+        ${bucketSorter.th('cvrDelta', 'Δ CVR', 'r', 'Current minus comparison CVR, in percentage points')}
+        ${bucketSorter.th('txns', 'Txns', 'r')}
+        ${bucketSorter.th('prevTxns', 'Prev Txns', 'r', 'Transactions in the comparison period')}
+        ${bucketSorter.th('txnDelta', 'Txns Δ', 'r', 'Change in transactions vs the comparison period')}
       </div>`;
 
   // For low-CVR buckets, more sessions = bad for overall CVR (invert colors)
@@ -2280,27 +2621,42 @@ function renderCvrBuckets(rows) {
     return delta >= 0 ? 'var(--positive)' : 'var(--negative)';
   }
 
-  bucketData.forEach(b => {
+  bucketSorter.apply(bucketData).forEach(b => {
     const delta = b.currS - b.prevS;
     const deltaPct = b.prevS > 0 ? (delta / b.prevS * 100) : (b.currS > 0 ? 100 : 0);
+    const currCvr = b.currS > 0 ? b.currWC / b.currS : 0;
+    const prevCvr = b.prevS > 0 ? b.prevWC / b.prevS : 0;
+    const cvrDelta = currCvr - prevCvr;
+    const currTxns = Math.round(b.currWC);
+    const prevTxns = Math.round(b.prevWC);
+    const txnDelta = currTxns - prevTxns;
     const prevBarW = Math.max(1, Math.round(b.prevS / maxSess * 100));
     const currBarW = Math.max(1, Math.round(b.currS / maxSess * 100));
     const barColor = impactBarColor(delta, b.key);
     const deltaClass = impactCls(delta, b.key);
 
     // Sort sources by absolute delta descending
-    const sortedSrcs = [...b.sources].sort((a, c) => Math.abs(c.delta) - Math.abs(a.delta));
+    const sortedSrcs = srcSorter.apply(b.sources);
 
     let srcRows = '';
     sortedSrcs.forEach(s => {
       const sDeltaClass = impactCls(s.delta, b.key);
+      const sCurrT = Math.round(s.currS * s.cvr);
+      const sPrevT = Math.round(s.prevS * s.prevCvr);
+      const sTxnD  = sCurrT - sPrevT;
+      const sCvrD  = s.cvr - s.prevCvr;
       srcRows += `
-        <div style="display:grid;grid-template-columns:minmax(240px,1fr) 55px 55px 50px 50px;gap:6px;padding:2px 0;font-size:0.73rem;color:var(--text-secondary)">
+        <div style="display:grid;grid-template-columns:minmax(210px,1fr) 55px 55px 50px 60px 52px 50px 50px 50px 48px;gap:6px;padding:2px 0;font-size:0.73rem;color:var(--text-secondary)">
           <div style="font-weight:500;color:var(--text-primary)">${esc(s.name)}</div>
-          <div class="r">${fmtN(s.prevS)}</div>
           <div class="r">${fmtN(s.currS)}</div>
+          <div class="r">${fmtN(s.prevS)}</div>
           <div class="r ${sDeltaClass}" style="font-weight:600">${fmtS(Math.round(s.delta))}</div>
-          <div class="r" style="font-size:0.68rem">${(s.cvr * 100).toFixed(2)}%</div>
+          <div class="r">${cvrPill(s.cvr, { small: true })}</div>
+          <div class="r" style="font-size:0.68rem">${(s.prevCvr * 100).toFixed(2)}%</div>
+          <div class="r ${cls(sCvrD)}" style="font-size:0.68rem;font-weight:600">${fmtPP(sCvrD * 100)}</div>
+          <div class="r">${fmtN(sCurrT)}</div>
+          <div class="r">${fmtN(sPrevT)}</div>
+          <div class="r ${cls(sTxnD)}" style="font-weight:600">${fmtS(sTxnD)}</div>
         </div>`;
     });
 
@@ -2310,27 +2666,42 @@ function renderCvrBuckets(rows) {
           <span class="bucket-color" style="background:${b.color}"></span>
           <div class="bucket-name">${esc(b.label)}<small>${esc(b.range)} · ${b.sources.length} source${b.sources.length !== 1 ? 's' : ''}</small></div>
         </div>
-        <div class="r" style="font-size:0.78rem">${fmtN(b.prevS)}</div>
         <div class="r" style="font-size:0.78rem;font-weight:600">${fmtN(b.currS)}</div>
+        <div class="r" style="font-size:0.78rem;color:var(--text-secondary)">${fmtN(b.prevS)}</div>
         <div class="bucket-bars">
           <div class="bucket-bar-prev" style="width:${prevBarW}%"></div>
           <div class="bucket-bar-curr" style="width:${currBarW}%;background:${barColor}"></div>
         </div>
         <div class="r sess-delta-tag ${deltaClass}" style="font-weight:700">${fmtS(Math.round(delta))}</div>
         <div class="r sess-delta-tag ${deltaClass}">${fmtP(deltaPct, 0)}</div>
+        <div class="r">${cvrPill(currCvr, { small: true })}</div>
+        <div class="r" style="font-size:0.78rem;color:var(--text-secondary)">${(prevCvr * 100).toFixed(2)}%</div>
+        <div class="r ${cls(cvrDelta)}" style="font-size:0.78rem;font-weight:600">${fmtPP(cvrDelta * 100)}</div>
+        <div class="r" style="font-size:0.78rem;font-weight:600">${fmtN(currTxns)}</div>
+        <div class="r" style="font-size:0.78rem;color:var(--text-secondary)">${fmtN(prevTxns)}</div>
+        <div class="r ${cls(txnDelta)}" style="font-size:0.78rem;font-weight:600">${fmtS(txnDelta)}</div>
       </div>
-      <details style="padding:0 0 4px 40px">
+      <details data-bucket="${b.key}"${openBuckets.has(b.key) ? ' open' : ''} style="padding:0 0 4px 40px">
         <summary style="font-size:0.72rem;color:var(--fb-blue);cursor:pointer;padding:4px 0;user-select:none">Show ${b.sources.length} source${b.sources.length !== 1 ? 's' : ''}</summary>
         <div style="padding:2px 0 4px">
-          <div style="display:grid;grid-template-columns:minmax(240px,1fr) 55px 55px 50px 50px;gap:6px;padding:2px 0;font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);border-bottom:1px solid var(--border)">
-            <div>Source</div><div class="r">Prev</div><div class="r">Curr</div><div class="r">Δ</div><div class="r">CVR</div>
+          <div style="display:grid;grid-template-columns:minmax(210px,1fr) 55px 55px 50px 60px 52px 50px 50px 50px 48px;gap:6px;padding:2px 0;font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);border-bottom:1px solid var(--border)">
+            ${srcSorter.th('name', 'Source', '', 'Sort by source name')}
+            ${srcSorter.th('sessions', 'Sess', 'r')}
+            ${srcSorter.th('prevSess', 'Prev Sess', 'r')}
+            ${srcSorter.th('sessDelta', 'Δ Sess', 'r')}
+            ${srcSorter.th('cvr', 'CVR', 'r')}
+            ${srcSorter.th('prevCvr', 'Prev CVR', 'r')}
+            ${srcSorter.th('cvrDelta', 'Δ CVR', 'r')}
+            ${srcSorter.th('txns', 'Txns', 'r')}
+            ${srcSorter.th('prevTxns', 'Prev Txns', 'r')}
+            ${srcSorter.th('txnDelta', 'Δ Txns', 'r')}
           </div>
           ${srcRows || '<div style="font-size:0.73rem;color:var(--text-secondary);padding:4px 0">—</div>'}
         </div>
       </details>`;
   });
 
-  html += '</div>';
+  html += '</div></div>';
   card.innerHTML = html;
 }
 
@@ -2339,68 +2710,29 @@ function renderCvrBuckets(rows) {
 // ─────────────────────────────────────────────
 function renderSessionVolume(rows, tDelta) {
   const card = document.getElementById('session-volume-card');
-  // Sort by current sessions descending (top volume first)
-  const sorted = [...rows].sort((a, b) => b.currS - a.currS);
+  _sortRepaint['session-volume-card'] = () => renderSessionVolume(rows, tDelta);
+  const sorter = sorterFor('session-volume-card', { ...CVR_ROW_ACCESSORS,
+    sessPct: r => r.prevSess > 0 ? (r.currS - r.prevSess) / r.prevSess : (r.currS > 0 ? 1 : 0),
+  }, TEXT_FIRST_ASC);
+  const sorted = sorter.apply(rows);
   const maxSess = Math.max(...sorted.map(r => Math.max(r.currS, r.prevSess)), 1);
-
-  // Fixed CVR heat-map: 0.3% and below = bright red, 1% = white, 2% = pretty green, 3%+ = bright green
-  // Stops: 0.003 → 0.01 (red side, 7 steps), 0.01 → 0.03 (green side)
-  function cvrHeatColor(cvr) {
-    const pct = cvr * 100; // convert to percentage
-    if (pct <= 0.3) {
-      // Bright red
-      return { bg: '#dc2626', text: '#fff' };
-    } else if (pct < 1.0) {
-      // 0.3% → 1.0%: bright red fading to white in 7 steps
-      const t = (pct - 0.3) / 0.7; // 0 at 0.3%, 1 at 1.0%
-      // Interpolate: rgb(220,38,38) → rgb(255,255,255)
-      const r = Math.round(220 + t * 35);
-      const g = Math.round(38 + t * 217);
-      const b = Math.round(38 + t * 217);
-      // Text: white when dark bg, dark red when light bg
-      const textT = Math.max(0, (t - 0.4) / 0.6); // switch around 0.55%
-      const tr = Math.round(255 - textT * 100);
-      const tg = Math.round(255 - textT * 217);
-      const tb = Math.round(255 - textT * 217);
-      return {
-        bg: `rgb(${r},${g},${b})`,
-        text: t < 0.5 ? '#fff' : `rgb(${Math.round(180 - t * 60)},${Math.round(50 + t * 20)},${Math.round(50 + t * 20)})`
-      };
-    } else if (pct <= 2.0) {
-      // 1.0% → 2.0%: white fading to pretty green
-      const t = (pct - 1.0) / 1.0; // 0 at 1%, 1 at 2%
-      // Interpolate: rgb(255,255,255) → rgb(34,160,74)
-      const r = Math.round(255 - t * 221);
-      const g = Math.round(255 - t * 95);
-      const b = Math.round(255 - t * 181);
-      return {
-        bg: `rgb(${r},${g},${b})`,
-        text: t < 0.4 ? '#555' : '#fff'
-      };
-    } else if (pct < 3.0) {
-      // 2.0% → 3.0%: pretty green to bright green
-      const t = (pct - 2.0) / 1.0; // 0 at 2%, 1 at 3%
-      // Interpolate: rgb(34,160,74) → rgb(21,128,61)
-      const r = Math.round(34 - t * 13);
-      const g = Math.round(160 - t * 32);
-      const b = Math.round(74 - t * 13);
-      return { bg: `rgb(${r},${g},${b})`, text: '#fff' };
-    } else {
-      // 3%+ = max bright green
-      return { bg: '#15803d', text: '#fff' };
-    }
-  }
 
   let html = `
     <h3>Session Volume by Source</h3>
     <p class="card__sub">Sources ordered by current sessions (highest first). Gray = previous sessions, colored = current. CVR pill: <span style="color:#dc2626;font-weight:600">red</span> ≤0.3% → white at 1% → <span style="color:#15803d;font-weight:600">green</span> ≥3%.</p>
     <div class="cvr-chart">
       <div class="sess-chart-row sess-chart-row--header">
-        <div>Source</div>
-        <div class="r">Sessions</div>
-        <div>Prev vs Curr Sessions</div>
-        <div class="r">Sess Δ</div>
-        <div class="r">CVR</div>
+        ${sorter.th('label', 'Source', '', 'Sort by source name')}
+        ${sorter.th('sessions', 'Sessions', 'r')}
+        ${sorter.th('prevSess', 'Prev Sess', 'r', 'Sessions in the comparison period')}
+        ${sorter.th('sessPct', 'Prev vs Curr Sessions', '', 'Sort by percentage change in sessions')}
+        ${sorter.th('sessDelta', 'Sess Δ', 'r')}
+        ${sorter.th('cvr', 'CVR', 'r')}
+        ${sorter.th('prevCvr', 'Prev CVR', 'r', 'CVR in the comparison period')}
+        ${sorter.th('cvrDelta', 'Δ CVR', 'r', 'Current minus comparison CVR, in percentage points')}
+        ${sorter.th('txns', 'Txns', 'r')}
+        ${sorter.th('prevTxns', 'Prev Txns', 'r', 'Transactions in the comparison period')}
+        ${sorter.th('txnDelta', 'Txns Δ', 'r', 'Change in transactions vs the comparison period')}
       </div>`;
 
   sorted.forEach(r => {
@@ -2412,8 +2744,10 @@ function renderSessionVolume(rows, tDelta) {
     const prevBarW = Math.max(1, Math.round(r.prevSess / maxSess * 100));
     const currBarW = Math.max(1, Math.round(r.currS / maxSess * 100));
     const currBarColor = sessDelta >= 0 ? 'var(--positive)' : 'var(--negative)';
-
-    const heat = cvrHeatColor(r.currC);
+    const cvrDelta = r.currC - r.prevCvr;
+    const currTxn = Math.round(r.currS * r.currC);
+    const prevTxn = Math.round(r.prevSess * r.prevCvr);
+    const txnDelta = currTxn - prevTxn;
 
     html += `
       <div class="sess-chart-row">
@@ -2422,12 +2756,18 @@ function renderSessionVolume(rows, tDelta) {
           ${esc(shortSrc)}
         </div>
         <div class="r" style="font-size:0.78rem;font-weight:600">${fmtK(r.currS)}</div>
+        <div class="r" style="font-size:0.78rem;color:var(--text-secondary)">${fmtK(r.prevSess)}</div>
         <div class="sess-bars">
           <div class="sess-bar-prev" style="width:${prevBarW}%"></div>
           <div class="sess-bar-curr" style="width:${currBarW}%;background:${currBarColor}"></div>
         </div>
         <div class="r sess-delta-tag ${cls(sessDelta)}">${fmtS(Math.round(sessDelta))}<br><span style="font-size:0.65rem;color:var(--text-secondary)">${fmtP(sessPct, 0)}</span></div>
-        <div class="r"><span class="cvr-pill" style="background:${heat.bg};color:${heat.text}">${(r.currC * 100).toFixed(2)}%</span></div>
+        <div class="r">${cvrPill(r.currC)}</div>
+        <div class="r" style="font-size:0.78rem;color:var(--text-secondary)">${(r.prevCvr * 100).toFixed(2)}%</div>
+        <div class="r ${cls(cvrDelta)}" style="font-size:0.78rem;font-weight:600">${fmtPP(cvrDelta * 100)}</div>
+        <div class="r" style="font-size:0.78rem;font-weight:600">${fmtN(currTxn)}</div>
+        <div class="r" style="font-size:0.78rem;color:var(--text-secondary)">${fmtN(prevTxn)}</div>
+        <div class="r ${cls(txnDelta)}" style="font-size:0.78rem;font-weight:600">${fmtS(txnDelta)}</div>
       </div>`;
   });
 
@@ -2729,6 +3069,7 @@ function pearson(points) {
 
 function renderCorrelation(corrData) {
   const card = document.getElementById('correlation-card');
+  _sortRepaint['corr-table'] = () => renderCorrelation(corrData);
   if (!corrData || !corrData.rows || !corrData.rows.length) {
     card.innerHTML = `<h3>Session Duration ↔ Conversion Rate Correlation</h3>
       <p class="card__sub">No correlation data available (load from Shopify to enable).</p>`;
@@ -2861,8 +3202,19 @@ function renderCorrelation(corrData) {
     </span>
   `).join('');
 
-  // Per-channel correlation table
-  const tableRows = channelRows.map(c => {
+  // Per-channel correlation table. This card runs off a single-period query, so
+  // it has no comparison-period columns to show — only the sort is shared with
+  // the rest of the page.
+  const corrSorter = sorterFor('corr-table', {
+    channel:  c => chLabel(c.channel).toLowerCase(),
+    lps:      c => c.lps,
+    sessions: c => c.sessions,
+    avgDur:   c => c.avgDur,
+    cvr:      c => c.avgCvr,
+    pearson:  c => (c.r == null ? -Infinity : c.r),
+    strength: c => (c.r == null ? -1 : Math.abs(c.r)),
+  }, TEXT_FIRST_ASC);
+  const tableRows = corrSorter.apply(channelRows).map(c => {
     const rText = c.r == null ? '—' : c.r.toFixed(3);
     const rClass = c.r == null ? '' : (c.r > 0.2 ? 'pos' : c.r < -0.2 ? 'neg' : '');
     const strength =
@@ -2876,7 +3228,7 @@ function renderCorrelation(corrData) {
       <td class="r">${c.lps}</td>
       <td class="r">${fmtN(Math.round(c.sessions))}</td>
       <td class="r">${c.avgDur.toFixed(0)}s</td>
-      <td class="r">${(c.avgCvr*100).toFixed(2)}%</td>
+      <td class="r">${cvrPill(c.avgCvr, { small: true })}</td>
       <td class="r ${rClass}"><strong>${rText}</strong></td>
       <td class="r">${strength}</td>
     </tr>`;
@@ -2931,13 +3283,13 @@ function renderCorrelation(corrData) {
       <table class="breakdown-table">
         <thead>
           <tr>
-            <th>Channel</th>
-            <th class="r">LPs</th>
-            <th class="r">Sessions</th>
-            <th class="r">Avg Duration</th>
-            <th class="r">Avg CVR</th>
-            <th class="r">Pearson r</th>
-            <th class="r">Strength</th>
+            <th class="tsort" data-sort-table="corr-table" data-sort-key="channel" data-sort-first="asc">Channel</th>
+            <th class="r tsort" data-sort-table="corr-table" data-sort-key="lps">LPs</th>
+            <th class="r tsort" data-sort-table="corr-table" data-sort-key="sessions">Sessions</th>
+            <th class="r tsort" data-sort-table="corr-table" data-sort-key="avgDur">Avg Duration</th>
+            <th class="r tsort" data-sort-table="corr-table" data-sort-key="cvr">Avg CVR</th>
+            <th class="r tsort" data-sort-table="corr-table" data-sort-key="pearson">Pearson r</th>
+            <th class="r tsort" data-sort-table="corr-table" data-sort-key="strength">Strength</th>
           </tr>
         </thead>
         <tbody>${tableRows}</tbody>
@@ -2969,6 +3321,31 @@ function renderCorrelation(corrData) {
 }
 
 function renderDrillDown(container, source, tDelta, tPrevConv) {
+  // One order shared by every open source's landing-page panel.
+  const sortId = 'lp-effect-drill';
+  _sortRepaint[sortId] = () => {
+    document.querySelectorAll('.drill-panel.open[data-effect-source]').forEach(el => {
+      renderDrillDown(el, el.dataset.effectSource, el._tDelta, el._tPrevConv);
+    });
+  };
+  const sorter = sorterFor(sortId, {
+    lp:        c => (c.lp || '').toLowerCase(),
+    sessions:  c => c.currS,
+    prevSess:  c => c.prevSess,
+    sessDelta: c => c.currS - c.prevSess,
+    cvr:       c => c.currC,
+    prevCvr:   c => c.prevCvr,
+    cvrDelta:  c => c.currC - c.prevCvr,
+    txns:      c => c.currS * c.currC,
+    prevTxns:  c => c.prevSess * c.prevCvr,
+    txnDelta:  c => Math.round(c.currS * c.currC) - Math.round(c.prevSess * c.prevCvr),
+    effect:    c => Math.abs(c.value),
+    value:     c => c.value,
+  }, TEXT_FIRST_ASC);
+  container.dataset.effectSource = source;
+  container._tDelta = tDelta;
+  container._tPrevConv = tPrevConv;
+
   const lpRows = aggregateByLp(_rawRows, source);
   if (lpRows.length === 0) {
     container.innerHTML = '<p style="padding:10px 12px;font-size:0.8rem;color:var(--text-secondary)">No landing page data available.</p>';
@@ -2980,15 +3357,18 @@ function renderDrillDown(container, source, tDelta, tPrevConv) {
   lpRows.forEach(r => {
     const d = decompose(r.prevSess, r.prevCvr, r.currS, r.currC);
     const shortLp = r.lp;              // .drill-lp already wraps (word-break)
-    if (d.sessEffect !== 0) contribs.push({ lp: r.lp, shortLp, currS: r.currS, currC: r.currC, typeLabel: d.dS >= 0 ? 'Sessions Increase' : 'Sessions Decrease', value: d.sessEffect, detail: `${fmtS(Math.round(d.dS))} sessions (${fmtP(r.prevSess > 0 ? d.dS/r.prevSess*100 : 0, 1)})` });
-    if (d.cvrEffect !== 0) contribs.push({ lp: r.lp, shortLp, currS: r.currS, currC: r.currC, typeLabel: d.dC >= 0 ? 'CVR Increase' : 'CVR Decrease', value: d.cvrEffect, detail: `${fmtPP(d.dC*100)} (${(r.prevCvr*100).toFixed(2)}% → ${(r.currC*100).toFixed(2)}%)` });
-    if (Math.abs(d.interaction) > 0.5) contribs.push({ lp: r.lp, shortLp, currS: r.currS, currC: r.currC, typeLabel: 'Interaction Effect', value: d.interaction, detail: `${fmtS(Math.round(d.dS))} sessions × ${fmtPP(d.dC*100)} CVR` });
+    // Every row repeats the landing page's own curr/prev/delta for sessions, CVR
+    // and transactions, so a single effect row is readable without scrolling
+    // back up to find the volume it was measured on.
+    const stats = { lp: r.lp, shortLp, currS: r.currS, prevSess: r.prevSess, currC: r.currC, prevCvr: r.prevCvr };
+    if (d.sessEffect !== 0) contribs.push({ ...stats, typeLabel: d.dS >= 0 ? 'Sessions Increase' : 'Sessions Decrease', value: d.sessEffect, detail: `${fmtS(Math.round(d.dS))} sessions (${fmtP(r.prevSess > 0 ? d.dS/r.prevSess*100 : 0, 1)})` });
+    if (d.cvrEffect !== 0) contribs.push({ ...stats, typeLabel: d.dC >= 0 ? 'CVR Increase' : 'CVR Decrease', value: d.cvrEffect, detail: `${fmtPP(d.dC*100)} (${(r.prevCvr*100).toFixed(2)}% → ${(r.currC*100).toFixed(2)}%)` });
+    if (Math.abs(d.interaction) > 0.5) contribs.push({ ...stats, typeLabel: 'Interaction Effect', value: d.interaction, detail: `${fmtS(Math.round(d.dS))} sessions × ${fmtPP(d.dC*100)} CVR` });
   });
-  contribs.sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
 
-  const maxAbs = contribs.length > 0 ? Math.abs(contribs[0].value) : 1;
+  const maxAbs = contribs.reduce((m, c) => Math.max(m, Math.abs(c.value)), 1e-9);
 
-  const html = contribs.map(c => {
+  const html = sorter.apply(contribs).map(c => {
     const barPct = Math.round(Math.abs(c.value) / maxAbs * 100);
     const barColor = c.value >= 0 ? 'var(--positive)' : 'var(--negative)';
     const pctOfDelta = tDelta !== 0 ? (c.value / tDelta * 100) : 0;
@@ -2996,7 +3376,14 @@ function renderDrillDown(container, source, tDelta, tPrevConv) {
       <div class="drill-row">
         <div class="drill-lp" title="${esc(c.lp)}">${esc(c.shortLp)}<div class="contrib-type">${esc(c.typeLabel)}</div></div>
         <div class="contrib-stat"><strong>${esc(fmtK(c.currS))}</strong>sess</div>
-        <div class="contrib-stat"><strong>${(c.currC*100).toFixed(2)}%</strong>CVR</div>
+        <div class="contrib-stat contrib-stat--prev"><strong>${esc(fmtK(c.prevSess))}</strong>prev</div>
+        <div class="contrib-stat ${cls(c.currS - c.prevSess)}"><strong>${fmtKS(c.currS - c.prevSess)}</strong>Δ</div>
+        <div class="contrib-stat"><strong>${cvrPill(c.currC, { small: true })}</strong>CVR</div>
+        <div class="contrib-stat contrib-stat--prev"><strong>${(c.prevCvr*100).toFixed(2)}%</strong>prev</div>
+        <div class="contrib-stat ${cls(c.currC - c.prevCvr)}"><strong>${fmtPP((c.currC - c.prevCvr)*100)}</strong>Δ</div>
+        <div class="contrib-stat"><strong>${esc(fmtK(Math.round(c.currS * c.currC)))}</strong>txns</div>
+        <div class="contrib-stat contrib-stat--prev"><strong>${esc(fmtK(Math.round(c.prevSess * c.prevCvr)))}</strong>prev</div>
+        <div class="contrib-stat ${cls(Math.round(c.currS*c.currC) - Math.round(c.prevSess*c.prevCvr))}"><strong>${fmtKS(Math.round(c.currS*c.currC) - Math.round(c.prevSess*c.prevCvr))}</strong>Δ</div>
         <div>
           <div class="contrib-bar-wrap"><div class="contrib-bar" style="width:${barPct}%;background:${barColor}"></div></div>
           <div style="font-size:0.7rem;color:var(--text-secondary);margin-top:2px">${esc(c.detail)}</div>
@@ -3006,7 +3393,23 @@ function renderDrillDown(container, source, tDelta, tPrevConv) {
       </div>`;
   }).join('');
 
-  container.innerHTML = `<div class="drill-header">Landing page breakdown · ${contribs.length} row${contribs.length !== 1 ? 's' : ''}</div>${html}`;
+  const headerRow = `
+      <div class="drill-row drill-row--header">
+        ${sorter.th('lp', 'Landing page · effect', '', 'Sort by path')}
+        ${sorter.th('sessions', 'Sess', 'r')}
+        ${sorter.th('prevSess', 'Prev Sess', 'r')}
+        ${sorter.th('sessDelta', 'Δ Sess', 'r')}
+        ${sorter.th('cvr', 'CVR', 'r')}
+        ${sorter.th('prevCvr', 'Prev CVR', 'r')}
+        ${sorter.th('cvrDelta', 'Δ CVR', 'r')}
+        ${sorter.th('txns', 'Txns', 'r')}
+        ${sorter.th('prevTxns', 'Prev Txns', 'r')}
+        ${sorter.th('txnDelta', 'Δ Txns', 'r')}
+        ${sorter.th('effect', 'Effect', '', 'Sort by effect size, largest first')}
+        ${sorter.th('value', 'Txn Δ', 'r')}
+        ${sorter.th('value', '% of total Δ', 'r')}
+      </div>`;
+  container.innerHTML = `<div class="drill-header">Landing page breakdown · ${contribs.length} row${contribs.length !== 1 ? 's' : ''}</div>${headerRow}${html}`;
 }
 
 // ─────────────────────────────────────────────
