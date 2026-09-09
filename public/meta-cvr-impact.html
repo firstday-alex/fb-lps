@@ -502,6 +502,12 @@
        fits a laptop viewport — header and rows share the min-width and scroll
        together inside .contrib-scroll. */
     .contrib-scroll { overflow-x: auto; }
+    /* The wrapper above is a scroll container, so it — not the viewport — is now
+       what .contrib-header's `top` is measured against. With the nav offset still
+       applied the header was pushed 49px DOWN inside a box that never scrolls
+       vertically, permanently covering the top half of row 1. Zero the offset:
+       the header rides with the table instead of hovering over its own rows. */
+    .contrib-scroll .contrib-header { top: 0; }
     .contrib-table { min-width: 1200px; }
     .contrib-header {
       display: grid;
@@ -1100,7 +1106,7 @@
       background: #fff;
       border: 1px solid var(--border);
       border-radius: 4px;
-      max-height: 220px;
+      max-height: 340px;
       overflow-y: auto;
     }
     .tvn-campaigns-list.open { display: block; }
@@ -1151,7 +1157,7 @@
       border-bottom: 1px solid var(--border);
       padding: 8px 10px 10px 26px;
       font-size: 0.74rem;
-      max-height: 240px;
+      max-height: 560px;
       overflow-y: auto;
     }
     .seg-drill.open { display: block; }
@@ -1164,6 +1170,13 @@
     }
     .seg-drill-row > div:not(:first-child) { text-align: right; }
     .seg-drill-row .r { text-align: right; }
+    /* This pane scrolls, so pin its header to the pane's own top. The offset is
+       0, so it never pushes down over the first row the way an inherited nav
+       offset would. */
+    .seg-drill-row--header {
+      position: sticky; top: 0; z-index: 2;
+      background: #fafbfe; padding-bottom: 3px;
+    }
     .seg-drill-row--header { font-weight: 700; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.04em; }
     .seg-drill-row span.nm { word-break: break-all; }
     .seg-insight {

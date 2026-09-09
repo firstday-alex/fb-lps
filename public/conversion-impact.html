@@ -369,14 +369,16 @@
       margin-top: 10px;
       border: 1px solid var(--border);
       border-radius: 6px;
-      overflow: hidden;
-      max-height: 280px;
-      overflow-y: auto;
+      /* Was overflow:hidden on the x axis, which clipped the wider table rather
+         than letting it scroll. Both axes scroll now. */
+      overflow: auto;
+      max-height: 560px;
       display: none;
     }
     .raw-wrap.open { display: block; }
     .raw-table {
       width: 100%;
+      min-width: 1080px;
       border-collapse: collapse;
       font-size: 0.78rem;
     }
