@@ -428,7 +428,7 @@
 
     /* Curr + prev + delta for sessions, CVR and txns is 11 columns — wider than
        a laptop viewport, so the wrapper scrolls rather than squeezing the names. */
-    .ad-lp-table { min-width: 1120px; }
+    .ad-lp-table { min-width: 1220px; }
     .ad-lp-table th.ad-lp-sort { cursor: pointer; user-select: none; }
     .ad-lp-table th.ad-lp-sort:hover { background: #eef3ff; color: var(--fb-blue); }
     .ad-lp-table th.ad-lp-sort--active { color: var(--fb-blue); }
@@ -684,10 +684,10 @@
 
     /* ── Ad × LP drill (contributors table) ── */
     .adrill-scroll { overflow-x: auto; }
-    .adrill-table { min-width: 1220px; }
+    .adrill-table { min-width: 1300px; }
     .adrill-row {
       display: grid;
-      grid-template-columns: minmax(200px, 2.2fr) 56px 56px 58px 56px 56px 60px 52px 56px 58px 70px;
+      grid-template-columns: minmax(190px, 2.2fr) 56px 56px 58px 56px 56px 60px 52px 56px 58px 70px 66px;
       align-items: center;
       gap: 10px;
       padding: 5px 0;
@@ -1658,7 +1658,11 @@
     <!-- Top Ad × Landing Page combinations -->
     <div class="card breakdown-card" id="ad-lp-card">
       <h3>Top Ad × Landing Page Combinations</h3>
-      <p class="card__sub">Each row is one <code>utm_content</code> (ad name) paired with one <code>landing_page_path</code>. <em>Click an ad name to see all landing pages it sent traffic to; click a landing page to see all ads that sent traffic to it.</em> Use the filter row to slice by parsed ad-name variables (brand prefix, creator, URL slug, partnership flag, free-text token).</p>
+      <p class="card__sub">Each row is one <code>utm_content</code> (ad name) paired with one <code>landing_page_path</code>. <em>Click an ad name to see all landing pages it sent traffic to; click a landing page to see all ads that sent traffic to it.</em> Use the filter row to slice by parsed ad-name variables (brand prefix, creator, URL slug, partnership flag, free-text token).
+        <strong>CVR Drag</strong> is how much higher blended CVR would be without that pair's traffic — positive means cutting it lifts the rate.
+        It is a <em>level</em>, not a period-over-period change, which is the point: a pair converting badly in both windows scores 0.00pp on every
+        CVR Impact column on this page while still holding the blended rate down. Measured against the whole pull's grand totals, so it means the
+        same thing here and inside the drills.</p>
       <div class="ad-lp-attr-filters" id="ad-lp-attr-filters">
         <div class="ad-lp-attr-vars" id="ad-lp-attr-vars">
           <span class="ad-lp-attr-empty">Filter dropdowns will populate from <code>key:value</code> tokens parsed out of <code>utm_content</code> once data loads.</span>
@@ -1704,6 +1708,7 @@
               <th class="r ad-lp-sort" data-sort="txns">Txns</th>
               <th class="r ad-lp-sort" data-sort="prevTxns">Prev Txns</th>
               <th class="r ad-lp-sort" data-sort="txnDelta">Δ Txns</th>
+              <th class="r ad-lp-sort" data-sort="drag" title="How much higher blended CVR would be without this pair's traffic. Positive = dead weight; cutting it lifts the blended rate. Unlike CVR Impact this is a level, not a change — it catches rows that convert badly in both windows and so score zero on any period-over-period measure.">CVR Drag</th>
             </tr>
           </thead>
           <tbody id="ad-lp-tbody"></tbody>
@@ -1885,6 +1890,58 @@ document.addEventListener('click', (e) => {
 // Text columns read A→Z on first click; everything else opens biggest-first.
 const TEXT_FIRST_ASC = { label: 'asc', name: 'asc', campaign: 'asc', bucket: 'asc', lp: 'asc', ad: 'asc' };
 const cls   = n => n > 0 ? 'pos' : n < 0 ? 'neg' : '';
+
+// ─────────────────────────────────────────────
+// CVR DRAG
+// ─────────────────────────────────────────────
+// Every CVR Impact column on this page answers "what MOVED blended CVR between
+// the two windows". That misses a whole category of problem: a row converting
+// at ~0% in BOTH windows, holding its share, moves nothing — so it scores
+// 0.00pp while quietly holding the blended rate down the entire time. Real
+// example from 2026-09-01..07: twelve ad × LP rows printed 0.00pp impact while
+// converting under half the blended rate, and between them they held blended
+// CVR down 0.074pp — more than the entire −0.045pp move the page was built to
+// explain.
+//
+// CVR Drag asks the level question instead: how much higher would blended CVR
+// be if this row's traffic didn't exist?
+//   positive = dead weight — cutting this traffic lifts the blended rate
+//   negative = this row is carrying the average, cutting it would hurt
+//
+// Measured against the whole pull's grand totals (not the parent campaign or
+// landing page), so the number means the same thing wherever it appears —
+// unlike CVR Impact, which is relative to whatever you drilled into.
+let _cvrBaseline = null;   // { sessions, txns, cvr } for the whole pull
+
+function cvrDrag(rowSessions, rowCvr) {
+  if (!_cvrBaseline || !(rowSessions > 0)) return 0;
+  const rest = _cvrBaseline.sessions - rowSessions;
+  if (rest <= 0) return 0;
+  return ((_cvrBaseline.txns - rowSessions * rowCvr) / rest) - _cvrBaseline.cvr;
+}
+
+// Combined drag of a set of rows — removing them all at once, which is NOT the
+// sum of their individual drags (each one's denominator assumes the others stay).
+function cvrDragCombined(rows) {
+  if (!_cvrBaseline || !rows.length) return 0;
+  const s = rows.reduce((a, r) => a + r.currS, 0);
+  const t = rows.reduce((a, r) => a + r.currS * r.currC, 0);
+  const rest = _cvrBaseline.sessions - s;
+  if (rest <= 0) return 0;
+  return ((_cvrBaseline.txns - t) / rest) - _cvrBaseline.cvr;
+}
+
+// Drag cell. Positive drag is BAD, so the colour is inverted against cls().
+// `tag` is 'div' for the grid tables and 'td' for the real <table> ones.
+function dragCell(drag, { tag = 'div', extraCls = 'r' } = {}) {
+  if (!isFinite(drag) || drag === 0) {
+    return `<${tag} class="${extraCls}" style="color:var(--text-secondary)">—</${tag}>`;
+  }
+  const txt = fmtPP(drag * 100, 3);
+  return `<${tag} class="${extraCls} ${cls(-drag)}" style="font-weight:600"`
+    + ` title="Blended CVR would be ${txt} ${drag > 0 ? 'HIGHER' : 'LOWER'} without this row's traffic">`
+    + `${txt}</${tag}>`;
+}
 const bcls  = n => n > 0 ? 'badge-pos' : n < 0 ? 'badge-neg' : 'badge-neu';
 function esc(s) { const d=document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
 function normCvr(v) { if (v == null) return null; return v > 1 ? v / 100 : v; }
@@ -2106,6 +2163,7 @@ function render(rawRows, filename) {
   const kpiCurrConv = kpiCurrS * kpiCurrCvr;
   const kpiPrevConv = kpiPrevS * kpiPrevCvr;
   const kpiTxnDelta = kpiCurrConv - kpiPrevConv;
+  _cvrBaseline = { sessions: kpiCurrS, txns: kpiCurrConv, cvr: kpiCurrCvr };
 
   const rowInfo = `${campaignRows.length} campaigns · ${lpRows.length} landing pages · ${rawRows.length} rows`;
   const truncNote = _shopifyTotals && Math.abs(_shopifyTotals.currS - tCurrS) > 1
@@ -2516,6 +2574,10 @@ function render(rawRows, filename) {
   // Expand all / Collapse all from the cards' actual state.
   makeCardsCollapsible();
   organizeSections();
+
+  // The Ad × LP card loads on its own timer; if it landed before _cvrBaseline
+  // was set above, its CVR Drag column rendered empty. Repaint it now.
+  if (_adLpRows.length) renderAdLp();
 
   document.getElementById('upload-screen').style.display = 'none';
   document.getElementById('results-screen').style.display = 'block';
@@ -4754,6 +4816,7 @@ function renderLpAdDrill(container, lp, parent) {
       txns:      g => g.currS * g.currC,
       prevTxns:  g => g.prevSess * g.prevCvr,
       txnDelta:  g => g.txnDelta,
+      drag:      g => cvrDrag(g.currS, g.currC),
       cvrImpact: g => g.cvrImpact,
       absImpact: g => Math.abs(g.cvrImpact),
     };
@@ -4761,7 +4824,7 @@ function renderLpAdDrill(container, lp, parent) {
       ad: 'asc', sessions: 'desc', prevSess: 'desc', sessDelta: 'desc',
       cvr: 'desc', prevCvr: 'desc', cvrDelta: 'desc',
       txns: 'desc', prevTxns: 'desc', txnDelta: 'desc',
-      cvrImpact: 'asc', absImpact: 'desc',
+      drag: 'desc', cvrImpact: 'asc', absImpact: 'desc',
     };
     let sortKey = 'sessions';
     let sortDir = 'desc';
@@ -4810,6 +4873,7 @@ function renderLpAdDrill(container, lp, parent) {
           <div class="r" style="color:var(--text-secondary)">${fmtN(Math.round(g.prevSess * g.prevCvr))}</div>
           <div class="r ${cls(g.txnDelta)}">${fmtS(g.txnDelta)}</div>
           <div class="r contrib-val ${cls(g.cvrImpact)}" style="font-size:0.78rem" title="Own-CVR effect ${fmtPP(g.within * 100)} + share-shift effect ${fmtPP(g.between * 100)} = ${fmtPP(g.cvrImpact * 100)}. Sums across all ads on this page to its ΔCVR of ${fmtPP(lCvrDelta * 100)}.">${fmtPP(g.cvrImpact * 100)}</div>
+          ${dragCell(cvrDrag(g.currS, g.currC))}
         </div>`;
     };
 
@@ -4833,6 +4897,7 @@ function renderLpAdDrill(container, lp, parent) {
           ${h('prevTxns', 'Prev Txns', 'r', 'Transactions in the comparison window')}
           ${h('txnDelta', 'Txns Δ', 'r', 'Transaction change vs the comparison window')}
           ${h('cvrImpact', 'CVR Impact', 'r', 'Contribution in pp to THIS landing page&apos;s CVR change (own-CVR effect + share-shift effect). First click ranks by absolute size; click again for signed order (biggest drags first).')}
+          ${h('drag', 'CVR Drag', 'r', 'How much higher blended CVR would be without this row&apos;s traffic. Positive = dead weight. A level, not a change — so unlike CVR Impact it still flags rows that convert badly in BOTH windows.')}
         </div>`;
       const ordered = sortedGroups();
       const body = ordered.slice(0, shown).map(rowHtml).join('');
@@ -4882,6 +4947,7 @@ function renderLpAdDrill(container, lp, parent) {
         cvr: `sorted by CVR (${sortDir === 'desc' ? 'highest first' : 'lowest first'})`,
         cvrDelta: `sorted by CVR change (${sortDir === 'desc' ? 'biggest rise first' : 'biggest fall first'})`,
         txnDelta: `sorted by transaction change (${sortDir === 'desc' ? 'biggest gain first' : 'biggest drop first'})`,
+        drag: `sorted by CVR drag (${sortDir === 'desc' ? 'heaviest dead weight first' : 'biggest contributors first'})`,
         cvrImpact: `sorted by CVR impact (${sortDir === 'desc' ? 'most positive first' : 'most negative first'})`,
       };
 
@@ -4996,6 +5062,7 @@ function renderAdLpDrill(container, campaign) {
       txns:      g => g.currS * g.currC,
       prevTxns:  g => g.prevSess * g.prevCvr,
       txnDelta:  g => g.txnDelta,
+      drag:      g => cvrDrag(g.currS, g.currC),
       cvrImpact: g => g.cvrImpact,
       absImpact: g => Math.abs(g.cvrImpact),
     };
@@ -5004,7 +5071,7 @@ function renderAdLpDrill(container, campaign) {
       ad: 'asc', sessions: 'desc', prevSess: 'desc', sessDelta: 'desc',
       cvr: 'desc', prevCvr: 'desc', cvrDelta: 'desc',
       txns: 'desc', prevTxns: 'desc', txnDelta: 'desc',
-      cvrImpact: 'asc', absImpact: 'desc',
+      drag: 'desc', cvrImpact: 'asc', absImpact: 'desc',
     };
     let sortKey = 'sessions';
     let sortDir = 'desc';
@@ -5057,6 +5124,7 @@ function renderAdLpDrill(container, campaign) {
           <div class="r" style="color:var(--text-secondary)">${fmtN(Math.round(g.prevSess * g.prevCvr))}</div>
           <div class="r ${cls(g.txnDelta)}">${fmtS(g.txnDelta)}</div>
           <div class="r contrib-val ${cls(g.cvrImpact)}" style="font-size:0.78rem" title="Own-CVR effect ${fmtPP(g.within * 100)} + share-shift effect ${fmtPP(g.between * 100)} = ${fmtPP(g.cvrImpact * 100)}. Sums across all ad × LP rows to this campaign's ΔCVR of ${fmtPP(cCvrDelta * 100)}.">${fmtPP(g.cvrImpact * 100)}</div>
+          ${dragCell(cvrDrag(g.currS, g.currC))}
         </div>`;
     };
 
@@ -5083,6 +5151,7 @@ function renderAdLpDrill(container, campaign) {
           ${h('prevTxns', 'Prev Txns', 'r', 'Transactions in the comparison window')}
           ${h('txnDelta', 'Txns Δ', 'r', 'Transaction change vs the comparison window')}
           ${h('cvrImpact', 'CVR Impact', 'r', 'Contribution in pp to THIS campaign&apos;s CVR change (own-CVR effect + share-shift effect). First click ranks by absolute size (biggest movers either way); click again for signed order (biggest drags first).')}
+          ${h('drag', 'CVR Drag', 'r', 'How much higher blended CVR would be without this row&apos;s traffic. Positive = dead weight. A level, not a change — so unlike CVR Impact it still flags rows that convert badly in BOTH windows.')}
         </div>`;
       const ordered = sortedGroups();
       const body = ordered.slice(0, shown).map(rowHtml).join('');
@@ -5123,6 +5192,7 @@ function renderAdLpDrill(container, campaign) {
         cvr: `sorted by CVR (${sortDir === 'desc' ? 'highest first' : 'lowest first'})`,
         cvrDelta: `sorted by CVR change (${sortDir === 'desc' ? 'biggest rise first' : 'biggest fall first'})`,
         txnDelta: `sorted by transaction change (${sortDir === 'desc' ? 'biggest gain first' : 'biggest drop first'})`,
+        drag: `sorted by CVR drag (${sortDir === 'desc' ? 'heaviest dead weight first' : 'biggest contributors first'})`,
         cvrImpact: `sorted by CVR impact (${sortDir === 'desc' ? 'most positive first' : 'most negative first'})`,
       };
 
@@ -5500,7 +5570,7 @@ let _adLpSort = { key: 'sessions', dir: 'desc' };
 // Filter state — keyed by `var:<key>` for parsed variables, plus 'search' for
 // free-text. Empty string means "no filter for that key".
 let _adLpAttrFilters = {};
-const _adLpDefaultDir = { ad: 'asc', lp: 'asc', sessions: 'desc', prevSess: 'desc', sessDelta: 'desc', cvr: 'desc', prevCvr: 'desc', cvrDelta: 'desc', txns: 'desc', prevTxns: 'desc', txnDelta: 'desc' };
+const _adLpDefaultDir = { ad: 'asc', lp: 'asc', sessions: 'desc', prevSess: 'desc', sessDelta: 'desc', cvr: 'desc', prevCvr: 'desc', cvrDelta: 'desc', txns: 'desc', prevTxns: 'desc', txnDelta: 'desc', drag: 'desc' };
 // How many displayed rows get a Meta preview link. "Show all" is unbounded and
 // every name costs two API calls, so the queue is capped rather than the table.
 const AD_LP_LINK_CAP = 150;
@@ -5697,7 +5767,7 @@ async function loadMetaSpend(start, end) {
 async function loadAdLpData(start, end, source, medium) {
   const tbody = document.getElementById('ad-lp-tbody');
   const tfoot = document.getElementById('ad-lp-tfoot');
-  tbody.innerHTML = `<tr><td colspan="7" class="ad-lp-empty">Loading top ad × landing-page combinations…</td></tr>`;
+  tbody.innerHTML = `<tr><td colspan="12" class="ad-lp-empty">Loading top ad × landing-page combinations…</td></tr>`;
   tfoot.innerHTML = '';
   try {
     const params = new URLSearchParams({ start, end, source, medium });
@@ -5715,7 +5785,7 @@ async function loadAdLpData(start, end, source, medium) {
     populateAdLpAttrOptions();
     renderAdLp();
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="7" class="ad-lp-empty" style="color:var(--negative)">${esc(err.message)}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="12" class="ad-lp-empty" style="color:var(--negative)">${esc(err.message)}</td></tr>`;
   }
 }
 
@@ -5774,6 +5844,7 @@ function renderAdLp() {
     txns:      r => r.currS * r.currC,
     prevTxns:  r => r.prevSess * r.prevCvr,
     txnDelta:  r => (r.currS * r.currC) - (r.prevSess * r.prevCvr),
+    drag:      r => cvrDrag(r.currS, r.currC),
   };
   const keyFn = keyFns[_adLpSort.key] || keyFns.sessions;
   const dirMul = _adLpSort.dir === 'desc' ? -1 : 1;
@@ -5805,7 +5876,7 @@ function renderAdLp() {
   });
 
   if (display.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="11" class="ad-lp-empty">${_adLpFilter ? 'No matches for this filter.' : 'No ad × landing-page data.'}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="12" class="ad-lp-empty">${_adLpFilter ? 'No matches for this filter.' : 'No ad × landing-page data.'}</td></tr>`;
     tfoot.innerHTML = '';
     return;
   }
@@ -5848,6 +5919,7 @@ function renderAdLp() {
       <td class="r"><strong>${fmtN(Math.round(txns))}</strong></td>
       <td class="r" style="color:var(--text-secondary)">${fmtN(Math.round(prevTxns))}</td>
       <td class="r ${cls(dTxns)}">${fmtS(dTxns)}</td>
+      ${dragCell(cvrDrag(r.currS, r.currC), { tag: 'td' })}
     `;
     tbody.appendChild(tr);
   });
@@ -5871,6 +5943,7 @@ function renderAdLp() {
   const totalPrevTxns = tPrevWC;
   const totalDsess = tS - tPrevS;
   const totalDtxns = Math.round(totalTxns) - Math.round(totalPrevTxns);
+  const shownDrag = cvrDragCombined(display);
 
   const limitNote = !_adLpFilter && sorted.length > display.length
     ? ` <span style="color:var(--text-secondary);font-weight:400">(of ${sorted.length})</span>`
@@ -5890,6 +5963,7 @@ function renderAdLp() {
       <td class="r"><strong>${fmtN(Math.round(totalTxns))}</strong></td>
       <td class="r" style="color:var(--text-secondary)">${fmtN(Math.round(totalPrevTxns))}</td>
       <td class="r ${cls(totalDtxns)}">${fmtS(totalDtxns)}</td>
+      <td class="r ${cls(-shownDrag)}" style="font-weight:600" title="Removing every row shown here at once. Not the sum of the individual drags — each of those assumes the other rows stay.">${shownDrag === 0 ? '—' : fmtPP(shownDrag * 100, 3)}</td>
     </tr>
   `;
 }
