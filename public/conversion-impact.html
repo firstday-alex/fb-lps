@@ -378,7 +378,7 @@
     .raw-wrap.open { display: block; }
     .raw-table {
       width: 100%;
-      min-width: 1080px;
+      min-width: 1220px;
       border-collapse: collapse;
       font-size: 0.78rem;
     }
@@ -604,7 +604,7 @@
     }
     .drill-row {
       display: grid;
-      grid-template-columns: minmax(200px, 1fr) 52px 52px 54px 58px 52px 56px 50px 54px 54px minmax(110px, 1fr) 62px 76px;
+      grid-template-columns: minmax(180px, 1fr) 52px 52px 54px 58px 52px 56px 50px 54px 54px minmax(100px, 1fr) 62px 76px 62px 62px;
       align-items: center;
       gap: 10px;
       padding: 5px 0;
@@ -644,8 +644,8 @@
     }
     .cvr-chart-row {
       display: grid;
-      grid-template-columns: minmax(240px, 1.8fr) 52px 52px 54px minmax(130px, 1fr) 58px 52px 52px 54px 52px 54px;
-      min-width: 1040px;
+      grid-template-columns: minmax(220px, 1.8fr) 52px 52px 54px minmax(130px, 1fr) 58px 52px 52px 54px 52px 54px 62px 62px;
+      min-width: 1180px;
       align-items: center;
       gap: 8px;
       padding: 6px 0;
@@ -711,8 +711,8 @@
     }
     .cvr-drill-row {
       display: grid;
-      grid-template-columns: minmax(220px, 1.8fr) 52px 52px 54px minmax(130px, 1fr) 58px 52px 52px 54px 52px 54px;
-      min-width: 1040px;
+      grid-template-columns: minmax(200px, 1.8fr) 52px 52px 54px minmax(130px, 1fr) 58px 52px 52px 54px 52px 54px 62px 62px;
+      min-width: 1180px;
       align-items: center;
       gap: 8px;
       padding: 5px 0;
@@ -744,8 +744,8 @@
     /* Session volume chart */
     .sess-chart-row {
       display: grid;
-      grid-template-columns: minmax(220px, 2fr) 56px 56px minmax(100px, 1fr) 66px 66px 56px 56px 52px 54px 54px;
-      min-width: 1080px;
+      grid-template-columns: minmax(200px, 2fr) 56px 56px minmax(100px, 1fr) 66px 66px 56px 56px 52px 54px 54px 62px 62px;
+      min-width: 1220px;
       align-items: center;
       gap: 8px;
       padding: 6px 0;
@@ -789,10 +789,10 @@
 
     /* CVR Bucket rows */
     .bucket-scroll { overflow-x: auto; }
-    .bucket-table { min-width: 1020px; }
+    .bucket-table { min-width: 1160px; }
     .bucket-row {
       display: grid;
-      grid-template-columns: 190px 64px 64px minmax(90px, 1fr) 60px 52px 58px 58px 56px 58px 58px 56px;
+      grid-template-columns: 175px 64px 64px minmax(90px, 1fr) 60px 52px 58px 58px 56px 58px 58px 56px 62px 62px;
       align-items: center;
       gap: 8px;
       padding: 10px 0;
@@ -1222,6 +1222,7 @@
               <th class="r tsort" data-sort-table="breakdown-table" data-sort-key="sessEffect">Sessions Effect</th>
               <th class="r tsort" data-sort-table="breakdown-table" data-sort-key="cvrEffect">CVR Effect</th>
               <th class="r tsort" data-sort-table="breakdown-table" data-sort-key="interaction">Interaction</th>
+              <th class="r tsort" data-sort-table="breakdown-table" data-sort-key="impact" title="Total contribution to the blended CVR change (pp). Own CVR move weighted by traffic share + share shift valued against the blended rate. Comparable across every table on this page.">CVR Impact</th>
             </tr>
           </thead>
           <tbody id="breakdown-tbody"></tbody>
@@ -1246,6 +1247,8 @@
               <th class="r tsort" data-sort-table="raw-table" data-sort-key="txns">Curr Txns</th>
               <th class="r tsort" data-sort-table="raw-table" data-sort-key="prevTxns">Prev Txns</th>
               <th class="r tsort" data-sort-table="raw-table" data-sort-key="txnDelta">Δ Txns</th>
+              <th class="r tsort" data-sort-table="raw-table" data-sort-key="impact" title="Total contribution to the blended CVR change (pp). Own CVR move weighted by traffic share + share shift valued against the blended rate. Comparable across every table on this page.">CVR Impact</th>
+              <th class="r tsort" data-sort-table="raw-table" data-sort-key="drag" title="How much higher blended CVR would be without this row&apos;s traffic. Positive = dead weight.">CVR Drag</th>
             </tr>
           </thead>
           <tbody id="raw-tbody"></tbody>
@@ -1532,6 +1535,72 @@ document.addEventListener('click', (e) => {
 // Text columns read A→Z on first click; everything else opens biggest-first.
 const TEXT_FIRST_ASC = { source: 'asc', name: 'asc', label: 'asc', bucket: 'asc', lp: 'asc', channel: 'asc' };
 
+let _cvrBaseline = null;   // grand totals for the whole pull, both periods
+
+// Total contribution to the blended CVR change, in pp — the one number that
+// makes rows of wildly different size comparable:
+//   within  = prevShare × ΔCVR          the row's own CVR move, weighted by the
+//                                       share of traffic it actually held
+//   between = ΔShare × (CVR − blended)  the row gaining or losing share at a
+//                                       rate above or below the blended average
+// Volume-weighted by construction, so 50k sessions moving 0.1pp outranks 500
+// sessions moving 5pp. Over a set of rows that partitions the pull it sums to
+// the blended ΔCVR exactly. Always measured against the pull's grand totals, so
+// it means the same thing in every table and inside every drill — unlike a
+// drill's own impact column, which is relative to whatever you drilled into.
+function cvrImpactOf(prevSess, prevCvr, currSess, currCvr) {
+  if (!_cvrBaseline) return 0;
+  const PS = _cvrBaseline.prevSessions, CS = _cvrBaseline.sessions;
+  if (!(PS > 0) || !(CS > 0)) return 0;
+  const prevShare = prevSess / PS;
+  const currShare = currSess / CS;
+  return prevShare * (currCvr - prevCvr)
+       + (currShare - prevShare) * (currCvr - _cvrBaseline.cvr);
+}
+
+// 3 decimals, not 2. At site scale a row worth a real 0.004pp prints as
+// "+0.00pp" at two, which is exactly the "it shows as zero" complaint that
+// prompted this column.
+function impactCell(imp, { tag = 'div', extraCls = 'r' } = {}) {
+  if (!isFinite(imp) || imp === 0) {
+    return `<${tag} class="${extraCls}" style="color:var(--text-secondary)">—</${tag}>`;
+  }
+  const txt = fmtPP(imp * 100, 3);
+  return `<${tag} class="${extraCls} ${cls(imp)}" style="font-weight:600"`
+    + ` title="This row's total contribution to the blended CVR change: its own CVR move weighted by traffic share, plus its share shift valued against the blended rate.">`
+    + `${txt}</${tag}>`;
+}
+
+function cvrDrag(rowSessions, rowCvr) {
+  if (!_cvrBaseline || !(rowSessions > 0)) return 0;
+  const rest = _cvrBaseline.sessions - rowSessions;
+  if (rest <= 0) return 0;
+  return ((_cvrBaseline.txns - rowSessions * rowCvr) / rest) - _cvrBaseline.cvr;
+}
+
+// Combined drag of a set of rows — removing them all at once, which is NOT the
+// sum of their individual drags (each one's denominator assumes the others stay).
+function cvrDragCombined(rows) {
+  if (!_cvrBaseline || !rows.length) return 0;
+  const s = rows.reduce((a, r) => a + r.currS, 0);
+  const t = rows.reduce((a, r) => a + r.currS * r.currC, 0);
+  const rest = _cvrBaseline.sessions - s;
+  if (rest <= 0) return 0;
+  return ((_cvrBaseline.txns - t) / rest) - _cvrBaseline.cvr;
+}
+
+// Drag cell. Positive drag is BAD, so the colour is inverted against cls().
+// `tag` is 'div' for the grid tables and 'td' for the real <table> ones.
+function dragCell(drag, { tag = 'div', extraCls = 'r' } = {}) {
+  if (!isFinite(drag) || drag === 0) {
+    return `<${tag} class="${extraCls}" style="color:var(--text-secondary)">—</${tag}>`;
+  }
+  const txt = fmtPP(drag * 100, 3);
+  return `<${tag} class="${extraCls} ${cls(-drag)}" style="font-weight:600"`
+    + ` title="Blended CVR would be ${txt} ${drag > 0 ? 'HIGHER' : 'LOWER'} without this row's traffic">`
+    + `${txt}</${tag}>`;
+}
+
 // ─────────────────────────────────────────────
 // CVR HEAT SCALE
 // ─────────────────────────────────────────────
@@ -1710,6 +1779,10 @@ function render(rawRows, filename) {
   const kpiCurrConv = kpiCurrS * kpiCurrCvr;
   const kpiPrevConv = kpiPrevS * kpiPrevCvr;
   const kpiTxnDelta = kpiCurrConv - kpiPrevConv;
+  _cvrBaseline = {
+    sessions: kpiCurrS, txns: kpiCurrConv, cvr: kpiCurrCvr,
+    prevSessions: kpiPrevS, prevCvr: kpiPrevCvr,
+  };
 
   // Top bar
   const rowInfo = `${rows.length} utm_source / landing page rows &nbsp;·&nbsp; ${channels.length} channel groups`;
@@ -1923,7 +1996,7 @@ function render(rawRows, filename) {
             <div class="contrib-bar" style="width:${barPct}%;background:${impactColor}"></div>
           </div>
         </div>
-        <div class="contrib-val ${cls(g.cvrImpact)}" title="Within (own CVR): ${fmtPP(g.withinCvr*100)} + Between (share-shift): ${fmtPP(g.betweenCvr*100)} = ${fmtPP(g.cvrImpact*100)}. Sums across all sources to total blended ΔCvr of ${fmtPP(tCvrDelta*100)}.">${fmtPP(g.cvrImpact*100)}</div>
+        <div class="contrib-val ${cls(g.cvrImpact)}" title="Within (own CVR): ${fmtPP(g.withinCvr*100, 3)} + Between (share-shift): ${fmtPP(g.betweenCvr*100, 3)} = ${fmtPP(g.cvrImpact*100, 3)}. Sums across all sources to total blended ΔCvr of ${fmtPP(tCvrDelta*100, 3)}.">${fmtPP(g.cvrImpact*100, 3)}</div>
         <div class="contrib-pct ${cls(g.cvrImpact)}">${fmtP(pctOfDelta, 1)} of ΔCvr</div>
         <div class="contrib-chevron">▶</div>
       `;
@@ -1995,6 +2068,7 @@ function render(rawRows, filename) {
     sessEffect:  ch => ch.sessEffect,
     cvrEffect:   ch => ch.cvrEffect,
     interaction: ch => ch.interaction,
+    impact:      ch => cvrImpactOf(ch.prevS, ch.prevC, ch.currS, ch.currC),
   }, TEXT_FIRST_ASC);
 
   const paintBreakdown = () => {
@@ -2035,6 +2109,7 @@ function render(rawRows, filename) {
       <td class="r ${cls(ch.sessEffect)}">${fmtS(Math.round(ch.sessEffect))}</td>
       <td class="r ${cls(ch.cvrEffect)}">${fmtS(Math.round(ch.cvrEffect))}</td>
       <td class="r ${cls(ch.interaction)}">${fmtS(Math.round(ch.interaction))}</td>
+      ${impactCell(cvrImpactOf(ch.prevS, ch.prevC, ch.currS, ch.currC), { tag: 'td' })}
     `;
     tbody.appendChild(tr);
   });
@@ -2058,6 +2133,7 @@ function render(rawRows, filename) {
       <td class="r ${cls(tSessEff)}">${fmtS(Math.round(tSessEff))}</td>
       <td class="r ${cls(tCvrEff)}">${fmtS(Math.round(tCvrEff))}</td>
       <td class="r ${cls(tInteract)}">${fmtS(Math.round(tInteract))}</td>
+      <td class="r ${cls(tCurrCvr-tPrevCvr)}" style="font-weight:700" title="The row impacts sum to the blended CVR change.">${fmtPP((tCurrCvr-tPrevCvr)*100, 3)}</td>
     </tr>
   `;
 
@@ -2098,6 +2174,8 @@ function render(rawRows, filename) {
         <td class="r">${fmtN(currTxn)}</td>
         <td class="r" style="color:var(--text-secondary)">${fmtN(prevTxn)}</td>
         <td class="r ${cls(currTxn - prevTxn)}">${fmtS(currTxn - prevTxn)}</td>
+        ${impactCell(cvrImpactOf(r.prevSess, r.prevCvr, r.currS, r.currC), { tag: 'td' })}
+        ${dragCell(cvrDrag(r.currS, r.currC), { tag: 'td' })}
       `;
       rawTbody.appendChild(tr);
     });
@@ -2191,6 +2269,8 @@ const CVR_ROW_ACCESSORS = {
   txns:      r => r.currS * r.currC,
   prevTxns:  r => r.prevSess * r.prevCvr,
   txnDelta:  r => Math.round(r.currS * r.currC) - Math.round(r.prevSess * r.prevCvr),
+  impact:    r => cvrImpactOf(r.prevSess, r.prevCvr, r.currS, r.currC),
+  drag:      r => cvrDrag(r.currS, r.currC),
 };
 
 function renderCvrMovement(rows, blendedPrev, blendedCurr) {
@@ -2220,6 +2300,8 @@ function renderCvrMovement(rows, blendedPrev, blendedCurr) {
         ${sorter.th('txns', 'Txns', 'r')}
         ${sorter.th('prevTxns', 'Prev Txns', 'r', 'Transactions in the comparison period')}
         ${sorter.th('txnDelta', 'Txns Δ', 'r', 'Change in transactions vs the comparison period')}
+        ${sorter.th('impact', 'CVR Impact', 'r', 'Total contribution to the blended CVR change (pp). Own CVR move weighted by traffic share + share shift valued against the blended rate. Comparable across every table on this page.')}
+        ${sorter.th('drag', 'CVR Drag', 'r', 'How much higher blended CVR would be without this row&apos;s traffic. Positive = dead weight. A level, not a change — so unlike CVR Impact it still flags rows that convert badly in BOTH windows.')}
       </div>`;
 
   sorted.forEach((r, idx) => {
@@ -2263,6 +2345,8 @@ function renderCvrMovement(rows, blendedPrev, blendedCurr) {
         <div class="r" style="font-size:0.78rem;font-weight:600">${fmtN(currTxn)}</div>
         <div class="r" style="font-size:0.78rem;color:var(--text-secondary)">${fmtN(prevTxn)}</div>
         <div class="r ${cls(txnDelta)}" style="font-size:0.78rem;font-weight:600" title="${prevTxn.toLocaleString()} → ${currTxn.toLocaleString()} transactions">${fmtS(txnDelta)}</div>
+        ${impactCell(cvrImpactOf(r.prevSess, r.prevCvr, r.currS, r.currC))}
+        ${dragCell(cvrDrag(r.currS, r.currC))}
       </div>
       <div class="cvr-drill-panel" data-drill-panel="${idx}"></div>`;
   });
@@ -2347,6 +2431,8 @@ function renderLpDrilldown(panel, sourceKey) {
         <div class="r" style="font-weight:600">${fmtN(currTxn)}</div>
         <div class="r" style="color:var(--text-secondary)">${fmtN(prevTxn)}</div>
         <div class="r ${cls(txnDelta)}" style="font-weight:600">${fmtS(txnDelta)}</div>
+        ${impactCell(cvrImpactOf(r.prevSess, r.prevCvr, r.currS, r.currC))}
+        ${dragCell(cvrDrag(r.currS, r.currC))}
       </div>`;
   }).join('');
 
@@ -2363,6 +2449,8 @@ function renderLpDrilldown(panel, sourceKey) {
         ${sorter.th('txns', 'Txns', 'r')}
         ${sorter.th('prevTxns', 'Prev Txns', 'r')}
         ${sorter.th('txnDelta', 'Txns Δ', 'r')}
+        ${sorter.th('impact', 'CVR Impact', 'r', 'Total contribution to the blended CVR change (pp). Own CVR move weighted by traffic share + share shift valued against the blended rate. Comparable across every table on this page.')}
+        ${sorter.th('drag', 'CVR Drag', 'r', 'How much higher blended CVR would be without this row&apos;s traffic. Positive = dead weight. A level, not a change — so unlike CVR Impact it still flags rows that convert badly in BOTH windows.')}
       </div>`;
 
   panel.innerHTML = `<div class="cvr-drill-heading">Landing pages within this source · ${sorted.length}</div>${headerHtml}${rowsHtml}`;
@@ -2530,6 +2618,8 @@ function renderCvrBuckets(rows) {
     txns:      b => b.currWC,
     prevTxns:  b => b.prevWC,
     txnDelta:  b => Math.round(b.currWC) - Math.round(b.prevWC),
+    impact:    b => cvrImpactOf(b.prevS, b.prevS > 0 ? b.prevWC / b.prevS : 0, b.currS, b.currS > 0 ? b.currWC / b.currS : 0),
+    drag:      b => cvrDrag(b.currS, b.currS > 0 ? b.currWC / b.currS : 0),
   }, TEXT_FIRST_ASC);
   const srcSorter = sorterFor('cvr-bucket-sources', {
     name:      e => (e.name || '').toLowerCase(),
@@ -2542,6 +2632,8 @@ function renderCvrBuckets(rows) {
     txns:      e => e.currS * e.cvr,
     prevTxns:  e => e.prevS * e.prevCvr,
     txnDelta:  e => Math.round(e.currS * e.cvr) - Math.round(e.prevS * e.prevCvr),
+    impact:    e => cvrImpactOf(e.prevS, e.prevCvr, e.currS, e.cvr),
+    drag:      e => cvrDrag(e.currS, e.cvr),
   }, TEXT_FIRST_ASC);
   // Sorting the nested list repaints the whole card, so remember which buckets
   // were expanded or the user never sees the result of their own click.
@@ -2603,6 +2695,8 @@ function renderCvrBuckets(rows) {
         ${bucketSorter.th('txns', 'Txns', 'r')}
         ${bucketSorter.th('prevTxns', 'Prev Txns', 'r', 'Transactions in the comparison period')}
         ${bucketSorter.th('txnDelta', 'Txns Δ', 'r', 'Change in transactions vs the comparison period')}
+        ${bucketSorter.th('impact', 'CVR Impact', 'r', 'Total contribution to the blended CVR change (pp). Own CVR move weighted by traffic share + share shift valued against the blended rate. Comparable across every table on this page.')}
+        ${bucketSorter.th('drag', 'CVR Drag', 'r', 'How much higher blended CVR would be without this row&apos;s traffic. Positive = dead weight.')}
       </div>`;
 
   // For low-CVR buckets, more sessions = bad for overall CVR (invert colors)
@@ -2648,7 +2742,7 @@ function renderCvrBuckets(rows) {
       const sTxnD  = sCurrT - sPrevT;
       const sCvrD  = s.cvr - s.prevCvr;
       srcRows += `
-        <div style="display:grid;grid-template-columns:minmax(210px,1fr) 55px 55px 50px 60px 52px 50px 50px 50px 48px;gap:6px;padding:2px 0;font-size:0.73rem;color:var(--text-secondary)">
+        <div style="display:grid;grid-template-columns:minmax(180px,1fr) 55px 55px 50px 60px 52px 50px 50px 50px 48px 60px 60px;gap:6px;padding:2px 0;font-size:0.73rem;color:var(--text-secondary)">
           <div style="font-weight:500;color:var(--text-primary)">${esc(s.name)}</div>
           <div class="r">${fmtN(s.currS)}</div>
           <div class="r">${fmtN(s.prevS)}</div>
@@ -2659,6 +2753,8 @@ function renderCvrBuckets(rows) {
           <div class="r">${fmtN(sCurrT)}</div>
           <div class="r">${fmtN(sPrevT)}</div>
           <div class="r ${cls(sTxnD)}" style="font-weight:600">${fmtS(sTxnD)}</div>
+          ${impactCell(cvrImpactOf(s.prevS, s.prevCvr, s.currS, s.cvr))}
+          ${dragCell(cvrDrag(s.currS, s.cvr))}
         </div>`;
     });
 
@@ -2682,11 +2778,13 @@ function renderCvrBuckets(rows) {
         <div class="r" style="font-size:0.78rem;font-weight:600">${fmtN(currTxns)}</div>
         <div class="r" style="font-size:0.78rem;color:var(--text-secondary)">${fmtN(prevTxns)}</div>
         <div class="r ${cls(txnDelta)}" style="font-size:0.78rem;font-weight:600">${fmtS(txnDelta)}</div>
+        ${impactCell(cvrImpactOf(b.prevS, prevCvr, b.currS, currCvr))}
+        ${dragCell(cvrDrag(b.currS, currCvr))}
       </div>
       <details data-bucket="${b.key}"${openBuckets.has(b.key) ? ' open' : ''} style="padding:0 0 4px 40px">
         <summary style="font-size:0.72rem;color:var(--fb-blue);cursor:pointer;padding:4px 0;user-select:none">Show ${b.sources.length} source${b.sources.length !== 1 ? 's' : ''}</summary>
         <div style="padding:2px 0 4px">
-          <div style="display:grid;grid-template-columns:minmax(210px,1fr) 55px 55px 50px 60px 52px 50px 50px 50px 48px;gap:6px;padding:2px 0;font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);border-bottom:1px solid var(--border)">
+          <div style="display:grid;grid-template-columns:minmax(180px,1fr) 55px 55px 50px 60px 52px 50px 50px 50px 48px 60px 60px;gap:6px;padding:2px 0;font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);border-bottom:1px solid var(--border)">
             ${srcSorter.th('name', 'Source', '', 'Sort by source name')}
             ${srcSorter.th('sessions', 'Sess', 'r')}
             ${srcSorter.th('prevSess', 'Prev Sess', 'r')}
@@ -2697,6 +2795,8 @@ function renderCvrBuckets(rows) {
             ${srcSorter.th('txns', 'Txns', 'r')}
             ${srcSorter.th('prevTxns', 'Prev Txns', 'r')}
             ${srcSorter.th('txnDelta', 'Δ Txns', 'r')}
+            ${srcSorter.th('impact', 'CVR Impact', 'r', 'Total contribution to the blended CVR change (pp). Own CVR move weighted by traffic share + share shift valued against the blended rate. Comparable across every table on this page.')}
+            ${srcSorter.th('drag', 'CVR Drag', 'r', 'How much higher blended CVR would be without this row&apos;s traffic. Positive = dead weight.')}
           </div>
           ${srcRows || '<div style="font-size:0.73rem;color:var(--text-secondary);padding:4px 0">—</div>'}
         </div>
@@ -2735,6 +2835,8 @@ function renderSessionVolume(rows, tDelta) {
         ${sorter.th('txns', 'Txns', 'r')}
         ${sorter.th('prevTxns', 'Prev Txns', 'r', 'Transactions in the comparison period')}
         ${sorter.th('txnDelta', 'Txns Δ', 'r', 'Change in transactions vs the comparison period')}
+        ${sorter.th('impact', 'CVR Impact', 'r', 'Total contribution to the blended CVR change (pp). Own CVR move weighted by traffic share + share shift valued against the blended rate. Comparable across every table on this page.')}
+        ${sorter.th('drag', 'CVR Drag', 'r', 'How much higher blended CVR would be without this row&apos;s traffic. Positive = dead weight. A level, not a change — so unlike CVR Impact it still flags rows that convert badly in BOTH windows.')}
       </div>`;
 
   sorted.forEach(r => {
@@ -2770,6 +2872,8 @@ function renderSessionVolume(rows, tDelta) {
         <div class="r" style="font-size:0.78rem;font-weight:600">${fmtN(currTxn)}</div>
         <div class="r" style="font-size:0.78rem;color:var(--text-secondary)">${fmtN(prevTxn)}</div>
         <div class="r ${cls(txnDelta)}" style="font-size:0.78rem;font-weight:600">${fmtS(txnDelta)}</div>
+        ${impactCell(cvrImpactOf(r.prevSess, r.prevCvr, r.currS, r.currC))}
+        ${dragCell(cvrDrag(r.currS, r.currC))}
       </div>`;
   });
 
@@ -3343,6 +3447,8 @@ function renderDrillDown(container, source, tDelta, tPrevConv) {
     txnDelta:  c => Math.round(c.currS * c.currC) - Math.round(c.prevSess * c.prevCvr),
     effect:    c => Math.abs(c.value),
     value:     c => c.value,
+    impact:    c => cvrImpactOf(c.prevSess, c.prevCvr, c.currS, c.currC),
+    drag:      c => cvrDrag(c.currS, c.currC),
   }, TEXT_FIRST_ASC);
   container.dataset.effectSource = source;
   container._tDelta = tDelta;
@@ -3392,6 +3498,8 @@ function renderDrillDown(container, source, tDelta, tPrevConv) {
         </div>
         <div class="contrib-val ${cls(c.value)}">${fmtS(Math.round(c.value))}</div>
         <div class="contrib-pct">${fmtP(pctOfDelta, 1)} of total Δ</div>
+        ${impactCell(cvrImpactOf(c.prevSess, c.prevCvr, c.currS, c.currC))}
+        ${dragCell(cvrDrag(c.currS, c.currC))}
       </div>`;
   }).join('');
 
@@ -3410,6 +3518,8 @@ function renderDrillDown(container, source, tDelta, tPrevConv) {
         ${sorter.th('effect', 'Effect', '', 'Sort by effect size, largest first')}
         ${sorter.th('value', 'Txn Δ', 'r')}
         ${sorter.th('value', '% of total Δ', 'r')}
+        ${sorter.th('impact', 'CVR Impact', 'r', 'Total contribution to the blended CVR change (pp). Own CVR move weighted by traffic share + share shift valued against the blended rate.')}
+        ${sorter.th('drag', 'CVR Drag', 'r', 'How much higher blended CVR would be without this row&apos;s traffic. Positive = dead weight.')}
       </div>`;
   container.innerHTML = `<div class="drill-header">Landing page breakdown · ${contribs.length} row${contribs.length !== 1 ? 's' : ''}</div>${headerRow}${html}`;
 }
