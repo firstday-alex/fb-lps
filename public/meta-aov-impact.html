@@ -184,14 +184,26 @@
       display: inline-flex; align-items: center;
       max-width: max(300px, min(1200px, 100vw - 1110px));
     }
+    /* `td { white-space: nowrap }` is right for the twelve numeric columns, but
+       it also suppressed the wrapping this rule asks for, so a 150-character ad
+       name ran straight over the numbers instead of wrapping inside .dim-cell's
+       max-width. Only the label's own text opts back in. */
     .dim-cell code {
       font-size: 11px; overflow-wrap: anywhere; word-break: break-word; line-height: 1.35;
+      white-space: normal;
     }
 
     .scroll-x { overflow-x: auto; }
 
     .drill-row.lp td { background: #f4f6f9; font-size: 10px; }
     .drill-row.lp td:first-child { padding-left: 42px; color: var(--text-secondary); }
+    /* Ad sub-rows sit one level in from their campaign, tinted with the ad
+       colour's wash so a glance tells you which level you are reading. */
+    .drill-row.ad td { background: #fdf6ef; font-size: 10px; }
+    .drill-row.ad td:first-child { padding-left: 34px; }
+    /* Third level (landing pages under an ad) indents past the ad level. */
+    .drill-row.lp-3 td:first-child { padding-left: 66px; }
+    .sub-count { color: var(--text-secondary); font-size: 10px; margin-left: 6px; white-space: nowrap; }
 
     .drill-toggle { cursor: pointer; user-select: none; color: var(--fb-blue); font-size: 10px; }
     .drill-toggle:hover { text-decoration: underline; }
@@ -271,6 +283,10 @@
         <strong>AOV Effect</strong> = prevOrders × ΔAOV (same orders earning a higher/lower basket),
         and <strong>Interaction</strong> = ΔOrders × ΔAOV (the cross-term).
         The three sum to Δ Revenue for that campaign; rows sum to the segment's Δ Revenue.
+        <strong>Click a campaign</strong> to break it out by ad (<code>utm_content</code>), each with its
+        creative preview and Ads Manager links. Ad rows' Δ Rev sums to the campaign; the
+        Orders / AOV / Interaction split does not, because decomposing at ad level moves the
+        mix shift <em>between</em> a campaign's ads into those ads' own effects.
       </p>
       <div class="scroll-x">
         <table>
@@ -306,6 +322,8 @@
         <strong>ASP Effect</strong> = prevUPT × ΔASP (per-unit price move at the old basket).
         <strong>Interaction</strong> = ΔUPT × ΔASP. The three sum to Δ AOV for that campaign.
         If UPT Effect dominates → people are buying fewer items per order. If ASP Effect dominates → average unit price fell (discounts or mix-shift to cheaper SKUs).
+        <strong>Click a campaign</strong> to see the same split per ad. UPT and ASP are ratios, so each
+        ad row describes its own slice rather than adding up to the campaign.
       </p>
       <div class="scroll-x">
         <table>
@@ -341,6 +359,9 @@
         <strong>Own-AOV Effect</strong> = prevOrderShare × ΔAOV (the campaign's own AOV move, weighted by its share of last period's Meta orders).
         <strong>Mix-Shift Effect</strong> = ΔOrderShare × (currAOV − blended avg) (gaining/losing orders at a basket above or below the blended average).
         The two sum to the campaign's contribution; rows sum to total Δ Blended AOV.
+        <strong>Click a campaign</strong> to see its ads. Ad shares and effects are measured against the
+        whole Meta segment, so an ad row is directly comparable with a campaign row — which also means
+        a campaign's ads won't add up to its own row: the gap is mix shift between ads inside it.
       </p>
       <div class="scroll-x">
         <table>
@@ -536,13 +557,17 @@
 
     <!-- Drill-down campaign → landing page -->
     <div class="card">
-      <h3>Drill-down: campaign → landing page</h3>
-      <p class="card__sub">Click a campaign to expand its landing pages. Each row carries the same Δ Revenue split for that slice.</p>
+      <h3>Drill-down: campaign → ad → landing page</h3>
+      <p class="card__sub">
+        Click a campaign to expand its ads, then an ad to expand the landing pages it sent traffic to.
+        Each row carries the same Δ Revenue split for that slice, and every ad row carries its creative
+        preview, Ads Manager and copy links.
+      </p>
       <div class="scroll-x">
         <table>
           <thead>
             <tr>
-              <th>Slice</th>
+              <th>Campaign → ad → landing page</th>
               <th class="r">Prev Orders</th>
               <th class="r">Curr Orders</th>
               <th class="r">Δ Orders</th>
@@ -611,8 +636,11 @@ const adCell = (label) => {
 };
 
 // Each name costs a Meta call or two, so the number resolved per session is
-// capped; the tables can run to hundreds of rows.
-const AD_LINK_CAP = 60;
+// capped; the tables can run to hundreds of rows. The cap counts DISTINCT
+// names, not cells, so the same ad appearing under its campaign, in the by-ad
+// table and in the drill costs one budget slot — which is why expanding a
+// campaign is usually free.
+const AD_LINK_CAP = 150;
 const _adLinkPending = new Set();
 let _adLinkQueued = 0, _adLinkFlush = null;
 function queueAdLink(name) {
@@ -730,33 +758,94 @@ function aggregateBy(rowsCur, rowsPrev, keyFn) {
   return Array.from(m.values()).map(withRatios).sort(byOrdersDesc);
 }
 
-// Two-level tree: topKeyFn → subKeyFn, each node carrying the same shape.
-function buildDrill(rowsCur, rowsPrev, topKeyFn, subKeyFn) {
-  const top = new Map();
-  const ensureTop = (k) => {
-    if (!top.has(k)) top.set(k, { key: k, subs: new Map(), prevO:0, prevR:0, prevU:0, currO:0, currR:0, currU:0 });
-    return top.get(k);
-  };
-  const ensureSub = (node, k) => {
-    if (!node.subs.has(k)) node.subs.set(k, { key: k, prevO:0, prevR:0, prevU:0, currO:0, currR:0, currU:0 });
-    return node.subs.get(k);
-  };
+// N-level tree over an ordered list of key functions (campaign → ad → landing
+// page). Every node carries the same shape as an aggregateBy() row, so one row
+// renderer serves every level, and a node's totals are the sum of its children.
+function buildTree(rowsCur, rowsPrev, keyFns) {
+  const root = { children: new Map() };
   const apply = (rows, slot) => rows.forEach(r => {
-    const tN = ensureTop(topKeyFn(r));
-    const sN = ensureSub(tN, subKeyFn(r));
+    let node = root;
     const u = r.units || 0;
-    tN[slot + 'O'] += r.orders; tN[slot + 'R'] += r.revenue; tN[slot + 'U'] += u;
-    sN[slot + 'O'] += r.orders; sN[slot + 'R'] += r.revenue; sN[slot + 'U'] += u;
+    for (const fn of keyFns) {
+      const k = fn(r);
+      if (!node.children.has(k)) {
+        node.children.set(k, { key: k, children: new Map(), prevO:0, prevR:0, prevU:0, currO:0, currR:0, currU:0 });
+      }
+      node = node.children.get(k);
+      node[slot + 'O'] += r.orders; node[slot + 'R'] += r.revenue; node[slot + 'U'] += u;
+    }
   });
   apply(rowsCur, 'curr');
   apply(rowsPrev, 'prev');
+  const finish = (node) => ({
+    ...withRatios(node),
+    children: Array.from(node.children.values()).map(finish).sort(byOrdersDesc),
+  });
+  return Array.from(root.children.values()).map(finish).sort(byOrdersDesc);
+}
 
-  const out = [];
-  for (const tN of top.values()) {
-    const subs = Array.from(tN.subs.values()).map(withRatios).sort(byOrdersDesc);
-    out.push({ ...withRatios(tN), subs });
-  }
-  return out.sort(byOrdersDesc);
+// Two-level tree, with the second level also exposed as `subs` — the name the
+// slice table and the expandable panels use for "the rows inside this row".
+function buildDrill(rowsCur, rowsPrev, topKeyFn, subKeyFn) {
+  return buildTree(rowsCur, rowsPrev, [topKeyFn, subKeyFn])
+    .map(n => ({ ...n, subs: n.children }));
+}
+
+// ─────────────────────────────────────────────
+// EXPANDABLE ROWS — a campaign opens into the ads that ran under it
+// ─────────────────────────────────────────────
+// Open rows are tracked per table (keyed by tbody id) and per campaign NAME, so
+// opening a campaign in the revenue panel doesn't force it open in the UPT one,
+// and a re-render (or a reload of the same window) keeps what you opened.
+const _openRows = new Map();
+const openSet = (tbodyId) => {
+  if (!_openRows.has(tbodyId)) _openRows.set(tbodyId, new Set());
+  return _openRows.get(tbodyId);
+};
+const canExpand = (g, opts) => !!(opts && opts.subCell && g.subs && g.subs.length);
+
+// A campaign can carry hundreds of ads that took one order each. Past the top
+// few they are collapsed into a single tail row, so an expansion stays readable
+// and the ad-link budget is spent on ads someone might actually open. Δ Rev
+// still ties to the campaign row; the tail keeps no ad identity, so it gets no
+// links.
+const AD_SUBS_SHOWN = 20;
+function capSubs(node) {
+  const adCount = node.subs.length;
+  if (adCount <= AD_SUBS_SHOWN) return { ...node, adCount };
+  const head = node.subs.slice(0, AD_SUBS_SHOWN);
+  const tail = node.subs.slice(AD_SUBS_SHOWN);
+  const t = tail.reduce((a, c) => ({
+    prevO: a.prevO + c.prevO, prevR: a.prevR + c.prevR, prevU: a.prevU + c.prevU,
+    currO: a.currO + c.currO, currR: a.currR + c.currR, currU: a.currU + c.currU,
+  }), { prevO:0, prevR:0, prevU:0, currO:0, currR:0, currU:0 });
+  const tailRow = withRatios({ key: `(long tail — ${tail.length} smaller ads)`, ...t });
+  tailRow.tail = true;
+  return { ...node, adCount, subs: [...head, tailRow] };
+}
+
+const tailCell = dimCell('#9aa0a6');
+// Ad sub-rows get the standard trio (preview, Ads Manager, copy); the collapsed
+// tail row is not one ad, so it gets a plain label.
+const subLabel = (opts) => (s) => (s.tail ? tailCell(s.key) : opts.subCell(s.key));
+
+function parentCell(labelCell, g, open) {
+  const n = g.adCount != null ? g.adCount : g.subs.length;
+  return `<span class="drill-toggle">${open ? '▾' : '▸'}</span>&nbsp;${labelCell(g.key)}`
+    + `<span class="sub-count">(${n} ad${n === 1 ? '' : 's'})</span>`;
+}
+
+// Re-wired after every paint, because the rows are rebuilt from scratch.
+function wireExpand(tbodyId, redraw) {
+  if (!redraw) return;
+  document.getElementById(tbodyId).querySelectorAll('tr[data-exp]').forEach(tr => {
+    tr.addEventListener('click', () => {
+      const open = openSet(tbodyId);
+      const k = tr.dataset.exp;
+      if (open.has(k)) open.delete(k); else open.add(k);
+      redraw();
+    });
+  });
 }
 
 // ─────────────────────────────────────────────
@@ -793,15 +882,17 @@ function renderKpi(groups) {
   `).join('');
 }
 
-function renderRevTable(groups, tbodyId, tfootId, labelCell) {
+// `opts.subCell` + `opts.redraw` make the rows expandable: each group's `subs`
+// render underneath it, drawn with subCell (ads, so they carry the preview /
+// Ads Manager / copy chips). Δ Rev on the sub-rows sums exactly to the parent;
+// the Orders / AOV / Interaction split does NOT, because decomposing at a finer
+// grain re-attributes the within-campaign mix into each ad's own effects.
+function renderRevTable(groups, tbodyId, tfootId, labelCell, opts = {}) {
   let totalPrevR=0, totalCurrR=0, totalPrevO=0, totalCurrO=0;
-  const rows = groups.map(c => {
+  // The same twelve numeric cells whether the row is a campaign or one of its ads.
+  const revCells = (c) => {
     const d = decomposeRev(c.prevO, c.prevA, c.currO, c.currA);
-    totalPrevR += d.prevRev; totalCurrR += d.currRev;
-    totalPrevO += c.prevO;   totalCurrO += c.currO;
     return `
-      <tr>
-        <td>${labelCell(c.key)}</td>
         <td class="r">${fmtInt(c.prevO)}</td>
         <td class="r">${fmtInt(c.currO)}</td>
         <td class="r ${cls(d.dO)}">${signedInt(d.dO)}</td>
@@ -813,8 +904,25 @@ function renderRevTable(groups, tbodyId, tfootId, labelCell) {
         <td class="r ${cls(d.dRev)}">${signed$(d.dRev)}</td>
         <td class="r ${cls(d.ordersEffect)}">${signed$(d.ordersEffect)}</td>
         <td class="r ${cls(d.aovEffect)}">${signed$(d.aovEffect)}</td>
-        <td class="r ${cls(d.interaction)}">${signed$(d.interaction)}</td>
+        <td class="r ${cls(d.interaction)}">${signed$(d.interaction)}</td>`;
+  };
+  const rows = groups.map(c => {
+    const d = decomposeRev(c.prevO, c.prevA, c.currO, c.currA);
+    totalPrevR += d.prevRev; totalCurrR += d.currRev;
+    totalPrevO += c.prevO;   totalCurrO += c.currO;
+    const expandable = canExpand(c, opts);
+    const open = expandable && openSet(tbodyId).has(c.key);
+    let html = `
+      <tr${expandable ? ` data-exp="${esc(c.key)}" style="cursor:pointer"` : ''}>
+        <td>${expandable ? parentCell(labelCell, c, open) : labelCell(c.key)}</td>
+        ${revCells(c)}
       </tr>`;
+    if (open) html += c.subs.map(sN => `
+      <tr class="drill-row ad">
+        <td>${subLabel(opts)(sN)}</td>
+        ${revCells(sN)}
+      </tr>`).join('');
+    return html;
   }).join('');
   document.getElementById(tbodyId).innerHTML = rows
     || `<tr><td colspan="13" class="empty-note">No orders matched this scope.</td></tr>`;
@@ -843,30 +951,27 @@ function renderRevTable(groups, tbodyId, tfootId, labelCell) {
       <td class="r ${cls(aggAE)}">${signed$(aggAE)}</td>
       <td class="r ${cls(aggInt)}">${signed$(aggInt)}</td>
     </tr>`;
+  wireExpand(tbodyId, opts.redraw);
 }
 
-function renderUptTable(groups, tbodyId, tfootId, labelCell) {
+function renderUptTable(groups, tbodyId, tfootId, labelCell, opts = {}) {
   let totalPrevU = 0, totalCurrU = 0, totalPrevO = 0, totalCurrO = 0, totalPrevR = 0, totalCurrR = 0;
   let aggUE = 0, aggSE = 0, aggInt = 0;
-  const rows = groups.map(c => {
+  // UPT and ASP are ratios, so an ad sub-row describes its own slice — the
+  // effects are not additive up to the campaign the way revenue is.
+  const uptCells = (c) => {
     const dUpt = c.currUpt - c.prevUpt;
     const dAsp = c.currAsp - c.prevAsp;
     const dAov = c.currA - c.prevA;
     const uptEffect = dUpt * c.prevAsp;
     const aspEffect = c.prevUpt * dAsp;
     const interaction = dUpt * dAsp;
-    totalPrevU += c.prevU; totalCurrU += c.currU;
-    totalPrevO += c.prevO; totalCurrO += c.currO;
-    totalPrevR += c.prevR; totalCurrR += c.currR;
-    aggUE += uptEffect; aggSE += aspEffect; aggInt += interaction;
     const driver = (Math.abs(uptEffect) === 0 && Math.abs(aspEffect) === 0)
       ? '—'
       : (Math.abs(uptEffect) > Math.abs(aspEffect)
           ? `UPT (${(uptEffect / (uptEffect + aspEffect || 1) * 100).toFixed(0)}%)`
           : `ASP (${(aspEffect / (uptEffect + aspEffect || 1) * 100).toFixed(0)}%)`);
     return `
-      <tr>
-        <td>${labelCell(c.key)}</td>
         <td class="r">${fmtUpt(c.prevUpt)}</td>
         <td class="r">${fmtUpt(c.currUpt)}</td>
         <td class="r ${cls(dUpt)}">${sUpt(dUpt)}</td>
@@ -879,8 +984,28 @@ function renderUptTable(groups, tbodyId, tfootId, labelCell) {
         <td class="r ${cls(uptEffect)}">${signed$2(uptEffect)}</td>
         <td class="r ${cls(aspEffect)}">${signed$2(aspEffect)}</td>
         <td class="r ${cls(interaction)}">${signed$2(interaction)}</td>
-        <td class="r" style="font-weight:600">${driver}</td>
+        <td class="r" style="font-weight:600">${driver}</td>`;
+  };
+  const rows = groups.map(c => {
+    totalPrevU += c.prevU; totalCurrU += c.currU;
+    totalPrevO += c.prevO; totalCurrO += c.currO;
+    totalPrevR += c.prevR; totalCurrR += c.currR;
+    aggUE += (c.currUpt - c.prevUpt) * c.prevAsp;
+    aggSE += c.prevUpt * (c.currAsp - c.prevAsp);
+    aggInt += (c.currUpt - c.prevUpt) * (c.currAsp - c.prevAsp);
+    const expandable = canExpand(c, opts);
+    const open = expandable && openSet(tbodyId).has(c.key);
+    let html = `
+      <tr${expandable ? ` data-exp="${esc(c.key)}" style="cursor:pointer"` : ''}>
+        <td>${expandable ? parentCell(labelCell, c, open) : labelCell(c.key)}</td>
+        ${uptCells(c)}
       </tr>`;
+    if (open) html += c.subs.map(sN => `
+      <tr class="drill-row ad">
+        <td>${subLabel(opts)(sN)}</td>
+        ${uptCells(sN)}
+      </tr>`).join('');
+    return html;
   }).join('');
   document.getElementById(tbodyId).innerHTML = rows
     || `<tr><td colspan="14" class="empty-note">No orders matched this scope.</td></tr>`;
@@ -911,9 +1036,10 @@ function renderUptTable(groups, tbodyId, tfootId, labelCell) {
       <td class="r ${cls(aggInt)}">${signed$2(aggInt)}</td>
       <td class="r" style="font-weight:600">${totalDriver}</td>
     </tr>`;
+  wireExpand(tbodyId, opts.redraw);
 }
 
-function renderAovTable(groups, tbodyId, tfootId, labelCell) {
+function renderAovTable(groups, tbodyId, tfootId, labelCell, opts = {}) {
   const prevTotalO = groups.reduce((a,c)=>a+c.prevO,0);
   const currTotalO = groups.reduce((a,c)=>a+c.currO,0);
   const prevTotalR = groups.reduce((a,c)=>a+c.prevR,0);
@@ -922,9 +1048,7 @@ function renderAovTable(groups, tbodyId, tfootId, labelCell) {
   const currBlended = currTotalO > 0 ? currTotalR / currTotalO : 0;
   const dBlended = currBlended - prevBlended;
   const decomp = decomposeBlendedAOV(groups, prevTotalO, prevBlended, currTotalO);
-  const rows = decomp.map(c => `
-    <tr>
-      <td>${labelCell(c.key)}</td>
+  const aovCells = (c) => `
       <td class="r">${fmtPct(c.prevShare)}</td>
       <td class="r">${fmtPct(c.currShare)}</td>
       <td class="r ${cls(c.dShare)}">${signedPct(c.dShare)}</td>
@@ -934,8 +1058,28 @@ function renderAovTable(groups, tbodyId, tfootId, labelCell) {
       <td class="r ${cls(c.ownEffect)}">${signed$2(c.ownEffect)}</td>
       <td class="r ${cls(c.mixEffect)}">${signed$2(c.mixEffect)}</td>
       <td class="r ${cls(c.total)}">${signed$2(c.total)}</td>
-      <td class="r">${dBlended === 0 ? '—' : ((c.total / dBlended) * 100).toFixed(0) + '%'}</td>
+      <td class="r">${dBlended === 0 ? '—' : ((c.total / dBlended) * 100).toFixed(0) + '%'}</td>`;
+  const rows = decomp.map(c => {
+    const expandable = canExpand(c, opts);
+    const open = expandable && openSet(tbodyId).has(c.key);
+    let html = `
+    <tr${expandable ? ` data-exp="${esc(c.key)}" style="cursor:pointer"` : ''}>
+      <td>${expandable ? parentCell(labelCell, c, open) : labelCell(c.key)}</td>
+      ${aovCells(c)}
+    </tr>`;
+    if (open) {
+      // Ad shares and effects are measured against the SEGMENT totals, not the
+      // campaign's, so an ad row is directly comparable with a campaign row. As
+      // a result the ads inside a campaign don't add up to that campaign's row:
+      // the gap is mix shift between ads, which the campaign row hides.
+      html += decomposeBlendedAOV(c.subs, prevTotalO, prevBlended, currTotalO).map(sN => `
+    <tr class="drill-row ad">
+      <td>${subLabel(opts)(sN)}</td>
+      ${aovCells(sN)}
     </tr>`).join('');
+    }
+    return html;
+  }).join('');
   document.getElementById(tbodyId).innerHTML = rows
     || `<tr><td colspan="11" class="empty-note">No orders matched this scope.</td></tr>`;
   const sumOwn = decomp.reduce((a,c)=>a+c.ownEffect,0);
@@ -955,6 +1099,7 @@ function renderAovTable(groups, tbodyId, tfootId, labelCell) {
       <td class="r ${cls(sumTot)}">${signed$2(sumTot)}</td>
       <td class="r">100%</td>
     </tr>`;
+  wireExpand(tbodyId, opts.redraw);
 }
 
 // ─────────────────────────────────────────────
@@ -1031,54 +1176,53 @@ function renderSlices() {
 }
 
 // ─────────────────────────────────────────────
-// DRILL-DOWN (campaign → landing page)
+// DRILL-DOWN (campaign → ad → landing page)
 // ─────────────────────────────────────────────
+// One row renderer for all three levels — only the label cell, the row tint and
+// the noun for the child count change. The ad level uses adCell, so every ad
+// row in the drill carries the preview / Ads Manager / copy chips.
+const DRILL_LEVELS = [
+  { cell: campCell, rowClass: '',                  childNoun: 'ad' },
+  { cell: adCell,   rowClass: 'drill-row ad',      childNoun: 'LP' },
+  { cell: lpCell,   rowClass: 'drill-row lp lp-3', childNoun: null },
+];
+
 let _drillTree = [];
+// Keys are positional ('r/0/2'), so they're only meaningful for the tree that
+// is currently loaded — render() clears the set when new data arrives.
 const _expanded = new Set();
 
 function renderDrill() {
   const parts = [];
-  _drillTree.forEach((tN, ti) => {
-    const id = 'c' + ti;
-    const open = _expanded.has(id);
-    const d = decomposeRev(tN.prevO, tN.prevA, tN.currO, tN.currA);
-    parts.push(`
-      <tr data-drill="${id}" style="cursor:pointer">
-        <td>
-          <span class="dim-cell" title="${esc(tN.key)}">
-            <span class="dim-dot" style="background:#1877f2"></span>
-            <span class="drill-toggle">${open ? '▾' : '▸'}</span>&nbsp;<code>${esc(tN.key)}</code>
-            <span style="color:var(--text-secondary); font-size:10px; margin-left:6px">(${tN.subs.length} LP)</span>
-          </span>
-        </td>
-        <td class="r">${fmtInt(tN.prevO)}</td>
-        <td class="r">${fmtInt(tN.currO)}</td>
+  const walk = (nodes, path, depth) => {
+    const lvl = DRILL_LEVELS[depth];
+    nodes.forEach((n, i) => {
+      const id = path + '/' + i;
+      const kids = depth + 1 < DRILL_LEVELS.length ? n.children : [];
+      const open = kids.length > 0 && _expanded.has(id);
+      const d = decomposeRev(n.prevO, n.prevA, n.currO, n.currA);
+      const label = kids.length
+        ? `<span class="drill-toggle">${open ? '▾' : '▸'}</span>&nbsp;${lvl.cell(n.key)}`
+          + `<span class="sub-count">(${kids.length} ${lvl.childNoun}${kids.length === 1 ? '' : 's'})</span>`
+        : lvl.cell(n.key);
+      parts.push(`
+      <tr class="${lvl.rowClass}"${kids.length ? ` data-drill="${esc(id)}" style="cursor:pointer"` : ''}>
+        <td>${label}</td>
+        <td class="r">${fmtInt(n.prevO)}</td>
+        <td class="r">${fmtInt(n.currO)}</td>
         <td class="r ${cls(d.dO)}">${signedInt(d.dO)}</td>
-        <td class="r">${fmt$2(tN.prevA)}</td>
-        <td class="r">${fmt$2(tN.currA)}</td>
+        <td class="r">${fmt$2(n.prevA)}</td>
+        <td class="r">${fmt$2(n.currA)}</td>
         <td class="r ${cls(d.dA)}">${signed$2(d.dA)}</td>
         <td class="r ${cls(d.dRev)}">${signed$(d.dRev)}</td>
         <td class="r ${cls(d.ordersEffect)}">${signed$(d.ordersEffect)}</td>
         <td class="r ${cls(d.aovEffect)}">${signed$(d.aovEffect)}</td>
       </tr>`);
-    if (!open) return;
-    tN.subs.forEach(sN => {
-      const sd = decomposeRev(sN.prevO, sN.prevA, sN.currO, sN.currA);
-      parts.push(`
-        <tr class="drill-row lp">
-          <td><code style="font-size:10px">${esc(sN.key)}</code></td>
-          <td class="r">${fmtInt(sN.prevO)}</td>
-          <td class="r">${fmtInt(sN.currO)}</td>
-          <td class="r ${cls(sd.dO)}">${signedInt(sd.dO)}</td>
-          <td class="r">${fmt$2(sN.prevA)}</td>
-          <td class="r">${fmt$2(sN.currA)}</td>
-          <td class="r ${cls(sd.dA)}">${signed$2(sd.dA)}</td>
-          <td class="r ${cls(sd.dRev)}">${signed$(sd.dRev)}</td>
-          <td class="r ${cls(sd.ordersEffect)}">${signed$(sd.ordersEffect)}</td>
-          <td class="r ${cls(sd.aovEffect)}">${signed$(sd.aovEffect)}</td>
-        </tr>`);
+      if (open) walk(n.children, id, depth + 1);
     });
-  });
+  };
+  walk(_drillTree, 'r', 0);
+
   const tbody = document.getElementById('drill-tbody');
   tbody.innerHTML = parts.join('')
     || `<tr><td colspan="10" class="empty-note">No orders matched this scope.</td></tr>`;
@@ -1163,9 +1307,15 @@ function render(payload, source, medium) {
   _rows = { cur: payload.current.rows, prev: payload.previous.rows };
   AdLink.setLookupEnd(document.getElementById('date-end').value);
 
-  const campaigns = aggregateBy(_rows.cur, _rows.prev, r => keyOr(r.utm_campaign));
+  // Campaign rows carry their ads as sub-rows — the top level is identical to
+  // what aggregateBy would produce, so the KPI row and the footers are unchanged.
+  const campaigns = buildDrill(_rows.cur, _rows.prev, r => keyOr(r.utm_campaign), r => keyOr(r.utm_content))
+    .map(capSubs);
   const landingPages = aggregateBy(_rows.cur, _rows.prev, r => keyOr(r.landing_page));
-  _drillTree = buildDrill(_rows.cur, _rows.prev, r => keyOr(r.utm_campaign), r => keyOr(r.landing_page));
+  _drillTree = buildTree(_rows.cur, _rows.prev, [
+    r => keyOr(r.utm_campaign), r => keyOr(r.utm_content), r => keyOr(r.landing_page),
+  ]);
+  _expanded.clear();   // positional keys don't survive a new tree
 
   // Top bar
   document.getElementById('top-bar-info').innerHTML = `
@@ -1200,9 +1350,13 @@ function render(payload, source, medium) {
     : '';
 
   renderKpi(campaigns);
-  renderRevTable(campaigns,    'camp-rev-tbody', 'camp-rev-tfoot', campCell);
-  renderUptTable(campaigns,    'camp-upt-tbody', 'camp-upt-tfoot', campCell);
-  renderAovTable(campaigns,    'camp-aov-tbody', 'camp-aov-tfoot', campCell);
+  // Each campaign panel redraws itself when a row is opened or closed.
+  const drawCampRev = () => renderRevTable(campaigns, 'camp-rev-tbody', 'camp-rev-tfoot', campCell, { subCell: adCell, redraw: drawCampRev });
+  const drawCampUpt = () => renderUptTable(campaigns, 'camp-upt-tbody', 'camp-upt-tfoot', campCell, { subCell: adCell, redraw: drawCampUpt });
+  const drawCampAov = () => renderAovTable(campaigns, 'camp-aov-tbody', 'camp-aov-tfoot', campCell, { subCell: adCell, redraw: drawCampAov });
+  drawCampRev();
+  drawCampUpt();
+  drawCampAov();
   renderRevTable(landingPages, 'lp-rev-tbody',   'lp-rev-tfoot',   lpCell);
   renderUptTable(landingPages, 'lp-upt-tbody',   'lp-upt-tfoot',   lpCell);
   renderAovTable(landingPages, 'lp-aov-tbody',   'lp-aov-tfoot',   lpCell);
