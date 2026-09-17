@@ -2111,6 +2111,273 @@ app.get('/api/aov-impact-data', async (req, res) => {
   }
 });
 
+// --- Product mix: units and AOV contribution per product, period over period ---
+//
+// The AOV tabs can say the basket got smaller; they can't say which products it
+// lost, because the order-level pull deliberately never asks for line items.
+// This one does, so it is its own endpoint rather than a flag on
+// /api/aov-impact-data — the extra depth roughly doubles the time per page.
+//
+// Cost is not the constraint: 250 orders a page with up to 50 line items each
+// measured at ~68 points against this store's 20,000-point bucket. Wall clock
+// is — ~0.6s a page, and Vercel gives the function 60s — hence the time budget
+// below rather than a page count alone.
+//
+// `compare=none` returns just the one range, which is how the page walks a long
+// window: it splits the request into a few-day chunks, fires them side by side
+// and adds them up. The chunks are disjoint date ranges, so every total —
+// including `orders_with`, a distinct-order count — sums exactly.
+//
+// Returns all four grouping levels at once (product / variant / sku / type).
+// They are small, and `orders_with` (how many orders contained the thing) can't
+// be re-aggregated from a finer level without double-counting an order that
+// bought two variants of the same product, so each level is counted on its own
+// pass and the page switches between them without refetching.
+app.get('/api/product-mix-data', async (req, res) => {
+  if (!SHOPIFY_URL || !SHOPIFY_TOKEN) {
+    return res.status(500).json({ error: 'Shopify credentials not configured' });
+  }
+
+  const { start, end } = req.query;
+  if (!start || !end || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+    return res.status(400).json({ error: 'start and end query params required (YYYY-MM-DD)' });
+  }
+
+  const noCompare = String(req.query.compare || '').toLowerCase() === 'none';
+
+  // Default compare = same-length period immediately preceding [start, end],
+  // identical to /api/aov-impact-data so the two tabs line up by default.
+  let cs = req.query.compare_start;
+  let ce = req.query.compare_end;
+  const useCustomCompare = cs && ce && /^\d{4}-\d{2}-\d{2}$/.test(cs) && /^\d{4}-\d{2}-\d{2}$/.test(ce);
+  if (!useCustomCompare) {
+    const s0 = new Date(start + 'T00:00:00Z');
+    const e0 = new Date(end + 'T00:00:00Z');
+    const lenDays = Math.round((e0 - s0) / 86400000) + 1;
+    const prevEnd = new Date(s0.getTime() - 86400000);
+    const prevStart = new Date(prevEnd.getTime() - (lenDays - 1) * 86400000);
+    cs = prevStart.toISOString().slice(0, 10);
+    ce = prevEnd.toISOString().slice(0, 10);
+  }
+
+  // Blank = every source, so the default report is the whole store. Both filters
+  // accept a comma-separated list ("paid_social,paid"), because Meta traffic
+  // does not all arrive under one medium — see META_PAID_MEDIUMS.
+  const parseList = (v) => String(v || '').toLowerCase().split(',').map(x => x.trim()).filter(Boolean);
+  const fSources = parseList(req.query.source);
+  const fMediums = parseList(req.query.medium);
+
+  const endpoint = `https://${SHOPIFY_URL}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
+
+  // `quantity` (not currentQuantity) is what `subtotalLineItemsQuantity` counts,
+  // and that is the units figure the AOV tabs already report — verified equal to
+  // the unit for unit on a full day (6,230 either way). Using currentQuantity
+  // here would silently net out refunds on one tab but not the other.
+  //
+  // Net line revenue is `discountedUnitPriceAfterAllDiscountsSet × quantity`,
+  // NOT discountedTotalSet. This store discounts heavily through automatic and
+  // code discounts (40%+ on new-customer subscription orders), and those land in
+  // the line's `discountAllocations`, which discountedTotalSet does not subtract
+  // — summed over one day of Facebook orders it overstated product revenue by
+  // $47.1k against $32.7k of actual order value. The unit-price-after-all-
+  // discounts field reconciles to the order subtotal to the cent on every order
+  // spot-checked.
+  //
+  // originalTotalSet comes along as the pre-discount (list) revenue, so the page
+  // can show how much of an ASP move is discount depth rather than mix.
+  //
+  // Line revenue is products only: no shipping, tax or tips. The caller closes
+  // that gap with an explicit residual row rather than pretending AOV is only
+  // products.
+  const ORDERS_GQL = `query Orders($q: String!, $after: String) {
+    orders(first: 250, query: $q, after: $after, sortKey: CREATED_AT) {
+      edges {
+        node {
+          id
+          totalPriceSet { shopMoney { amount } }
+          subtotalPriceSet { shopMoney { amount } }
+          subtotalLineItemsQuantity
+          customerJourneySummary {
+            firstVisit { source utmParameters { source medium } }
+          }
+          lineItems(first: 50) {
+            edges {
+              node {
+                quantity
+                sku
+                title
+                variantTitle
+                product { title productType }
+                originalTotalSet { shopMoney { amount } }
+                discountedUnitPriceAfterAllDiscountsSet { shopMoney { amount } }
+              }
+            }
+            pageInfo { hasNextPage }
+          }
+        }
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }`;
+
+  const MAX_PAGES = 240;
+  // The page asks for one day at a time, so a request is normally 10-16 pages;
+  // the budget is here for a direct call with a wide range, and to fail as
+  // partial-with-a-warning rather than as a dead 60s function.
+  const TIME_BUDGET_MS = 45000;
+  // A cursor chain is serial, and every order in the range has to be fetched
+  // before its UTMs can be checked — a single day at this store is ~16 pages and
+  // ~10s, so a week in one chain would never finish inside the function. Each
+  // day is its own chain instead, run CHUNK_CONCURRENCY at a time, which turns
+  // the wall clock from "sum of the days" into "the slowest few". The cost is
+  // trivial against the bucket: ~68 points a page, 20,000 available, 1,000/s back.
+  const CHUNK_CONCURRENCY = 6;
+
+  const eachDay = (s, e) => {
+    const out = [];
+    for (let d = new Date(s + 'T00:00:00Z'), last = new Date(e + 'T00:00:00Z'); d <= last; d = new Date(d.getTime() + 86400000)) {
+      out.push(d.toISOString().slice(0, 10));
+    }
+    return out;
+  };
+
+  const fetchPeriod = async (s, e) => {
+    // One accumulator per grouping level. `orders` is a Set of order ids so an
+    // order that bought two variants of the same product counts once.
+    const levels = { product: new Map(), variant: new Map(), sku: new Map(), type: new Map() };
+    const touch = (level, key, extra) => {
+      let g = levels[level].get(key);
+      if (!g) { g = { key, units: 0, revenue: 0, gross: 0, orders: new Set(), ...extra }; levels[level].set(key, g); }
+      return g;
+    };
+
+    let pages = 0, scanned = 0, orderCount = 0;
+    let orderRevenue = 0, orderSubtotal = 0, lineRevenue = 0, lineGross = 0;
+    let unitsTotal = 0, subtotalUnits = 0, lineItemOverflow = 0;
+    let truncated = false;
+    const t0 = Date.now();
+
+    // One day's cursor chain, folded straight into the accumulators above.
+    // Nothing here yields between a read and a write of them, so sharing them
+    // across the concurrent chains is safe.
+    const runDay = async (day) => {
+      let cursor = null;
+      const q = `created_at:>=${day}T00:00:00 AND created_at:<=${day}T23:59:59`;
+      while (true) {
+        const resp = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
+          body: JSON.stringify({ query: ORDERS_GQL, variables: { q, after: cursor } }),
+        });
+        const j = await resp.json();
+        if (j.errors) throw new Error(j.errors[0].message);
+        const data = j.data?.orders;
+        if (!data) return;
+
+        for (const edge of data.edges) {
+          const n = edge.node;
+          const fv = n.customerJourneySummary?.firstVisit;
+          const utm = fv?.utmParameters;
+          const src = ((utm?.source || (fv?.source && fv.source !== 'an unknown source' ? fv.source : '')) || '').toString().toLowerCase().trim();
+          const med = ((utm?.medium || '') + '').toLowerCase().trim();
+          scanned++;
+          if (fSources.length && !fSources.includes(src)) continue;
+          if (fMediums.length && !fMediums.includes(med)) continue;
+
+          orderCount++;
+          orderRevenue += parseFloat(n.totalPriceSet?.shopMoney?.amount || '0') || 0;
+          orderSubtotal += parseFloat(n.subtotalPriceSet?.shopMoney?.amount || '0') || 0;
+          subtotalUnits += parseInt(n.subtotalLineItemsQuantity ?? 0, 10) || 0;
+          if (n.lineItems?.pageInfo?.hasNextPage) lineItemOverflow++;
+
+          for (const le of (n.lineItems?.edges || [])) {
+            const l = le.node;
+            const qty = parseInt(l.quantity ?? 0, 10) || 0;
+            const unit = parseFloat(l.discountedUnitPriceAfterAllDiscountsSet?.shopMoney?.amount || '0') || 0;
+            const rev = unit * qty;
+            const gross = parseFloat(l.originalTotalSet?.shopMoney?.amount || '0') || 0;
+            // A deleted product leaves the line's own title behind; it is still a
+            // real unit sold, so it groups under that title rather than vanishing.
+            const product = (l.product?.title || l.title || '(unknown product)').trim();
+            const type = (l.product?.productType || '(no type)').trim() || '(no type)';
+            const variant = product + (l.variantTitle ? ` — ${l.variantTitle}` : '');
+            const sku = (l.sku || '').trim() || '(no sku)';
+            unitsTotal += qty;
+            lineRevenue += rev;
+            lineGross += gross;
+            for (const [level, key, extra] of [
+              ['product', product, { product, product_type: type }],
+              ['variant', variant, { product, product_type: type, variant: l.variantTitle || '' }],
+              ['sku',     sku,     { product, product_type: type, sku }],
+              ['type',    type,    { product_type: type }],
+            ]) {
+              const g = touch(level, key, extra);
+              g.units += qty;
+              g.revenue += rev;
+              g.gross += gross;
+              g.orders.add(n.id);
+            }
+          }
+        }
+
+        pages++;
+        const outOfBudget = pages >= MAX_PAGES || Date.now() - t0 > TIME_BUDGET_MS;
+        if (!data.pageInfo.hasNextPage) return;
+        if (outOfBudget) { truncated = true; return; }   // partial: the caller warns
+        cursor = data.pageInfo.endCursor;
+      }
+    };
+
+    // A fixed pool rather than Promise.all over every day, so a month-long range
+    // doesn't open 30 cursor chains at once.
+    const days = eachDay(s, e);
+    let next = 0;
+    await Promise.all(Array.from({ length: Math.min(CHUNK_CONCURRENCY, days.length) }, async () => {
+      while (next < days.length) {
+        if (Date.now() - t0 > TIME_BUDGET_MS) { truncated = true; return; }
+        await runDay(days[next++]);
+      }
+    }));
+
+    const out = {};
+    for (const [level, m] of Object.entries(levels)) {
+      out[level] = Array.from(m.values())
+        .map(({ orders, ...rest }) => ({ ...rest, orders_with: orders.size }))
+        .sort((a, b) => b.units - a.units);
+    }
+    return {
+      levels: out, pages, scanned, order_count: orderCount, days: days.length,
+      order_revenue: orderRevenue, order_subtotal: orderSubtotal,
+      line_revenue: lineRevenue, line_gross: lineGross,
+      units_total: unitsTotal, subtotal_units: subtotalUnits,
+      line_item_overflow: lineItemOverflow, truncated,
+    };
+  };
+
+  console.log(`\n[product-mix-data] current=${start}..${end} previous=${noCompare ? '(none)' : cs + '..' + ce} source=${fSources.join(',') || '*'} medium=${fMediums.join(',') || '*'}`);
+  try {
+    if (noCompare) {
+      const cur = await fetchPeriod(start, end);
+      console.log(`[product-mix-data] ${start}..${end}: ${cur.order_count} orders / ${cur.units_total} units (pages=${cur.pages}, trunc=${cur.truncated})`);
+      return res.json({
+        scope: { source: fSources.join(',') || null, medium: fMediums.join(',') || null },
+        current: { start, end, ...cur },
+        previous: null,
+      });
+    }
+    const [cur, prev] = await Promise.all([fetchPeriod(start, end), fetchPeriod(cs, ce)]);
+    console.log(`[product-mix-data] current=${cur.order_count} orders / ${cur.units_total} units (pages=${cur.pages}, trunc=${cur.truncated}) previous=${prev.order_count} / ${prev.units_total} (pages=${prev.pages}, trunc=${prev.truncated})`);
+    res.json({
+      scope: { source: fSources.join(',') || null, medium: fMediums.join(',') || null },
+      current:  { start, end, ...cur },
+      previous: { start: cs, end: ce, ...prev },
+    });
+  } catch (err) {
+    console.error('[product-mix-data] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // --- Meta Paid Social CVR Impact (by campaign + LP, filtered utm_source/medium) ---
 
 // A utm_source / utm_medium scope that can hold more than one value.

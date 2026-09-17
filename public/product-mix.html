@@ -1,0 +1,876 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Product Mix &amp; Units</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --fb-blue: #1877f2;
+      --bg: #f0f2f5;
+      --surface: #fff;
+      --text-primary: #1c1e21;
+      --text-secondary: #65676b;
+      --border: #dddfe2;
+      --positive: #1a7f37;
+      --negative: #c0392b;
+      --neutral-bg: #e4e6eb;
+      --shadow: 0 1px 3px rgba(0,0,0,0.12);
+      --radius: 8px;
+      --amber: #d97706;
+      --amber-bg: #fef3c7;
+      --c-product: #0891b2;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg); color: var(--text-primary); line-height: 1.5; min-height: 100vh;
+    }
+
+    header {
+      background: var(--fb-blue); color: white; padding: 16px 24px;
+      display: flex; align-items: center; gap: 16px;
+    }
+    .header__back, .header__alt-link {
+      color: rgba(255,255,255,0.85); text-decoration: none; font-size: 0.8rem;
+      border: 1px solid rgba(255,255,255,0.3); padding: 4px 10px; border-radius: 6px; white-space: nowrap;
+    }
+    .header__back { font-size: 0.875rem; }
+    .header__alt-link { margin-left: auto; }
+    .header__back:hover, .header__alt-link:hover { background: rgba(255,255,255,0.15); color: white; }
+    header h1 { font-size: 1.2rem; font-weight: 700; }
+    header p { font-size: 0.8rem; opacity: 0.75; }
+
+    /* Load screen */
+    #upload-screen { max-width: 620px; margin: 60px auto; padding: 0 24px; }
+    .upload-card {
+      background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow);
+      padding: 32px; text-align: center;
+    }
+    .upload-card h2 { font-size: 1.1rem; margin-bottom: 8px; }
+    .upload-card p { font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 24px; }
+    .date-row { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-bottom: 12px; }
+    .date-row label { font-size: 0.8rem; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; }
+    .date-row input, .date-row select {
+      font: inherit; font-size: 0.85rem; padding: 6px 8px;
+      border: 1px solid var(--border); border-radius: 6px;
+    }
+    .btn {
+      background: var(--fb-blue); color: #fff; border: none; border-radius: 6px;
+      font: inherit; font-size: 0.9rem; font-weight: 600; padding: 9px 22px; cursor: pointer;
+    }
+    .btn:hover { background: #166fe5; }
+    .btn:disabled { opacity: 0.6; cursor: default; }
+    .btn-reset {
+      background: var(--neutral-bg); color: var(--text-secondary); border: 1px solid var(--border);
+      border-radius: 6px; font: inherit; font-size: 0.78rem; padding: 5px 10px; cursor: pointer;
+    }
+    .preset-row { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; margin-bottom: 14px; }
+    .preset {
+      background: #eef3ff; color: var(--fb-blue); border: 1px solid #d6e3ff; border-radius: 999px;
+      font: inherit; font-size: 0.74rem; font-weight: 600; padding: 4px 11px; cursor: pointer;
+    }
+    .preset:hover { background: var(--fb-blue); color: #fff; }
+    #load-status { font-size: 0.8rem; color: var(--text-secondary); margin-top: 14px; min-height: 18px; }
+    #load-status.error { color: var(--negative); }
+
+    /* Results */
+    #results-screen { display: none; max-width: 1800px; margin: 0 auto; padding: 20px; }
+    .top-bar {
+      display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+      background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow);
+      padding: 12px 16px; margin-bottom: 12px; font-size: 0.85rem;
+    }
+    .top-bar .spacer { margin-left: auto; }
+    #scope-note {
+      background: #eef3ff; border: 1px solid #d6e3ff; border-radius: var(--radius);
+      padding: 10px 14px; font-size: 0.8rem; color: var(--text-secondary);
+      margin-bottom: 12px; line-height: 1.5;
+    }
+    #scope-note code { background: var(--surface); padding: 1px 4px; border-radius: 3px; border: 1px solid var(--border); font-size: 0.76rem; }
+
+    .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+    .kpi { background: var(--surface); border-radius: var(--radius); padding: 14px 16px; box-shadow: var(--shadow); }
+    .kpi__label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-secondary); }
+    .kpi__value { font-size: 1.25rem; font-weight: 700; margin-top: 4px; }
+    .kpi__delta { font-size: 0.78rem; margin-top: 2px; }
+    .kpi__delta.up { color: var(--positive); }
+    .kpi__delta.down { color: var(--negative); }
+
+    .controls {
+      background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow);
+      padding: 12px 16px; margin-bottom: 16px; font-size: 0.82rem;
+      display: flex; gap: 18px; align-items: center; flex-wrap: wrap;
+    }
+    .controls label { color: var(--text-secondary); display: inline-flex; align-items: center; gap: 6px; }
+    .controls select, .controls input {
+      font: inherit; font-size: 0.82rem; padding: 3px 6px; border: 1px solid var(--border); border-radius: 5px;
+    }
+    .type-chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+    .type-chip {
+      border: 1px solid var(--border); background: var(--surface); color: var(--text-primary);
+      border-radius: 999px; font: inherit; font-size: 0.74rem; padding: 3px 10px; cursor: pointer; white-space: nowrap;
+    }
+    .type-chip--on { background: #e0f2fe; border-color: #bae6fd; color: #0369a1; font-weight: 600; }
+    .type-chip--off { opacity: 0.55; text-decoration: line-through; }
+
+    .card { background: var(--surface); border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow); margin-bottom: 16px; }
+    .card h3 { font-size: 1rem; margin-bottom: 8px; }
+    .card__sub { font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 14px; }
+    .card__sub strong { color: var(--text-primary); }
+
+    table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    th { text-align: left; padding: 8px 6px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+         color: var(--text-secondary); background: #f7f8fa; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    th.r { text-align: right; }
+    td { padding: 8px 6px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    td.r { text-align: right; font-variant-numeric: tabular-nums; }
+    tr:last-child td { border-bottom: none; }
+    tfoot td { background: #f7f8fa; font-weight: 600; border-top: 2px solid var(--border); }
+    .scroll-x { overflow-x: auto; }
+
+    .dim-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; vertical-align: middle; }
+    /* The label column takes what the row can spare; the vw term reserves room
+       for the numeric columns, and the name wraps rather than running over them
+       (td's own `white-space: nowrap` is right for the numbers, not for this). */
+    .dim-cell { display: inline-flex; align-items: center; max-width: max(260px, min(760px, 100vw - 1020px)); }
+    .dim-cell span.name { white-space: normal; overflow-wrap: anywhere; line-height: 1.35; }
+    .type-tag {
+      margin-left: 6px; font-size: 9px; text-transform: uppercase; letter-spacing: 0.03em;
+      color: var(--text-secondary); background: #f0f2f5; border: 1px solid var(--border);
+      border-radius: 3px; padding: 0 4px; white-space: nowrap;
+    }
+    .row-residual td { background: #fbfbfc; font-style: italic; color: var(--text-secondary); }
+    .row-tail td { background: #fbfbfc; color: var(--text-secondary); }
+
+    .num-pos { color: var(--positive); }
+    .num-neg { color: var(--negative); }
+    .muted { color: var(--text-secondary); }
+
+    .footnote { font-size: 0.75rem; color: var(--text-secondary); margin-top: 12px; line-height: 1.5; }
+    .warning { background: var(--amber-bg); color: var(--amber); padding: 10px 14px; border-radius: 6px; font-size: 0.8rem; margin-bottom: 12px; }
+    .empty-note { text-align: center; color: var(--text-secondary); padding: 20px; font-size: 11px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <a class="header__back" href="/">&#8592; Ads Viewer</a>
+  <div>
+    <h1>Product Mix &amp; Units</h1>
+    <p>Units per product period over period, their share of units sold, and what each one did to AOV</p>
+  </div>
+  <a class="header__alt-link" href="/aov-impact.html">AOV by Traffic Source &#8594;</a>
+</header>
+
+<!-- ===== LOAD SCREEN ===== -->
+<div id="upload-screen">
+  <div class="upload-card">
+    <h2>Product mix, period over period</h2>
+    <p>Reads Shopify orders and their line items for a date range and a comparison period, then reports
+       each product's units, its share of all units sold, and the part of the AOV change it is responsible for.
+       Leave the UTM filters blank for the whole store, or scope them to one channel.</p>
+    <div class="date-row">
+      <label>Start <input type="date" id="date-start"></label>
+      <label>End <input type="date" id="date-end"></label>
+    </div>
+    <div class="date-row" style="margin-top:4px">
+      <label>Compare Start <input type="date" id="compare-start"></label>
+      <label>Compare End <input type="date" id="compare-end"></label>
+      <button type="button" id="compare-reset" class="btn-reset" title="Reset comparison to the period immediately preceding Start–End">&#8635; Auto</button>
+    </div>
+    <div class="date-row" style="margin-top:4px">
+      <label>utm_source <input type="text" id="filter-source" placeholder="blank = all sources" style="width:170px"></label>
+      <label>utm_medium <input type="text" id="filter-medium" placeholder="blank = all mediums" style="width:170px"></label>
+    </div>
+    <div class="preset-row">
+      <button type="button" class="preset" data-src="" data-med="">All traffic</button>
+      <button type="button" class="preset" data-src="facebook" data-med="">All Facebook</button>
+      <button type="button" class="preset" data-src="facebook" data-med="paid_social,paid">Meta paid</button>
+      <button type="button" class="preset" data-src="google" data-med="">All Google</button>
+      <button type="button" class="preset" data-src="klaviyo" data-med="">Klaviyo</button>
+    </div>
+    <p style="font-size:0.75rem; margin-bottom:16px">
+      Both filters match the order's <em>first visit</em> exactly and accept a comma-separated list
+      (<code>paid_social,paid</code>), because Meta traffic does not all arrive under one medium.
+      <br><br>
+      An order's channel only exists on the order, so every order in both windows has to be read to
+      filter it — about <strong>15 seconds per day</strong> of store orders, whatever the UTM filter.
+      A day against a day lands in well under a minute; a week against a week is a couple of minutes.
+      The counter below tracks it.
+    </p>
+    <button class="btn" id="btn-load">Load</button>
+    <div id="load-status"></div>
+  </div>
+</div>
+
+<!-- ===== RESULTS ===== -->
+<div id="results-screen">
+  <div class="top-bar">
+    <div id="top-bar-info"></div>
+    <div class="spacer"></div>
+    <button class="btn-reset" id="btn-reset">&#8635; New range</button>
+  </div>
+
+  <div id="scope-note"></div>
+  <div id="warning-area"></div>
+  <div class="kpi-row" id="kpi-row"></div>
+
+  <div class="controls">
+    <label>Group by
+      <select id="group-dim">
+        <option value="product">product</option>
+        <option value="variant">product + variant</option>
+        <option value="sku">SKU</option>
+        <option value="type">product type</option>
+      </select>
+    </label>
+    <label>Sort by
+      <select id="sort-by">
+        <option value="aov_abs">biggest AOV impact (either way)</option>
+        <option value="aov_neg">worst AOV impact first</option>
+        <option value="units_neg">biggest unit loss first</option>
+        <option value="units_pos">biggest unit gain first</option>
+        <option value="units_curr">most units this period</option>
+      </select>
+    </label>
+    <label title="Rows under this in BOTH periods are collapsed into one long-tail row, so the totals still tie">
+      Min units
+      <input type="number" id="min-units" value="5" min="1" step="5" style="width:60px">
+    </label>
+    <div class="type-chips" id="type-chips"></div>
+  </div>
+
+  <!-- Units movement -->
+  <div class="card">
+    <h3>Units sold by product &nbsp;<span style="font-weight:400;color:var(--text-secondary);font-size:0.85rem">(raw change and share of units)</span></h3>
+    <p class="card__sub">
+      <strong>Δ Units</strong> is the raw change in units sold in this scope. <strong>Share</strong> is that product's
+      percentage of every unit sold in the scope, so <strong>Δ Share</strong> (in percentage points) says whether the
+      mix moved toward it or away from it — a product can lose units and still gain share when the whole scope shrank.
+      <strong>Units/Order</strong> is units ÷ orders (not ÷ orders containing it), which is the figure that feeds AOV.
+      <strong>Attach</strong> is the share of orders that contained it at all, so you can tell "fewer baskets bought it"
+      from "the baskets that bought it took fewer".
+    </p>
+    <div class="scroll-x">
+      <table>
+        <thead>
+          <tr>
+            <th id="units-h1">Product</th>
+            <th class="r">Prev Units</th>
+            <th class="r">Curr Units</th>
+            <th class="r">Δ Units</th>
+            <th class="r">% Δ</th>
+            <th class="r">Prev Share</th>
+            <th class="r">Curr Share</th>
+            <th class="r">Δ Share</th>
+            <th class="r">Prev U/Order</th>
+            <th class="r">Curr U/Order</th>
+            <th class="r">Δ U/Order</th>
+            <th class="r">Prev Attach</th>
+            <th class="r">Curr Attach</th>
+            <th class="r">Δ Attach</th>
+          </tr>
+        </thead>
+        <tbody id="units-tbody"></tbody>
+        <tfoot id="units-tfoot"></tfoot>
+      </table>
+    </div>
+  </div>
+
+  <!-- AOV impact -->
+  <div class="card">
+    <h3>What each product did to AOV</h3>
+    <p class="card__sub">
+      AOV is exactly the sum of what every product contributes per order:
+      <strong>$/Order</strong> = that product's net revenue ÷ <em>all</em> orders in scope = Units/Order × ASP.
+      So <strong>Δ $/Order</strong> is the product's contribution to Δ AOV in dollars, and the rows add up to it.
+      The contribution splits into <strong>Units Effect</strong> = ΔU/Order × prevASP (selling more or fewer of it at
+      the old price), <strong>ASP Effect</strong> = prevU/Order × ΔASP (the same quantity at a different net price),
+      and <strong>Interaction</strong> = ΔU/Order × ΔASP. A product that sold in only one of the two periods
+      shows <em>—</em> for the missing ASP and books its whole move as a units effect, rather than pretending
+      its price fell to zero.
+      ASP here is <em>net</em> — after every discount — and <strong>Δ Discount</strong> is the change in discount depth
+      (1 − net ÷ list), which is usually what an ASP move actually is.
+      The <em>shipping, tax &amp; other order charges</em> row is the rest of the order total, so the footer ties to the
+      real Δ AOV in the KPI above.
+    </p>
+    <div class="scroll-x">
+      <table>
+        <thead>
+          <tr>
+            <th id="aov-h1">Product</th>
+            <th class="r">Prev U/Order</th>
+            <th class="r">Curr U/Order</th>
+            <th class="r">Prev ASP</th>
+            <th class="r">Curr ASP</th>
+            <th class="r">Δ ASP</th>
+            <th class="r" title="Change in discount depth: 1 − net ÷ list price">Δ Discount</th>
+            <th class="r">Prev $/Order</th>
+            <th class="r">Curr $/Order</th>
+            <th class="r">Δ $/Order</th>
+            <th class="r">Units Effect</th>
+            <th class="r">ASP Effect</th>
+            <th class="r">Interaction</th>
+            <th class="r">% of Δ AOV</th>
+          </tr>
+        </thead>
+        <tbody id="aov-tbody"></tbody>
+        <tfoot id="aov-tfoot"></tfoot>
+      </table>
+    </div>
+  </div>
+
+  <p class="footnote">
+    Scope is read from each order's <code>customerJourneySummary.firstVisit</code>, the same first-touch attribution the
+    AOV and CVR tabs use, so order counts and AOV match those tabs exactly and will not tie to Ads Manager.
+    Units are line-item <code>quantity</code> — the same thing <code>subtotalLineItemsQuantity</code> counts, verified
+    equal on a full day — so a free gift-with-purchase counts as a unit at $0, and an order-protection add-on counts as
+    a unit too; both show up as their own rows, and the product-type chips above can take them out of the mix.
+    Product revenue is <code>discountedUnitPriceAfterAllDiscountsSet × quantity</code>: net of line-level <em>and</em>
+    order-level discounts, which at this store are most of the price. It reconciles to each order's subtotal to the cent.
+    List price is <code>originalTotalSet</code>. Everything else in the order total — shipping, tax, tips — is the
+    residual row, never spread across products.
+    A product deleted since the order keeps the name the line item recorded.
+  </p>
+</div>
+
+<script>
+// ─────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────
+const esc = s => String(s == null ? '' : s)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+const fmt$ = n => (n == null || !isFinite(n)) ? '—' : '$' + n.toLocaleString('en-US', { maximumFractionDigits: 0 });
+const fmt$2 = n => (n == null || !isFinite(n)) ? '—' : '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtInt = n => (n == null || !isFinite(n)) ? '—' : Math.round(n).toLocaleString('en-US');
+const fmtPct = n => (n == null || !isFinite(n)) ? '—' : (n * 100).toFixed(1) + '%';
+const fmtUpt = n => (n == null || !isFinite(n)) ? '—' : n.toFixed(3);
+const signed$2 = n => (n == null || !isFinite(n)) ? '—'
+  : (n >= 0 ? '+' : '−') + '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const signed$ = n => (n == null || !isFinite(n)) ? '—'
+  : (n >= 0 ? '+' : '−') + '$' + Math.abs(n).toLocaleString('en-US', { maximumFractionDigits: 0 });
+const signedInt = n => (n == null || !isFinite(n)) ? '—' : (n >= 0 ? '+' : '−') + Math.abs(Math.round(n)).toLocaleString('en-US');
+const signedPct = n => (n == null || !isFinite(n)) ? '—' : (n >= 0 ? '+' : '−') + (Math.abs(n) * 100).toFixed(2) + 'pp';
+const signedPctChange = n => (n == null || !isFinite(n)) ? '—' : (n >= 0 ? '+' : '−') + (Math.abs(n) * 100).toFixed(1) + '%';
+const sUpt = n => (n == null || !isFinite(n)) ? '—' : (n >= 0 ? '+' : '−') + Math.abs(n).toFixed(3);
+const cls = n => (n == null || !isFinite(n)) ? '' : (n > 0 ? 'num-pos' : (n < 0 ? 'num-neg' : ''));
+
+const NONE = '(none)';
+const LEVEL_LABEL = { product: 'Product', variant: 'Product + variant', sku: 'SKU', type: 'Product type' };
+
+function nameCell(label, type) {
+  return `<span class="dim-cell" title="${esc(label)}">`
+    + `<span class="dim-dot" style="background:var(--c-product)"></span>`
+    + `<span class="name">${esc(label)}</span></span>`
+    + (type ? `<span class="type-tag">${esc(type)}</span>` : '');
+}
+
+// ─────────────────────────────────────────────
+// STATE
+// ─────────────────────────────────────────────
+let _payload = null;
+let _excluded = new Set();     // product types the operator has switched off
+
+const level = () => document.getElementById('group-dim').value;
+
+// ─────────────────────────────────────────────
+// MERGE + MATH
+// ─────────────────────────────────────────────
+// One row per key, carrying both periods. Every ratio below divides by ORDERS,
+// not by the orders that contained the product: AOV is revenue per order, so a
+// product's contribution to it has to be measured over the same denominator.
+function mergeRows() {
+  const lvl = level();
+  const m = new Map();
+  const touch = (k) => {
+    if (!m.has(k)) m.set(k, { key: k, type: null, prevU: 0, prevR: 0, prevG: 0, prevOw: 0, currU: 0, currR: 0, currG: 0, currOw: 0 });
+    return m.get(k);
+  };
+  const apply = (rows, slot) => (rows || []).forEach(r => {
+    const g = touch(r.key);
+    g.type = g.type || r.product_type || null;
+    g[slot + 'U'] += r.units;
+    g[slot + 'R'] += r.revenue;
+    g[slot + 'G'] += r.gross;
+    g[slot + 'Ow'] += r.orders_with;
+  });
+  apply(_payload.previous.levels[lvl], 'prev');
+  apply(_payload.current.levels[lvl], 'curr');
+  return Array.from(m.values());
+}
+
+// Everything a row needs, given the period denominators. `unitsPrev/unitsCurr`
+// are the share denominators — they cover only the included product types, so
+// switching a type off re-bases share without touching the AOV maths (excluded
+// revenue falls into the residual row instead).
+function decorate(g, o) {
+  const dU = g.currU - g.prevU;
+  const prevShare = o.unitsPrev > 0 ? g.prevU / o.unitsPrev : 0;
+  const currShare = o.unitsCurr > 0 ? g.currU / o.unitsCurr : 0;
+  const prevUpo = o.ordersPrev > 0 ? g.prevU / o.ordersPrev : 0;
+  const currUpo = o.ordersCurr > 0 ? g.currU / o.ordersCurr : 0;
+  // A product that sold nothing in a period has no ASP. Leaving it at $0 would
+  // report a total price collapse — and split the move into equal-and-opposite
+  // unit and ASP effects — when all that happened is that it stopped selling.
+  // The empty side therefore carries the other period's price, so ΔASP is 0 and
+  // the whole move lands in the units effect. The table prints '—' on that side.
+  const prevAspRaw = g.prevU > 0 ? g.prevR / g.prevU : null;
+  const currAspRaw = g.currU > 0 ? g.currR / g.currU : null;
+  const prevAsp = prevAspRaw != null ? prevAspRaw : (currAspRaw || 0);
+  const currAsp = currAspRaw != null ? currAspRaw : (prevAspRaw || 0);
+  const prevRpo = o.ordersPrev > 0 ? g.prevR / o.ordersPrev : 0;
+  const currRpo = o.ordersCurr > 0 ? g.currR / o.ordersCurr : 0;
+  // Discount depth is only meaningful when there was a list price to discount:
+  // a $0 gift-with-purchase has gross 0, and 1 − 0/0 is not "100% off".
+  const prevDepth = g.prevG > 0 ? 1 - g.prevR / g.prevG : null;
+  const currDepth = g.currG > 0 ? 1 - g.currR / g.currG : null;
+  const dUpo = currUpo - prevUpo;
+  const dAsp = currAsp - prevAsp;
+  return {
+    ...g, dU, prevShare, currShare, dShare: currShare - prevShare,
+    pctU: g.prevU > 0 ? dU / g.prevU : null,
+    prevUpo, currUpo, dUpo, prevAsp, currAsp, dAsp, prevAspRaw, currAspRaw,
+    prevAttach: o.ordersPrev > 0 ? g.prevOw / o.ordersPrev : 0,
+    currAttach: o.ordersCurr > 0 ? g.currOw / o.ordersCurr : 0,
+    prevRpo, currRpo, dRpo: currRpo - prevRpo,
+    unitsEffect: dUpo * prevAsp,
+    aspEffect: prevUpo * dAsp,
+    interaction: dUpo * dAsp,
+    prevDepth, currDepth,
+    dDepth: (prevDepth == null || currDepth == null) ? null : currDepth - prevDepth,
+  };
+}
+
+const SORTS = {
+  aov_abs:    (a, b) => Math.abs(b.dRpo) - Math.abs(a.dRpo),
+  aov_neg:    (a, b) => a.dRpo - b.dRpo,
+  units_neg:  (a, b) => a.dU - b.dU,
+  units_pos:  (a, b) => b.dU - a.dU,
+  units_curr: (a, b) => b.currU - a.currU,
+};
+
+// Rows too small to read individually are summed into one tail row rather than
+// dropped, so both tables still add up to the footer.
+function collapseTail(rows, minUnits) {
+  const keep = rows.filter(r => r.prevU >= minUnits || r.currU >= minUnits);
+  const tail = rows.filter(r => !(r.prevU >= minUnits || r.currU >= minUnits));
+  if (!tail.length) return { keep, tailRow: null, tailCount: 0 };
+  const t = tail.reduce((a, c) => ({
+    prevU: a.prevU + c.prevU, prevR: a.prevR + c.prevR, prevG: a.prevG + c.prevG, prevOw: a.prevOw + c.prevOw,
+    currU: a.currU + c.currU, currR: a.currR + c.currR, currG: a.currG + c.currG, currOw: a.currOw + c.currOw,
+  }), { prevU: 0, prevR: 0, prevG: 0, prevOw: 0, currU: 0, currR: 0, currG: 0, currOw: 0 });
+  return { keep, tailRow: { key: `(long tail — ${tail.length} under ${minUnits} units)`, type: null, ...t }, tailCount: tail.length };
+}
+
+// ─────────────────────────────────────────────
+// RENDER
+// ─────────────────────────────────────────────
+function renderKpi(o) {
+  const kpis = [
+    { label: 'Orders',        curr: fmtInt(o.ordersCurr),   prev: fmtInt(o.ordersPrev),   d: o.ordersCurr - o.ordersPrev, fmt: signedInt },
+    { label: 'Units',         curr: fmtInt(o.unitsCurrAll), prev: fmtInt(o.unitsPrevAll), d: o.unitsCurrAll - o.unitsPrevAll, fmt: signedInt },
+    { label: 'Units / Order', curr: o.uptCurr.toFixed(2),   prev: o.uptPrev.toFixed(2),   d: o.uptCurr - o.uptPrev, fmt: n => (n >= 0 ? '+' : '−') + Math.abs(n).toFixed(2) },
+    { label: 'Net ASP',       curr: fmt$2(o.aspCurr),       prev: fmt$2(o.aspPrev),       d: o.aspCurr - o.aspPrev, fmt: signed$2 },
+    { label: 'AOV',           curr: fmt$2(o.aovCurr),       prev: fmt$2(o.aovPrev),       d: o.aovCurr - o.aovPrev, fmt: signed$2 },
+    { label: 'Revenue',       curr: fmt$(o.revCurr),        prev: fmt$(o.revPrev),        d: o.revCurr - o.revPrev, fmt: signed$ },
+  ];
+  document.getElementById('kpi-row').innerHTML = kpis.map(k => `
+    <div class="kpi">
+      <div class="kpi__label">${k.label}</div>
+      <div class="kpi__value">${k.curr}</div>
+      <div class="kpi__delta ${k.d > 0 ? 'up' : (k.d < 0 ? 'down' : '')}">prev ${k.prev} · ${k.fmt(k.d)}</div>
+    </div>`).join('');
+}
+
+function renderUnitsTable(rows, o, tailRow) {
+  const cells = (r, isTail) => `
+      <td>${isTail ? `<span class="muted">${esc(r.key)}</span>` : nameCell(r.key, level() === 'type' ? null : r.type)}</td>
+      <td class="r">${fmtInt(r.prevU)}</td>
+      <td class="r">${fmtInt(r.currU)}</td>
+      <td class="r ${cls(r.dU)}" style="font-weight:600">${signedInt(r.dU)}</td>
+      <td class="r ${cls(r.pctU)}">${r.pctU == null ? 'new' : signedPctChange(r.pctU)}</td>
+      <td class="r">${fmtPct(r.prevShare)}</td>
+      <td class="r">${fmtPct(r.currShare)}</td>
+      <td class="r ${cls(r.dShare)}">${signedPct(r.dShare)}</td>
+      <td class="r">${fmtUpt(r.prevUpo)}</td>
+      <td class="r">${fmtUpt(r.currUpo)}</td>
+      <td class="r ${cls(r.dUpo)}">${sUpt(r.dUpo)}</td>
+      <td class="r">${fmtPct(r.prevAttach)}</td>
+      <td class="r">${fmtPct(r.currAttach)}</td>
+      <td class="r ${cls(r.currAttach - r.prevAttach)}">${signedPct(r.currAttach - r.prevAttach)}</td>`;
+
+  const body = rows.map(r => `<tr>${cells(r, false)}</tr>`).join('')
+    + (tailRow ? `<tr class="row-tail">${cells(tailRow, true)}</tr>` : '');
+  document.getElementById('units-tbody').innerHTML = body
+    || `<tr><td colspan="14" class="empty-note">No units in this scope.</td></tr>`;
+
+  const dU = o.unitsCurr - o.unitsPrev;
+  document.getElementById('units-tfoot').innerHTML = `
+    <tr>
+      <td>${o.excludedAny ? 'Total (included types)' : 'Total'}</td>
+      <td class="r">${fmtInt(o.unitsPrev)}</td>
+      <td class="r">${fmtInt(o.unitsCurr)}</td>
+      <td class="r ${cls(dU)}">${signedInt(dU)}</td>
+      <td class="r ${cls(dU)}">${o.unitsPrev > 0 ? signedPctChange(dU / o.unitsPrev) : '—'}</td>
+      <td class="r">100.0%</td>
+      <td class="r">100.0%</td>
+      <td class="r">—</td>
+      <td class="r">${fmtUpt(o.ordersPrev > 0 ? o.unitsPrev / o.ordersPrev : 0)}</td>
+      <td class="r">${fmtUpt(o.ordersCurr > 0 ? o.unitsCurr / o.ordersCurr : 0)}</td>
+      <td class="r">${sUpt((o.ordersCurr > 0 ? o.unitsCurr / o.ordersCurr : 0) - (o.ordersPrev > 0 ? o.unitsPrev / o.ordersPrev : 0))}</td>
+      <td class="r">—</td>
+      <td class="r">—</td>
+      <td class="r">—</td>
+    </tr>`;
+}
+
+function renderAovTable(rows, o, tailRow) {
+  const dAov = o.aovCurr - o.aovPrev;
+  const pctOf = (v) => dAov === 0 ? '—' : ((v / dAov) * 100).toFixed(0) + '%';
+  const cells = (r, kind) => `
+      <td>${kind === 'row' ? nameCell(r.key, level() === 'type' ? null : r.type) : `<span class="muted">${esc(r.key)}</span>`}</td>
+      <td class="r">${fmtUpt(r.prevUpo)}</td>
+      <td class="r">${fmtUpt(r.currUpo)}</td>
+      <td class="r">${r.prevAspRaw == null ? '—' : fmt$2(r.prevAspRaw)}</td>
+      <td class="r">${r.currAspRaw == null ? '—' : fmt$2(r.currAspRaw)}</td>
+      <td class="r ${cls(r.dAsp)}">${signed$2(r.dAsp)}</td>
+      <td class="r ${cls(r.dDepth == null ? null : -r.dDepth)}">${r.dDepth == null ? '—' : signedPct(r.dDepth)}</td>
+      <td class="r">${fmt$2(r.prevRpo)}</td>
+      <td class="r">${fmt$2(r.currRpo)}</td>
+      <td class="r ${cls(r.dRpo)}" style="font-weight:600">${signed$2(r.dRpo)}</td>
+      <td class="r ${cls(r.unitsEffect)}">${signed$2(r.unitsEffect)}</td>
+      <td class="r ${cls(r.aspEffect)}">${signed$2(r.aspEffect)}</td>
+      <td class="r ${cls(r.interaction)}">${signed$2(r.interaction)}</td>
+      <td class="r">${pctOf(r.dRpo)}</td>`;
+
+  // The residual carries no units, so it has no ASP or unit columns — it is the
+  // part of the order total that was never a product line.
+  const res = o.residual;
+  const residualRow = `
+    <tr class="row-residual">
+      <td>Shipping, tax &amp; other order charges${o.excludedAny ? ' (incl. excluded product types)' : ''}</td>
+      <td class="r">—</td><td class="r">—</td><td class="r">—</td><td class="r">—</td><td class="r">—</td><td class="r">—</td>
+      <td class="r">${fmt$2(res.prevRpo)}</td>
+      <td class="r">${fmt$2(res.currRpo)}</td>
+      <td class="r ${cls(res.dRpo)}" style="font-weight:600">${signed$2(res.dRpo)}</td>
+      <td class="r">—</td><td class="r">—</td><td class="r">—</td>
+      <td class="r">${pctOf(res.dRpo)}</td>
+    </tr>`;
+
+  document.getElementById('aov-tbody').innerHTML =
+    (rows.map(r => `<tr>${cells(r, 'row')}</tr>`).join('')
+      + (tailRow ? `<tr class="row-tail">${cells(tailRow, 'tail')}</tr>` : '')
+      + residualRow)
+    || `<tr><td colspan="14" class="empty-note">No orders in this scope.</td></tr>`;
+
+  const sum = (f) => rows.reduce((a, c) => a + f(c), 0) + (tailRow ? f(tailRow) : 0);
+  const sumUE = sum(r => r.unitsEffect), sumAE = sum(r => r.aspEffect), sumInt = sum(r => r.interaction);
+  const sumProducts = sum(r => r.dRpo);
+  document.getElementById('aov-tfoot').innerHTML = `
+    <tr>
+      <td>Total Δ AOV</td>
+      <td class="r">${fmtUpt(o.uptPrev)}</td>
+      <td class="r">${fmtUpt(o.uptCurr)}</td>
+      <td class="r">${fmt$2(o.aspPrev)}</td>
+      <td class="r">${fmt$2(o.aspCurr)}</td>
+      <td class="r ${cls(o.aspCurr - o.aspPrev)}">${signed$2(o.aspCurr - o.aspPrev)}</td>
+      <td class="r">—</td>
+      <td class="r">${fmt$2(o.aovPrev)}</td>
+      <td class="r">${fmt$2(o.aovCurr)}</td>
+      <td class="r ${cls(dAov)}">${signed$2(dAov)}</td>
+      <td class="r ${cls(sumUE)}">${signed$2(sumUE)}</td>
+      <td class="r ${cls(sumAE)}">${signed$2(sumAE)}</td>
+      <td class="r ${cls(sumInt)}">${signed$2(sumInt)}</td>
+      <td class="r">100%</td>
+    </tr>
+    <tr>
+      <td class="muted" style="font-weight:400">
+        Products ${signed$2(sumProducts)} + residual ${signed$2(res.dRpo)} = ${signed$2(sumProducts + res.dRpo)}
+        — the Δ AOV above, to the cent.
+      </td>
+      <td class="r" colspan="13"></td>
+    </tr>`;
+}
+
+function renderTypeChips() {
+  const types = new Set();
+  for (const p of ['current', 'previous']) {
+    for (const r of _payload[p].levels.product) types.add(r.product_type || '(no type)');
+  }
+  const el = document.getElementById('type-chips');
+  if (types.size <= 1) { el.innerHTML = ''; return; }
+  el.innerHTML = `<span style="color:var(--text-secondary)">Types:</span>` + [...types].sort().map(t => {
+    const on = !_excluded.has(t);
+    return `<button type="button" class="type-chip ${on ? 'type-chip--on' : 'type-chip--off'}" data-type="${esc(t)}"
+      title="${on ? 'Click to drop this type from the mix' : 'Click to put this type back'}">${esc(t)}</button>`;
+  }).join('');
+  el.querySelectorAll('.type-chip').forEach(btn => btn.addEventListener('click', () => {
+    const t = btn.dataset.type;
+    if (_excluded.has(t)) _excluded.delete(t); else _excluded.add(t);
+    draw();
+  }));
+}
+
+// ─────────────────────────────────────────────
+// DRAW
+// ─────────────────────────────────────────────
+function draw() {
+  const cur = _payload.current, prev = _payload.previous;
+  const all = mergeRows();
+  const lvl = level();
+  // At the type level the row key IS the type; everywhere else the row carries it.
+  const typeOf = (r) => (lvl === 'type' ? r.key : (r.type || '(no type)'));
+  const included = all.filter(r => !_excluded.has(typeOf(r)));
+  const excludedAny = _excluded.size > 0 && included.length !== all.length;
+
+  const sumF = (rows, f) => rows.reduce((a, c) => a + f(c), 0);
+  const o = {
+    ordersPrev: prev.order_count, ordersCurr: cur.order_count,
+    unitsPrev: sumF(included, r => r.prevU), unitsCurr: sumF(included, r => r.currU),
+    unitsPrevAll: prev.units_total, unitsCurrAll: cur.units_total,
+    revPrev: prev.order_revenue, revCurr: cur.order_revenue,
+    excludedAny,
+  };
+  o.aovPrev = o.ordersPrev > 0 ? o.revPrev / o.ordersPrev : 0;
+  o.aovCurr = o.ordersCurr > 0 ? o.revCurr / o.ordersCurr : 0;
+  o.uptPrev = o.ordersPrev > 0 ? o.unitsPrev / o.ordersPrev : 0;
+  o.uptCurr = o.ordersCurr > 0 ? o.unitsCurr / o.ordersCurr : 0;
+  const netPrev = sumF(included, r => r.prevR), netCurr = sumF(included, r => r.currR);
+  o.aspPrev = o.unitsPrev > 0 ? netPrev / o.unitsPrev : 0;
+  o.aspCurr = o.unitsCurr > 0 ? netCurr / o.unitsCurr : 0;
+  // Whatever the included product rows don't account for: shipping, tax, tips —
+  // plus any product type switched off above, which is why the footer still ties.
+  o.residual = {
+    key: 'residual',
+    prevRpo: o.ordersPrev > 0 ? (o.revPrev - netPrev) / o.ordersPrev : 0,
+    currRpo: o.ordersCurr > 0 ? (o.revCurr - netCurr) / o.ordersCurr : 0,
+  };
+  o.residual.dRpo = o.residual.currRpo - o.residual.prevRpo;
+
+  const minUnits = Math.max(1, parseInt(document.getElementById('min-units').value, 10) || 1);
+  const { keep, tailRow } = collapseTail(included, minUnits);
+  const rows = keep.map(r => decorate(r, o)).sort(SORTS[document.getElementById('sort-by').value] || SORTS.aov_abs);
+  const tail = tailRow ? decorate(tailRow, o) : null;
+
+  document.getElementById('units-h1').textContent = LEVEL_LABEL[lvl];
+  document.getElementById('aov-h1').textContent = LEVEL_LABEL[lvl];
+  renderKpi(o);
+  renderUnitsTable(rows, o, tail);
+  renderAovTable(rows, o, tail);
+}
+
+// ─────────────────────────────────────────────
+// LOADER
+// ─────────────────────────────────────────────
+let _compareManualOverride = false;
+
+function setDefaultDates() {
+  const today = new Date(); today.setUTCHours(0, 0, 0, 0);
+  const y = new Date(today.getTime() - 86400000);
+  document.getElementById('date-start').value = y.toISOString().slice(0, 10);
+  document.getElementById('date-end').value = y.toISOString().slice(0, 10);
+  autoCompare();
+}
+function autoCompare() {
+  if (_compareManualOverride) return;
+  const s = document.getElementById('date-start').value;
+  const e = document.getElementById('date-end').value;
+  if (!s || !e) return;
+  const sD = new Date(s + 'T00:00:00Z'), eD = new Date(e + 'T00:00:00Z');
+  if (eD < sD) return;
+  const len = Math.round((eD - sD) / 86400000) + 1;
+  const pe = new Date(sD.getTime() - 86400000);
+  const ps = new Date(pe.getTime() - (len - 1) * 86400000);
+  document.getElementById('compare-start').value = ps.toISOString().slice(0, 10);
+  document.getElementById('compare-end').value = pe.toISOString().slice(0, 10);
+}
+
+// Nothing about this data can be aggregated by Shopify: an order's channel lives
+// in its customer journey, so every order in the window has to be pulled and
+// filtered here. At ~2,500 orders a day this store costs roughly 13 seconds of
+// paging per day even with the server fetching days side by side — well past a
+// 60-second serverless function for anything but a short window.
+//
+// So the window is split into short chunks, each its own request, and added up
+// in the browser. The chunks are disjoint date ranges, so every figure sums
+// exactly (including `orders_with`, which counts distinct orders), and the
+// operator gets a progress count instead of a spinner that dies at 60s.
+// Measured on this store: the scan runs at roughly 1.2–1.6 pages (300–400
+// orders) a second no matter how many cursor chains are open — Shopify, not the
+// client, sets the pace. So piling on concurrency doesn't finish sooner, it just
+// slows every chunk down until they trip the server's budget and come back
+// partial, which quietly corrupts a period-over-period comparison. One day per
+// request and three in flight keeps each request comfortably inside its budget,
+// and the whole job runs at the ceiling the API allows anyway.
+const CHUNK_DAYS = 1;
+const REQUEST_POOL = 3;
+
+function chunkRange(start, end, days) {
+  const out = [];
+  const last = new Date(end + 'T00:00:00Z');
+  let cur = new Date(start + 'T00:00:00Z');
+  while (cur <= last) {
+    const stop = new Date(Math.min(cur.getTime() + (days - 1) * 86400000, last.getTime()));
+    out.push({ start: cur.toISOString().slice(0, 10), end: stop.toISOString().slice(0, 10) });
+    cur = new Date(stop.getTime() + 86400000);
+  }
+  return out;
+}
+
+const SCALARS = ['order_count', 'scanned', 'order_revenue', 'order_subtotal', 'line_revenue',
+                 'line_gross', 'units_total', 'subtotal_units', 'line_item_overflow', 'pages'];
+
+const emptyPeriod = (start, end) => ({
+  start, end, truncated: false, partial_days: [],
+  ...Object.fromEntries(SCALARS.map(k => [k, 0])),
+  levels: { product: new Map(), variant: new Map(), sku: new Map(), type: new Map() },
+});
+
+function mergeChunk(acc, part) {
+  SCALARS.forEach(k => { acc[k] += part[k] || 0; });
+  // A chunk that ran out of budget leaves that day short, which would show up as
+  // a product losing units it never lost. Remember which days, and say so.
+  acc.truncated = acc.truncated || part.truncated;
+  if (part.truncated) acc.partial_days.push(part.start === part.end ? part.start : `${part.start}→${part.end}`);
+  for (const [lvl, rows] of Object.entries(part.levels)) {
+    const m = acc.levels[lvl];
+    for (const r of rows) {
+      let g = m.get(r.key);
+      if (!g) { g = { ...r, units: 0, revenue: 0, gross: 0, orders_with: 0 }; m.set(r.key, g); }
+      g.units += r.units; g.revenue += r.revenue; g.gross += r.gross; g.orders_with += r.orders_with;
+    }
+  }
+}
+
+const finishPeriod = (acc) => ({
+  ...acc,
+  levels: Object.fromEntries(Object.entries(acc.levels)
+    .map(([lvl, m]) => [lvl, Array.from(m.values()).sort((a, b) => b.units - a.units)])),
+});
+
+async function load() {
+  const s = document.getElementById('date-start').value;
+  const e = document.getElementById('date-end').value;
+  const cs = document.getElementById('compare-start').value;
+  const ce = document.getElementById('compare-end').value;
+  const source = document.getElementById('filter-source').value.trim();
+  const medium = document.getElementById('filter-medium').value.trim();
+  const statusEl = document.getElementById('load-status');
+  const btn = document.getElementById('btn-load');
+  if (!s || !e) { statusEl.textContent = 'Pick start and end.'; statusEl.classList.add('error'); return; }
+  if (!cs || !ce) { statusEl.textContent = 'Pick a comparison period, or hit ↻ Auto.'; statusEl.classList.add('error'); return; }
+  statusEl.classList.remove('error');
+  btn.disabled = true;
+
+  const jobs = [
+    ...chunkRange(s, e, CHUNK_DAYS).map(c => ({ ...c, into: 'current' })),
+    ...chunkRange(cs, ce, CHUNK_DAYS).map(c => ({ ...c, into: 'previous' })),
+  ];
+  const acc = { current: emptyPeriod(s, e), previous: emptyPeriod(cs, ce) };
+  let done = 0;
+  const t0 = Date.now();
+  const tick = () => {
+    statusEl.textContent = `Reading Shopify orders and line items — ${done} of ${jobs.length} chunks`
+      + (done ? ` (${(Date.now() - t0) / 1000 | 0}s)` : '…');
+  };
+  tick();
+
+  try {
+    let next = 0;
+    await Promise.all(Array.from({ length: Math.min(REQUEST_POOL, jobs.length) }, async () => {
+      while (next < jobs.length) {
+        const job = jobs[next++];
+        const params = new URLSearchParams({ start: job.start, end: job.end, compare: 'none' });
+        if (source) params.set('source', source);
+        if (medium) params.set('medium', medium);
+        const r = await fetch(`/api/product-mix-data?${params.toString()}`);
+        if (!r.ok) throw new Error(`${job.start}→${job.end}: HTTP ${r.status} ${(await r.text()).slice(0, 200)}`);
+        mergeChunk(acc[job.into], (await r.json()).current);
+        done++; tick();
+      }
+    }));
+    const payload = { scope: { source, medium }, current: finishPeriod(acc.current), previous: finishPeriod(acc.previous) };
+    statusEl.textContent = `Loaded in ${(Date.now() - t0) / 1000 | 0}s. `
+      + `${payload.current.order_count} current orders in scope, ${payload.previous.order_count} previous.`;
+    render(payload, source, medium);
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = 'Failed: ' + err.message;
+    statusEl.classList.add('error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function render(payload, source, medium) {
+  _payload = payload;
+  _excluded = new Set();
+
+  document.getElementById('top-bar-info').innerHTML = `
+    <strong>Current</strong> ${esc(payload.current.start)} → ${esc(payload.current.end)}
+    &nbsp;·&nbsp;
+    <strong>Previous</strong> ${esc(payload.previous.start)} → ${esc(payload.previous.end)}`;
+
+  const cond = (!source && !medium)
+    ? 'every order in the range (no UTM filter)'
+    : [source ? `<code>utm_source = ${esc(source.split(',').join('" / "'))}</code>` : null,
+       medium ? `<code>utm_medium = ${esc(medium.split(',').join('" / "'))}</code>` : null].filter(Boolean).join(' AND ');
+  const share = (m, t) => (t > 0 ? ((m / t) * 100).toFixed(1) + '%' : '—');
+  document.getElementById('scope-note').innerHTML = `
+    <strong>Scope:</strong> ${cond}, matched on each order's first visit.
+    Current period: <strong>${fmtInt(payload.current.order_count)}</strong> of
+    ${fmtInt(payload.current.scanned)} orders in range (${share(payload.current.order_count, payload.current.scanned)}),
+    ${fmtInt(payload.current.units_total)} units.
+    Previous: <strong>${fmtInt(payload.previous.order_count)}</strong> of ${fmtInt(payload.previous.scanned)}
+    (${share(payload.previous.order_count, payload.previous.scanned)}), ${fmtInt(payload.previous.units_total)} units.`;
+
+  const warns = [];
+  for (const [name, p] of [['Current', payload.current], ['Previous', payload.previous]]) {
+    if (p.truncated) warns.push(`${name} period is <strong>incomplete</strong>: ${(p.partial_days || []).join(', ')} ran out of scan budget, so units and revenue for ${(p.partial_days || []).length === 1 ? 'that day are' : 'those days are'} short. Compare a shorter range — the two periods are not like for like as they stand.`);
+    if (p.line_item_overflow) warns.push(`${name} period: ${fmtInt(p.line_item_overflow)} orders carried more than 50 line items; units past the 50th are not counted.`);
+    // Line revenue is meant to reconcile to the order subtotal. If it doesn't,
+    // the residual row is absorbing something it shouldn't and the split is off.
+    const gap = Math.abs(p.line_revenue - p.order_subtotal);
+    if (p.order_subtotal > 0 && gap / p.order_subtotal > 0.005) {
+      warns.push(`${name} period: product revenue misses the order subtotal by ${fmt$(gap)} (${(gap / p.order_subtotal * 100).toFixed(1)}%). The per-product AOV split is approximate.`);
+    }
+  }
+  if (payload.current.order_count === 0) warns.push('No current-period orders matched this filter. Check the spelling of utm_source / utm_medium.');
+  document.getElementById('warning-area').innerHTML = warns.map(w => `<div class="warning">${w}</div>`).join('');
+
+  renderTypeChips();
+  draw();
+
+  document.getElementById('upload-screen').style.display = 'none';
+  document.getElementById('results-screen').style.display = 'block';
+}
+
+// ─────────────────────────────────────────────
+// WIRE-UP
+// ─────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  setDefaultDates();
+  ['date-start', 'date-end'].forEach(id => document.getElementById(id).addEventListener('change', autoCompare));
+  ['compare-start', 'compare-end'].forEach(id => document.getElementById(id).addEventListener('change', () => { _compareManualOverride = true; }));
+  document.getElementById('compare-reset').addEventListener('click', () => { _compareManualOverride = false; autoCompare(); });
+  document.getElementById('btn-load').addEventListener('click', load);
+  document.querySelectorAll('.preset').forEach(b => b.addEventListener('click', () => {
+    document.getElementById('filter-source').value = b.dataset.src;
+    document.getElementById('filter-medium').value = b.dataset.med;
+  }));
+  ['group-dim', 'sort-by'].forEach(id => document.getElementById(id).addEventListener('change', () => { if (_payload) draw(); }));
+  document.getElementById('min-units').addEventListener('input', () => { if (_payload) draw(); });
+  document.getElementById('btn-reset').addEventListener('click', () => {
+    document.getElementById('results-screen').style.display = 'none';
+    document.getElementById('upload-screen').style.display = 'block';
+  });
+});
+</script>
+
+<script src="/app-nav.js" defer></script>
+</body>
+</html>

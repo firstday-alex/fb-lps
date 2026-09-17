@@ -40,6 +40,7 @@
       items: [
         { href: '/aov-impact.html',         name: 'AOV by Traffic Source',    desc: 'Per-source decomposition of revenue and blended AOV' },
         { href: '/meta-aov-impact.html',    name: 'AOV · Meta Paid Social',   desc: 'Campaign, ad and landing-page decomposition of Meta AOV' },
+        { href: '/product-mix.html',        name: 'Product Mix & Units',      desc: 'Units per product period over period, share of units, and each one\'s AOV impact' },
       ],
     },
     {
