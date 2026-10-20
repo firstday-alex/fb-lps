@@ -2111,6 +2111,269 @@ app.get('/api/aov-impact-data', async (req, res) => {
   }
 });
 
+// --- Net AOV: what an order is worth in product revenue, and why that moved ---
+//
+// /api/aov-impact-data reports totalPriceSet, which carries shipping, tax and the
+// SavedBy protection fee, and counts every line as a unit — so a "price/unit"
+// move there can be a discount change, a shipping change, a protection change,
+// or free gifts padding the unit count, and the tables can't say which. This
+// endpoint reads line items so each of those is its own number.
+//
+// Line classes, decided per line:
+//   protection — productType "Protection" / vendor "SavedBy". A ~$2-10 fee on
+//                ~45% of orders. Not product revenue and not a unit: counting it
+//                inflates UPT by ~0.3 and drags price/unit down.
+//   gift       — productType "Gift" or a $0 list price (free electrolytes, bottle,
+//                meal planner...). Zero revenue by construction, so as units they
+//                only ever push UPT up and price/unit down.
+//   zero_net   — a real product discounted to $0 (BOGO, "first payment $0.00"
+//                plans). Same distortion as a gift, kept separate because it is a
+//                promo decision rather than a free-gift decision.
+//   paid       — everything else. Net AOV = Σ paid net revenue ÷ orders, and paid
+//                units are the only units in UPT.
+//
+// Net line revenue is discountedUnitPriceAfterAllDiscountsSet × quantity — see
+// /api/product-mix-data for why discountedTotalSet is wrong on this store.
+//
+// Shipping is NOT totalShippingPriceSet: that is the pre-discount rate, and ~800
+// orders a day get $5 shipping waived (total ≠ subtotal + shipping + tax on 802 of
+// 3,606 orders on 2026-10-14). Shipping actually charged is the remainder,
+// total − subtotal − tax − tips, which closes the bridge to the cent.
+//
+// Every aggregate is split into four additive parts — renewal vs not, $0 net
+// merch vs not — so the page can toggle subscription renewals (≈70% of store
+// orders, no first visit) and $0 replacement/seeding/sample orders in or out
+// without refetching. Parts are plain sums, so the page merges them exactly; it
+// also asks one day per request and adds days up, the same way Product Mix does.
+app.get('/api/net-aov-data', async (req, res) => {
+  if (!SHOPIFY_URL || !SHOPIFY_TOKEN) {
+    return res.status(500).json({ error: 'Shopify credentials not configured' });
+  }
+  const { start, end } = req.query;
+  if (!start || !end || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+    return res.status(400).json({ error: 'start and end query params required (YYYY-MM-DD)' });
+  }
+  const parseList = (v) => String(v || '').toLowerCase().split(',').map(x => x.trim()).filter(Boolean);
+  const fSources = parseList(req.query.source);
+  const fMediums = parseList(req.query.medium);
+
+  const endpoint = `https://${SHOPIFY_URL}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
+  const ORDERS_GQL = `query Orders($q: String!, $after: String) {
+    orders(first: 250, query: $q, after: $after, sortKey: CREATED_AT) {
+      edges {
+        node {
+          sourceName
+          discountApplications(first: 10) {
+            edges { node { __typename ... on DiscountCodeApplication { code } } }
+          }
+          totalPriceSet { shopMoney { amount } }
+          subtotalPriceSet { shopMoney { amount } }
+          totalShippingPriceSet { shopMoney { amount } }
+          totalTaxSet { shopMoney { amount } }
+          totalTipReceivedSet { shopMoney { amount } }
+          customerJourneySummary {
+            customerOrderIndex
+            firstVisit { source landingPage utmParameters { source medium campaign } }
+          }
+          lineItems(first: 50) {
+            edges {
+              node {
+                quantity
+                sellingPlan { name }
+                product { productType vendor }
+                originalUnitPriceSet { shopMoney { amount } }
+                discountedUnitPriceAfterAllDiscountsSet { shopMoney { amount } }
+              }
+            }
+            pageInfo { hasNextPage }
+          }
+        }
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }`;
+
+  const MAX_PAGES = 240;
+  const TIME_BUDGET_MS = 45000;
+  // One day as one cursor chain doesn't fit: with line items a page takes ~1.5s
+  // and a day is ~15 pages, and with the browser asking for three days at once
+  // every single day of a test week ran out of budget part-way. Renewals all
+  // land in the first hours, so a cut-off day silently lost its checkout orders
+  // (a week showed 1,104 web orders). Each day is instead six 4-hour windows,
+  // each its own chain, run side by side — the windows are disjoint, so the
+  // totals are unchanged and the wall clock is the slowest window, not the day.
+  const WINDOW_HOURS = 4;
+  const CHUNK_CONCURRENCY = 6;
+  const eachDay = (s, e) => {
+    const out = [];
+    for (let d = new Date(s + 'T00:00:00Z'), last = new Date(e + 'T00:00:00Z'); d <= last; d = new Date(d.getTime() + 86400000)) {
+      out.push(d.toISOString().slice(0, 10));
+    }
+    return out;
+  };
+  const money = (m) => parseFloat(m?.shopMoney?.amount || '0') || 0;
+  const lpPath = (url) => {
+    if (!url) return '';
+    try { return new URL(url).pathname || ''; } catch { return url; }
+  };
+
+  // The additive unit everything is built from. `list` and `net` are paid lines
+  // only, so list − net is exactly the discount on product the customer paid for.
+  const FIELDS = ['orders', 'list', 'net', 'paid_units', 'protection', 'prot_orders',
+    'gift_units', 'gift_orders', 'zero_units', 'zero_list', 'shipping', 'ship_waived', 'tax', 'tips', 'total'];
+  const blank = () => Object.fromEntries(FIELDS.map(f => [f, 0]));
+  const add = (a, o) => { for (const f of FIELDS) a[f] += o[f]; };
+
+  const PARTS = ['C', 'C0', 'R', 'R0'];   // C = not a renewal, R = renewal; 0 = $0 net merch
+  const newPart = () => ({
+    totals: blank(),
+    days: {},
+    seg: { order_type: {}, customer: {}, purchase: {}, discount: {}, discount_code: {}, protection: {}, gift: {}, source: {}, campaign: {}, landing_page: {} },
+    // Net AOV in $1 bins (so percentiles are exact to the dollar) and paid units
+    // per order. Both are counts, so they add across days and parts too.
+    hist_net: {},
+    hist_units: {},
+  });
+  const parts = Object.fromEntries(PARTS.map(p => [p, newPart()]));
+
+  let pages = 0, scanned = 0, lineItemOverflow = 0, truncated = false;
+  const t0 = Date.now();
+
+  const fold = (day, n) => {
+    const fv = n.customerJourneySummary?.firstVisit;
+    const utm = fv?.utmParameters;
+    const src = ((utm?.source || (fv?.source && fv.source !== 'an unknown source' ? fv.source : '')) || '').toString().toLowerCase().trim();
+    const med = ((utm?.medium || '') + '').toLowerCase().trim();
+    scanned++;
+    if (fSources.length && !fSources.includes(src)) return;
+    if (fMediums.length && !fMediums.includes(med)) return;
+    if (n.lineItems?.pageInfo?.hasNextPage) lineItemOverflow++;
+
+    const o = blank();
+    o.orders = 1;
+    let anySellingPlan = false;
+    for (const le of (n.lineItems?.edges || [])) {
+      const l = le.node;
+      const qty = parseInt(l.quantity ?? 0, 10) || 0;
+      const listUnit = money(l.originalUnitPriceSet);
+      const netUnit = money(l.discountedUnitPriceAfterAllDiscountsSet);
+      const type = (l.product?.productType || '').trim().toLowerCase();
+      const vendor = (l.product?.vendor || '').trim().toLowerCase();
+      if (type === 'protection' || vendor === 'savedby') {
+        o.protection += netUnit * qty;
+      } else if (type === 'gift' || listUnit === 0) {
+        o.gift_units += qty;
+      } else if (netUnit === 0) {
+        o.zero_units += qty;
+        o.zero_list += listUnit * qty;
+      } else {
+        o.paid_units += qty;
+        o.list += listUnit * qty;
+        o.net += netUnit * qty;
+        if (l.sellingPlan) anySellingPlan = true;
+      }
+    }
+    o.prot_orders = o.protection > 0 ? 1 : 0;
+    o.gift_orders = o.gift_units > 0 ? 1 : 0;
+    o.total = money(n.totalPriceSet);
+    o.tax = money(n.totalTaxSet);
+    o.tips = money(n.totalTipReceivedSet);
+    o.shipping = o.total - money(n.subtotalPriceSet) - o.tax - o.tips;
+    o.ship_waived = Math.max(0, money(n.totalShippingPriceSet) - o.shipping);
+
+    const sn = (n.sourceName || '').toLowerCase();
+    const renewal = sn.startsWith('subscription_contract');
+    // Numeric source names are app ids; they are shown as-is rather than guessed at.
+    const orderType = renewal ? 'Subscription renewal'
+      : sn === 'web' ? 'Web checkout'
+      : sn === 'tiktok' ? 'TikTok Shop'
+      : sn === 'shopify_draft_order' ? 'Draft order'
+      : `App ${n.sourceName || '(none)'}`;
+    const idx = n.customerJourneySummary?.customerOrderIndex;
+    const customer = idx == null ? 'Unknown' : (idx <= 1 ? 'New customer' : 'Returning customer');
+    // discountApplications, not discountCodes: discountCodes costs ~2s a page
+    // (2.6-3.0s vs 0.4-0.6s for the same 250 orders) and isn't only codes — it
+    // also lists manual discounts like TikTok's "Seller discount" and draft
+    // orders' "Custom discount" (98 of 500 orders disagreed on 2026-10-12).
+    const apps = (n.discountApplications?.edges || []).map(e => e.node);
+    const codeApp = apps.find(x => x.__typename === 'DiscountCodeApplication');
+    const discount = codeApp ? 'Discount code'
+      : apps.some(x => x.__typename === 'AutomaticDiscountApplication') ? 'Automatic discount'
+      : apps.length ? 'Manual / app discount'
+      : (o.list - o.net > 0.005 || o.zero_units > 0 ? 'Line-price discount, no application' : 'No discount');
+    const zero = o.net < 0.005;
+    const part = parts[(renewal ? 'R' : 'C') + (zero ? '0' : '')];
+
+    add(part.totals, o);
+    add(part.days[day] ||= blank(), o);
+    const segKeys = {
+      order_type: orderType,
+      customer,
+      purchase: o.paid_units === 0 ? 'No paid product' : (anySellingPlan ? 'Subscription' : 'One-time'),
+      discount,
+      discount_code: codeApp ? String(codeApp.code || '').toUpperCase() : '(no code)',
+      protection: o.prot_orders ? 'With protection' : 'No protection',
+      gift: o.gift_orders ? 'With free gift' : 'No free gift',
+      source: (src || '(none)') + ' / ' + (med || '(none)'),
+      campaign: (utm?.campaign || '').trim() || '(none)',
+      landing_page: lpPath(fv?.landingPage) || '(none)',
+    };
+    for (const [dim, key] of Object.entries(segKeys)) add(part.seg[dim][key] ||= blank(), o);
+    const bin = Math.floor(o.net);
+    part.hist_net[bin] = (part.hist_net[bin] || 0) + 1;
+    part.hist_units[o.paid_units] = (part.hist_units[o.paid_units] || 0) + 1;
+  };
+
+  const runWindow = async ([day, h]) => {
+    let cursor = null;
+    const hh = (x) => String(x).padStart(2, '0');
+    // The values MUST be quoted. Unquoted, Shopify drops the time and matches the
+    // whole day — every window returned all 3,606 orders of 2026-10-14. Quoted,
+    // the time is honoured, in the shop's timezone like the day-level queries.
+    const q = `created_at:>='${day}T${hh(h)}:00:00' AND created_at:<='${day}T${hh(h + WINDOW_HOURS - 1)}:59:59'`;
+    while (true) {
+      const resp = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
+        body: JSON.stringify({ query: ORDERS_GQL, variables: { q, after: cursor } }),
+      });
+      const j = await resp.json();
+      if (j.errors) throw new Error(j.errors[0].message);
+      const data = j.data?.orders;
+      if (!data) return;
+      for (const edge of data.edges) fold(day, edge.node);
+      pages++;
+      if (!data.pageInfo.hasNextPage) return;
+      if (pages >= MAX_PAGES || Date.now() - t0 > TIME_BUDGET_MS) { truncated = true; return; }
+      cursor = data.pageInfo.endCursor;
+    }
+  };
+
+  console.log(`\n[net-aov-data] ${start}..${end} source=${fSources.join(',') || '*'} medium=${fMediums.join(',') || '*'}`);
+  try {
+    const windows = eachDay(start, end).flatMap(d =>
+      Array.from({ length: 24 / WINDOW_HOURS }, (_, i) => [d, i * WINDOW_HOURS]));
+    let next = 0;
+    await Promise.all(Array.from({ length: Math.min(CHUNK_CONCURRENCY, windows.length) }, async () => {
+      while (next < windows.length) {
+        if (Date.now() - t0 > TIME_BUDGET_MS) { truncated = true; return; }
+        await runWindow(windows[next++]);
+      }
+    }));
+    const orders = PARTS.reduce((a, p) => a + parts[p].totals.orders, 0);
+    console.log(`[net-aov-data] ${start}..${end}: ${orders} of ${scanned} orders (pages=${pages}, trunc=${truncated})`);
+    res.json({
+      start, end,
+      scope: { source: fSources.join(',') || null, medium: fMediums.join(',') || null },
+      scanned, pages, truncated, line_item_overflow: lineItemOverflow,
+      parts,
+    });
+  } catch (err) {
+    console.error('[net-aov-data] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // --- Product mix: units and AOV contribution per product, period over period ---
 //
 // The AOV tabs can say the basket got smaller; they can't say which products it

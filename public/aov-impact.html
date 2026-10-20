@@ -228,6 +228,9 @@
 
     <div class="kpi-row" id="kpi-row"></div>
 
+    <!-- Net AOV deep-dive (public/net-aov.js): line-item level, loads after the tables -->
+    <div id="net-aov-root"></div>
+
     <!-- Δ Revenue decomposition -->
     <div class="card">
       <h3>Revenue Decomposition by utm_source</h3>
@@ -1083,6 +1086,9 @@ async function load() {
     const j = await r.json();
     statusEl.textContent = `Loaded in ${(Date.now()-t0)/1000|0}s. ${j.current.order_count} current orders, ${j.previous.order_count} previous.`;
     render(j);
+    // Slower (it reads line items one day per request), so it fills in after the
+    // order-total tables rather than holding them up.
+    if (cs && ce) NetAOV.load({ start: s, end: e, cs, ce, groupDim: 'order_type' });
   } catch (err) {
     console.error(err);
     statusEl.textContent = 'Failed: ' + err.message;
@@ -1148,6 +1154,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 </script>
 
+<script src="/net-aov.js"></script>
 <script src="/app-nav.js" defer></script>
 </body>
 </html>
