@@ -47,7 +47,7 @@
   let root = null;
   let gen = 0;                       // bumps on every load so a stale fetch can't render
   let state = null;                  // { cur, prev, meta }
-  const ui = { renewals: true, zeros: false, dim: 'order_type', minOrders: 20, lineDim: 'module', subDim: 'page', minUnits: 10, openRows: new Set() };
+  const ui = { renewals: true, zeros: false, dim: 'order_type', minOrders: 20, lineDim: 'module', subDim: 'page', minUnits: 10, openRows: new Set(), lineSort: 'units' };
 
   // ── formatting ──
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -76,10 +76,12 @@
     ['bundle', 'Bundle'],
     ['product_qty', 'Product × quantity'],
     ['basket', 'Basket (whole order, product × qty)'],
+    ['product_qty_plan', 'Product × quantity × Sub/OTP'],
   ];
   // Mirrors the server's SKIP_PAIRS: a line quantity already names its product, and
   // the basket only pairs with page and upsell module (payload size).
-  const NO_PAIR = new Set(['product__product_qty', 'product__basket', 'bundle__basket', 'product_qty__basket']);
+  const NO_PAIR = new Set(['product__product_qty', 'product__basket', 'bundle__basket', 'product_qty__basket',
+    'product__product_qty_plan', 'product_qty__product_qty_plan', 'basket__product_qty_plan']);
   const pairKey = (d1, d2) => LINE_ORDER.indexOf(d1) < LINE_ORDER.indexOf(d2) ? d1 + '__' + d2 : d2 + '__' + d1;
   // Server order for pair keys: `module__page`, `page__product`, … with the
   // values joined by NUL, the first value belonging to the earlier dimension.
@@ -500,9 +502,13 @@
   function unitsCard(P, C) {
     const o0 = P.totals.orders, o1 = C.totals.orders;
     const rows = lineRows(P.lines[ui.lineDim] || {}, C.lines[ui.lineDim] || {}, o0, o1, k => k);
-    const big = d => ['page', 'product', 'product_qty', 'basket'].includes(d);
+    const big = d => ['page', 'product', 'product_qty', 'basket', 'product_qty_plan'].includes(d);
     const keep = (r, d) => !big(d) || Math.max(r.a.units, r.b.units) >= ui.minUnits;
-    const order = (x, y) => Math.abs(y.du) - Math.abs(x.du);
+    // Default: most current units first (what's selling now); the other order puts
+    // the rows that moved units/order most at the top.
+    const order = ui.lineSort === 'delta'
+      ? (x, y) => Math.abs(y.du) - Math.abs(x.du)
+      : (x, y) => (y.b.units - x.b.units) || (y.a.units - x.a.units);
     const shown = rows.filter(r => keep(r, ui.lineDim)).sort(order);
     const rest = rows.filter(r => !shown.includes(r));
     const sumRows = rs => rs.reduce((s, r) => ({ du: s.du + r.du, dn: s.dn + r.dn, u0: s.u0 + r.u0, u1: s.u1 + r.u1, n: s.n + 1 }), { du: 0, dn: 0, u0: 0, u1: 0, n: 0 });
@@ -545,6 +551,9 @@
         <label>Split by <select data-na="linedim">${LINE_DIMS.map(([k, l]) => `<option value="${k}" ${k === ui.lineDim ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
         <label>then by <select data-na="subdim"><option value="" ${!ui.subDim ? 'selected' : ''}>— no sub-breakdown —</option>${LINE_DIMS.filter(([k]) => k !== ui.lineDim && !NO_PAIR.has(pairKey(ui.lineDim, k))).map(([k, l]) => `<option value="${k}" ${k === ui.subDim ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
         ${ui.subDim ? `<button type="button" class="na-btn" data-na-act="open-all">Expand all rows</button><button type="button" class="na-btn" data-na-act="close-all">Collapse rows</button>` : ''}
+        <label>Sort by <select data-na="linesort">
+          <option value="units" ${ui.lineSort !== 'delta' ? 'selected' : ''}>Curr units, most first</option>
+          <option value="delta" ${ui.lineSort === 'delta' ? 'selected' : ''}>Biggest Δ units / order</option></select></label>
         <label>Min units <input type="number" min="1" value="${ui.minUnits}" data-na="minunits" style="width:70px"></label>
       </div>
       ${ui.subDim ? `<p class="na-dim" style="margin:0 0 8px">Click a row to break it down by ${esc(label(ui.subDim).toLowerCase())}.</p>` : ''}
@@ -755,6 +764,7 @@
         else if (k === 'min') ui.minOrders = Math.max(1, parseInt(el.value, 10) || 1);
         else if (k === 'linedim') { ui.lineDim = el.value; if (ui.subDim === ui.lineDim || NO_PAIR.has(pairKey(ui.lineDim, ui.subDim))) ui.subDim = ''; ui.openRows.clear(); }
         else if (k === 'subdim') { ui.subDim = el.value; ui.openRows.clear(); }
+        else if (k === 'linesort') ui.lineSort = el.value;
         else if (k === 'minunits') ui.minUnits = Math.max(1, parseInt(el.value, 10) || 1);
         render();
       });
