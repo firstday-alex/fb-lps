@@ -226,6 +226,11 @@
 
     <div id="warning-area"></div>
 
+    <div class="cc-bar">
+      <button type="button" id="cc-expand-all">Expand all</button>
+      <button type="button" id="cc-collapse-all">Collapse all</button>
+    </div>
+
     <div class="kpi-row" id="kpi-row"></div>
 
     <!-- Net AOV deep-dive (public/net-aov.js): line-item level, loads after the tables -->
@@ -1074,7 +1079,7 @@ async function load() {
   const s = startEl.value, e = endEl.value, cs = csEl.value, ce = ceEl.value;
   if (!s || !e) { statusEl.textContent = 'Pick start and end.'; statusEl.classList.add('error'); return; }
   statusEl.classList.remove('error');
-  btn.disabled = true; statusEl.textContent = 'Fetching orders from Shopify…';
+  btn.disabled = true; statusEl.innerHTML = '<span class="spinner"></span>Fetching orders from Shopify for both periods…';
   try {
     const url = `/api/aov-impact-data?start=${s}&end=${e}` + (cs && ce ? `&compare_start=${cs}&compare_end=${ce}` : '');
     const t0 = Date.now();
@@ -1131,6 +1136,9 @@ function render(payload) {
 
   document.getElementById('upload-screen').style.display = 'none';
   document.getElementById('results-screen').style.display = 'block';
+  // Every card starts collapsed; the Net AOV headline card (net-aov.js) is the
+  // one left open, as the page's answer.
+  CardCollapse.apply(document.getElementById('results-screen'));
 }
 
 // ─────────────────────────────────────────────
@@ -1142,6 +1150,8 @@ document.addEventListener('DOMContentLoaded', () => {
   ['compare-start','compare-end'].forEach(id => document.getElementById(id).addEventListener('change', () => { _compareManualOverride = true; }));
   document.getElementById('compare-reset').addEventListener('click', () => { _compareManualOverride = false; autoCompare(); });
   document.getElementById('btn-load').addEventListener('click', load);
+  document.getElementById('cc-expand-all').addEventListener('click', () => CardCollapse.setAll(document.getElementById('results-screen'), true));
+  document.getElementById('cc-collapse-all').addEventListener('click', () => CardCollapse.setAll(document.getElementById('results-screen'), false));
   document.getElementById('lp-min-orders').addEventListener('input', () => {
     if (_drillTree.length === 0) return;
     const v = parseInt(document.getElementById('lp-min-orders').value, 10) || 1;
@@ -1154,6 +1164,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 </script>
 
+<script src="/card-collapse.js"></script>
 <script src="/net-aov.js"></script>
 <script src="/app-nav.js" defer></script>
 </body>

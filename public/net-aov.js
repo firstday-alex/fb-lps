@@ -195,7 +195,10 @@
     const cur = newPeriod(start, end), prev = newPeriod(cs, ce);
     const jobs = [...days(start, end).map(d => [cur, d]), ...days(cs, ce).map(d => [prev, d])];
     let done = 0, failed = [];
-    root.innerHTML = shell(`<div class="na-loading">Net AOV: reading line items… 0 / ${jobs.length} days</div>`);
+    root.innerHTML = shell(`<div class="na-loading"><span class="spinner"></span><span class="na-loading__text">Loading net AOV — reading
+        line items for ${jobs.length} days (about 15–20s a day)… 0 / ${jobs.length}</span>
+        <div class="progress"><div style="width:0%"></div></div></div>`) + placeholders();
+    collapse();
 
     let next = 0;
     await Promise.all(Array.from({ length: Math.min(CONCURRENCY, jobs.length) }, async () => {
@@ -217,8 +220,10 @@
         }
         done++;
         if (my !== gen) return;
-        const el = root.querySelector('.na-loading');
-        if (el) el.textContent = `Net AOV: reading line items… ${done} / ${jobs.length} days`;
+        const el = root.querySelector('.na-loading__text');
+        if (el) el.textContent = `Loading net AOV — reading line items for ${jobs.length} days (about 15–20s a day)… ${done} / ${jobs.length}`;
+        const bar = root.querySelector('.na-loading .progress > div');
+        if (bar) bar.style.width = (done / jobs.length * 100).toFixed(0) + '%';
       }
     }));
     if (my !== gen) return;
@@ -231,8 +236,25 @@
   }
 
   // ── render ──
+  const SUBCARDS = [
+    ['na-bridge', 'Order-value bridge (per order)'],
+    ['na-extras', 'Protection, free gifts &amp; $0 units'],
+    ['na-segments', 'What moved net AOV, by segment'],
+    ['na-dist', 'Order-value distribution (net AOV per order)'],
+    ['na-trend', 'Daily net AOV'],
+  ];
+  // Stand-ins for the cards while days load, so the section's shape is visible
+  // and nothing below looks finished when it isn't.
+  function placeholders() {
+    return SUBCARDS.map(([id, title]) => `<div class="card" id="${id}"><h3>${title}</h3>
+      <p class="card__sub">Loading…</p><div class="na-loading"><span class="spinner"></span>Waiting for line items…</div></div>`).join('');
+  }
+  function collapse() {
+    if (window.CardCollapse) CardCollapse.apply(root);
+  }
+
   function shell(inner) {
-    return `<div class="card na-head"><h3>Net AOV — what an order is worth in product revenue</h3>
+    return `<div class="card na-head" data-no-collapse="1"><h3>Net AOV — what an order is worth in product revenue</h3>
       <p class="card__sub">Paid product revenue after every discount ÷ orders. Excludes shipping, tax and SavedBy protection,
       and counts only paid units, so free gifts and $0 lines can't pad units-per-order. Everything below this section
       is gross AOV (order totals incl. shipping, tax and protection), so the two won't match.</p>${inner}</div>`;
@@ -250,7 +272,7 @@
     const z0 = state.cur.parts.C0.totals.orders + (ui.renewals ? state.cur.parts.R0.totals.orders : 0);
 
     root.innerHTML = `
-      <div class="card na-head">
+      <div class="card na-head" data-no-collapse="1">
         <h3>Net AOV — what an order is worth in product revenue</h3>
         <p class="card__sub">Paid product revenue after every discount ÷ orders. Excludes shipping, tax and SavedBy protection,
           and counts only paid units, so free gifts and $0 lines can't pad units-per-order. The sections further down
@@ -269,6 +291,7 @@
       ${distributionCard(P, C)}
       ${trendCard(P, C)}
     `;
+    collapse();
     wire();
   }
 
@@ -320,7 +343,7 @@
     const otherP = p.totalPerOrder - (p.aov + p.protPerOrder + p.shipPerOrder + p.taxPerOrder + p.tipsPerOrder);
     const otherC = c.totalPerOrder - (c.aov + c.protPerOrder + c.shipPerOrder + c.taxPerOrder + c.tipsPerOrder);
     const drv = driverSplit(p, c);
-    return `<div class="card"><h3>Order-value bridge (per order)</h3>
+    return `<div class="card" id="na-bridge"><h3>Order-value bridge (per order)</h3>
       <p class="card__sub">From list price to what the customer paid. <strong>List merch</strong> is paid product lines at full price;
         <strong>discounts</strong> are every discount on those lines (codes, automatic, subscription pricing). Shipping is what was
         actually charged after free-shipping waivers, not the pre-discount rate.</p>
@@ -353,7 +376,7 @@
 
   function extrasCard(p, c) {
     const row = (label, pv, cv, f, df) => `<tr><td>${label}</td><td class="r">${f(pv)}</td><td class="r">${f(cv)}</td><td class="r">${df(cv - pv)}</td></tr>`;
-    return `<div class="card"><h3>Protection, free gifts &amp; $0 units</h3>
+    return `<div class="card" id="na-extras"><h3>Protection, free gifts &amp; $0 units</h3>
       <p class="card__sub">These are on the order but aren't product sales. Shopify's unit count includes all of them, so a change here
         moves "units per transaction" without anyone buying more product. They're kept out of every UPT and price/unit figure on this section.</p>
       <div class="scroll-x"><table>
@@ -380,7 +403,7 @@
     const sum = rows.reduce((s, r) => s + r.total, 0);
     const pT = ratios(P.totals), cT = ratios(C.totals);
     const td = (v, f, d) => `<td class="r ${d ? cls(v) : ''}">${f(v)}</td>`;
-    return `<div class="card"><h3>What moved net AOV, by segment</h3>
+    return `<div class="card" id="na-segments"><h3>What moved net AOV, by segment</h3>
       <p class="card__sub"><strong>Own net-AOV effect</strong> = the segment's old share × its Δ net AOV (it got more or less valuable).
         <strong>Share of orders</strong> = Δ share × (its AOV − old blended AOV): it grew or shrank as a slice of the orders.
         Rows sum to Δ net AOV. Sorted by size of impact.</p>
@@ -457,7 +480,7 @@
     const qrow = (l, a, b) => `<tr><td>${l}</td><td class="r">${$0(a)}</td><td class="r">${$0(b)}</td><td class="r ${cls(b - a)}">${sign(b - a, $0)}</td></tr>`;
     // Bucket rows: only where the share moved or there are orders, so the table stays short.
     const brows = cb.map((b, i) => ({ ...b, prev: pb[i].share })).filter(b => b.share > 0.005 || b.prev > 0.005);
-    return `<div class="card"><h3>Order-value distribution (net AOV per order)</h3>
+    return `<div class="card" id="na-dist"><h3>Order-value distribution (net AOV per order)</h3>
       <p class="card__sub">Did the whole basket shift down, or did the high-value tail thin out? Grey = previous, blue = current, as a share of orders.
         Percentiles are exact to the dollar.</p>
       <div class="na-grid">
@@ -512,7 +535,7 @@
       cs.forEach((p, i) => { if (i % step === 0) chart += `<text x="${x(i)}" y="${H - 8}" class="na-axis" text-anchor="middle">${p.d.slice(5)}</text>`; });
       chart += '</svg>';
     }
-    return `<div class="card"><h3>Daily net AOV</h3>
+    return `<div class="card" id="na-trend"><h3>Daily net AOV</h3>
       <p class="card__sub">Blue = current period, grey dashed = previous period lined up day-for-day${cs.length >= 7 ? ', orange = 7-day order-weighted average' : ''}.
         Use it to find the day the shift started (a promo, an LP or offer change, a gift threshold).</p>
       ${chart}

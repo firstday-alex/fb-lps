@@ -272,6 +272,11 @@
 
     <div id="warning-area"></div>
 
+    <div class="cc-bar">
+      <button type="button" id="cc-expand-all">Expand all</button>
+      <button type="button" id="cc-collapse-all">Collapse all</button>
+    </div>
+
     <div class="kpi-row" id="kpi-row"></div>
 
     <!-- Net AOV deep-dive (public/net-aov.js): line-item level, loads after the tables -->
@@ -1282,7 +1287,7 @@ async function load() {
   if (!source) { statusEl.textContent = 'utm_source is required — use the AOV by Traffic Source tab for all sources.'; statusEl.classList.add('error'); return; }
   statusEl.classList.remove('error');
   btn.disabled = true;
-  statusEl.textContent = 'Fetching orders from Shopify…';
+  statusEl.innerHTML = '<span class="spinner"></span>Fetching orders from Shopify for both periods…';
   try {
     const params = new URLSearchParams({ start: s, end: e, source, group: 'campaign_lp' });
     if (medium) params.set('medium', medium);
@@ -1372,6 +1377,9 @@ function render(payload, source, medium) {
 
   document.getElementById('upload-screen').style.display = 'none';
   document.getElementById('results-screen').style.display = 'block';
+  // Every card starts collapsed; the Net AOV headline card (net-aov.js) is the
+  // one left open, as the page's answer.
+  CardCollapse.apply(document.getElementById('results-screen'));
 }
 
 // ─────────────────────────────────────────────
@@ -1383,6 +1391,8 @@ document.addEventListener('DOMContentLoaded', () => {
   ['compare-start','compare-end'].forEach(id => document.getElementById(id).addEventListener('change', () => { _compareManualOverride = true; }));
   document.getElementById('compare-reset').addEventListener('click', () => { _compareManualOverride = false; autoCompare(); });
   document.getElementById('btn-load').addEventListener('click', load);
+  document.getElementById('cc-expand-all').addEventListener('click', () => CardCollapse.setAll(document.getElementById('results-screen'), true));
+  document.getElementById('cc-collapse-all').addEventListener('click', () => CardCollapse.setAll(document.getElementById('results-screen'), false));
   document.getElementById('slice-min-orders').addEventListener('input', () => {
     if (_rows.cur.length === 0 && _rows.prev.length === 0) return;
     renderSlices();
@@ -1403,6 +1413,7 @@ document.addEventListener('DOMContentLoaded', () => {
 </script>
 
 <script src="/ad-preview-link.js"></script>
+<script src="/card-collapse.js"></script>
 <script src="/net-aov.js"></script>
 <script src="/app-nav.js" defer></script>
 </body>
