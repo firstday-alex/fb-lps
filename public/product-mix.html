@@ -159,7 +159,7 @@
   <a class="header__back" href="/">&#8592; Ads Viewer</a>
   <div>
     <h1>Product Mix &amp; Units</h1>
-    <p>Units per product period over period, their share of units sold, and what each one did to gross AOV</p>
+    <p>Online Store orders only: units per product period over period, their share of units sold, and what each one did to gross AOV</p>
   </div>
   <a class="header__alt-link" href="/aov-impact.html">AOV by Traffic Source &#8594;</a>
 </header>
@@ -168,9 +168,9 @@
 <div id="upload-screen">
   <div class="upload-card">
     <h2>Product mix, period over period</h2>
-    <p>Reads Shopify orders and their line items for a date range and a comparison period, then reports
+    <p>Reads <strong>Online Store</strong> orders (Shopify sales channel) and their line items for a date range and a comparison period, then reports
        each product's units, its share of all units sold, and the part of the gross AOV change it is responsible for.
-       Leave the UTM filters blank for the whole store, or scope them to one channel.</p>
+       Leave the UTM filters blank for every Online Store order, or scope them to one channel.</p>
     <div class="date-row">
       <label>Start <input type="date" id="date-start"></label>
       <label>End <input type="date" id="date-end"></label>
@@ -784,7 +784,9 @@ async function load() {
     await Promise.all(Array.from({ length: Math.min(REQUEST_POOL, jobs.length) }, async () => {
       while (next < jobs.length) {
         const job = jobs[next++];
-        const params = new URLSearchParams({ start: job.start, end: job.end, compare: 'none' });
+        // Sales channel = Online Store only, like the AOV tabs, so orders and
+        // gross AOV here tie to theirs and to Shopify's Online Store reports.
+        const params = new URLSearchParams({ start: job.start, end: job.end, compare: 'none', channel: 'online_store' });
         if (source) params.set('source', source);
         if (medium) params.set('medium', medium);
         const r = await fetch(`/api/product-mix-data?${params.toString()}`);
@@ -813,17 +815,18 @@ function render(payload, source, medium) {
   document.getElementById('top-bar-info').innerHTML = `
     <strong>Current</strong> ${esc(payload.current.start)} → ${esc(payload.current.end)}
     &nbsp;·&nbsp;
-    <strong>Previous</strong> ${esc(payload.previous.start)} → ${esc(payload.previous.end)}`;
+    <strong>Previous</strong> ${esc(payload.previous.start)} → ${esc(payload.previous.end)}
+    &nbsp;·&nbsp; <strong>Sales channel</strong> Online Store`;
 
   const cond = (!source && !medium)
-    ? 'every order in the range (no UTM filter)'
+    ? 'every Online Store order in the range (no UTM filter)'
     : [source ? `<code>utm_source = ${esc(source.split(',').join('" / "'))}</code>` : null,
        medium ? `<code>utm_medium = ${esc(medium.split(',').join('" / "'))}</code>` : null].filter(Boolean).join(' AND ');
   const share = (m, t) => (t > 0 ? ((m / t) * 100).toFixed(1) + '%' : '—');
   document.getElementById('scope-note').innerHTML = `
-    <strong>Scope:</strong> ${cond}, matched on each order's first visit.
+    <strong>Scope:</strong> Sales channel = Online Store; ${cond}, matched on each order's first visit.
     Current period: <strong>${fmtInt(payload.current.order_count)}</strong> of
-    ${fmtInt(payload.current.scanned)} orders in range (${share(payload.current.order_count, payload.current.scanned)}),
+    ${fmtInt(payload.current.scanned)} Online Store orders in range (${share(payload.current.order_count, payload.current.scanned)}),
     ${fmtInt(payload.current.units_total)} units.
     Previous: <strong>${fmtInt(payload.previous.order_count)}</strong> of ${fmtInt(payload.previous.scanned)}
     (${share(payload.previous.order_count, payload.previous.scanned)}), ${fmtInt(payload.previous.units_total)} units.`;

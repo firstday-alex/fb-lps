@@ -2515,6 +2515,8 @@ app.get('/api/product-mix-data', async (req, res) => {
   const parseList = (v) => String(v || '').toLowerCase().split(',').map(x => x.trim()).filter(Boolean);
   const fSources = parseList(req.query.source);
   const fMediums = parseList(req.query.medium);
+  // Sales channel = Online Store when the page asks for it — see orderChannelScope.
+  const chan = orderChannelScope(req.query.channel);
 
   const endpoint = `https://${SHOPIFY_URL}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
 
@@ -2543,6 +2545,7 @@ app.get('/api/product-mix-data', async (req, res) => {
       edges {
         node {
           id
+          sourceName
           totalPriceSet { shopMoney { amount } }
           subtotalPriceSet { shopMoney { amount } }
           subtotalLineItemsQuantity
@@ -2611,7 +2614,7 @@ app.get('/api/product-mix-data', async (req, res) => {
     // across the concurrent chains is safe.
     const runDay = async (day) => {
       let cursor = null;
-      const q = `created_at:>=${day}T00:00:00 AND created_at:<=${day}T23:59:59`;
+      const q = `created_at:>=${day}T00:00:00 AND created_at:<=${day}T23:59:59${chan.search}`;
       while (true) {
         const resp = await fetch(endpoint, {
           method: 'POST',
@@ -2629,6 +2632,7 @@ app.get('/api/product-mix-data', async (req, res) => {
           const utm = fv?.utmParameters;
           const src = ((utm?.source || (fv?.source && fv.source !== 'an unknown source' ? fv.source : '')) || '').toString().toLowerCase().trim();
           const med = ((utm?.medium || '') + '').toLowerCase().trim();
+          if (!chan.keep(n.sourceName)) continue;
           scanned++;
           if (fSources.length && !fSources.includes(src)) continue;
           if (fMediums.length && !fMediums.includes(med)) continue;
@@ -2709,7 +2713,7 @@ app.get('/api/product-mix-data', async (req, res) => {
       const cur = await fetchPeriod(start, end);
       console.log(`[product-mix-data] ${start}..${end}: ${cur.order_count} orders / ${cur.units_total} units (pages=${cur.pages}, trunc=${cur.truncated})`);
       return res.json({
-        scope: { source: fSources.join(',') || null, medium: fMediums.join(',') || null },
+        scope: { source: fSources.join(',') || null, medium: fMediums.join(',') || null, channel: chan.key },
         current: { start, end, ...cur },
         previous: null,
       });
@@ -2717,7 +2721,7 @@ app.get('/api/product-mix-data', async (req, res) => {
     const [cur, prev] = await Promise.all([fetchPeriod(start, end), fetchPeriod(cs, ce)]);
     console.log(`[product-mix-data] current=${cur.order_count} orders / ${cur.units_total} units (pages=${cur.pages}, trunc=${cur.truncated}) previous=${prev.order_count} / ${prev.units_total} (pages=${prev.pages}, trunc=${prev.truncated})`);
     res.json({
-      scope: { source: fSources.join(',') || null, medium: fMediums.join(',') || null },
+      scope: { source: fSources.join(',') || null, medium: fMediums.join(',') || null, channel: chan.key },
       current:  { start, end, ...cur },
       previous: { start: cs, end: ce, ...prev },
     });
