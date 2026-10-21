@@ -2247,7 +2247,9 @@ app.get('/api/net-aov-data', async (req, res) => {
   const blank = () => Object.fromEntries(FIELDS.map(f => [f, 0]));
   const add = (a, o) => { for (const f of FIELDS) a[f] += o[f]; };
 
-  const PARTS = ['C', 'C0', 'R', 'R0'];   // C = not a renewal, R = renewal; 0 = $0 net merch
+  const PARTS = ['C', 'C0', 'R', 'R0'];
+  // Base dimensions for the paid-units breakdown; pairs are built from these in order.
+  const LINE_DIMS = ['module', 'page', 'product', 'bundle'];   // C = not a renewal, R = renewal; 0 = $0 net merch
   const newPart = () => ({
     totals: blank(),
     days: {},
@@ -2263,7 +2265,12 @@ app.get('/api/net-aov-data', async (req, res) => {
     // sums exactly to paid UPT, so a UPT drop splits into "fewer upsell units"
     // vs "fewer main-product units" with nothing left over. `orders` counts
     // orders with at least one such line (attach rate), once per order.
-    lines: { module: {}, page: {}, module_page: {}, bundle: {}, product: {}, module_product: {} },
+    // Also every pair of those dimensions (`module__page` keyed "<module>\u0000<page>",
+    // and so on), so the page can expand any row into a second breakdown. Pairs
+    // are counted here rather than summed from finer rows because `orders` (the
+    // attach count) can't be re-aggregated without double-counting an order with
+    // two lines in the same group.
+    lines: {},
   });
   const parts = Object.fromEntries(PARTS.map(p => [p, newPart()]));
 
@@ -2284,7 +2291,7 @@ app.get('/api/net-aov-data', async (req, res) => {
     const o = blank();
     o.orders = 1;
     let anySellingPlan = false;
-    const lineAcc = { module: {}, page: {}, module_page: {}, bundle: {}, product: {}, module_product: {} };
+    const lineAcc = {};
     for (const le of (n.lineItems?.edges || [])) {
       const l = le.node;
       const qty = parseInt(l.quantity ?? 0, 10) || 0;
@@ -2311,13 +2318,16 @@ app.get('/api/net-aov-data', async (req, res) => {
         const keys = {
           module: mod,
           page,
-          module_page: mod + ' · ' + page,
           bundle: (attr._bundle_title || '').trim() || '(not in a bundle)',
           product: (l.product?.title || l.title || '(unknown product)').trim(),
         };
-        keys.module_product = mod + ' · ' + keys.product;
+        for (let i = 0; i < LINE_DIMS.length; i++) {
+          for (let j = i + 1; j < LINE_DIMS.length; j++) {
+            keys[LINE_DIMS[i] + '__' + LINE_DIMS[j]] = keys[LINE_DIMS[i]] + '\u0000' + keys[LINE_DIMS[j]];
+          }
+        }
         for (const [dim, key] of Object.entries(keys)) {
-          const g = lineAcc[dim][key] ||= { units: 0, net: 0, list: 0 };
+          const g = (lineAcc[dim] ||= {})[key] ||= { units: 0, net: 0, list: 0 };
           g.units += qty; g.net += netUnit * qty; g.list += listUnit * qty;
         }
       }
@@ -2370,7 +2380,7 @@ app.get('/api/net-aov-data', async (req, res) => {
     for (const [dim, key] of Object.entries(segKeys)) add(part.seg[dim][key] ||= blank(), o);
     for (const [dim, m] of Object.entries(lineAcc)) {
       for (const [key, g] of Object.entries(m)) {
-        const t = part.lines[dim][key] ||= { units: 0, net: 0, list: 0, orders: 0 };
+        const t = (part.lines[dim] ||= {})[key] ||= { units: 0, net: 0, list: 0, orders: 0 };
         t.units += g.units; t.net += g.net; t.list += g.list; t.orders += 1;
       }
     }

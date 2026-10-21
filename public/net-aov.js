@@ -47,7 +47,7 @@
   let root = null;
   let gen = 0;                       // bumps on every load so a stale fetch can't render
   let state = null;                  // { cur, prev, meta }
-  const ui = { renewals: true, zeros: false, dim: 'order_type', minOrders: 20, lineDim: 'module', minUnits: 10 };
+  const ui = { renewals: true, zeros: false, dim: 'order_type', minOrders: 20, lineDim: 'module', subDim: 'page', minUnits: 10, openRows: new Set() };
 
   // ── formatting ──
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -72,11 +72,13 @@
   const LINE_DIMS = [
     ['module', 'Upsell module'],
     ['page', 'Page it was added from'],
-    ['module_page', 'Upsell module × page'],
     ['product', 'Product'],
-    ['module_product', 'Upsell module × product'],
     ['bundle', 'Bundle'],
   ];
+  // Server order for pair keys: `module__page`, `page__product`, … with the
+  // values joined by NUL, the first value belonging to the earlier dimension.
+  const LINE_ORDER = LINE_DIMS.map(d => d[0]);
+  const SEP = '\u0000';
 
   function mergePart(into, p) {
     addTo(into.totals, p.totals);
@@ -461,25 +463,44 @@
   // orders, so the rows sum to paid UPT and their Δs sum to Δ UPT exactly; the
   // same holds for net $ per order and net AOV. Attach rate and units per
   // attaching order say whether a move is "fewer orders take it" or "those that
-  // take it take fewer".
-  function unitsCard(P, C) {
-    const o0 = P.totals.orders, o1 = C.totals.orders;
-    const m0 = P.lines[ui.lineDim] || {}, m1 = C.lines[ui.lineDim] || {};
+  // take it take fewer". Any row opens into a second breakdown; its sub-rows sum
+  // to it, because they partition the same lines.
+  function lineRows(m0, m1, o0, o1, keyOf) {
     const z = { units: 0, net: 0, list: 0, orders: 0 };
-    const rows = [...new Set([...Object.keys(m0), ...Object.keys(m1)])].map(k => {
-      const a = m0[k] || z, b = m1[k] || z;
+    const keys = new Map();
+    for (const k of Object.keys(m0)) keys.set(keyOf(k), [k, null]);
+    for (const k of Object.keys(m1)) { const kk = keyOf(k); keys.set(kk, [keys.get(kk)?.[0] ?? null, k]); }
+    return [...keys.entries()].map(([label, [k0, k1]]) => {
+      const a = (k0 != null && m0[k0]) || z, b = (k1 != null && m1[k1]) || z;
       const u0 = o0 ? a.units / o0 : 0, u1 = o1 ? b.units / o1 : 0;
-      const n0 = o0 ? a.net / o0 : 0, n1 = o1 ? b.net / o1 : 0;
-      return { key: k, a, b, u0, u1, du: u1 - u0, n0, n1, dn: n1 - n0,
+      return { key: label, a, b, u0, u1, du: u1 - u0,
+        dn: (o1 ? b.net / o1 : 0) - (o0 ? a.net / o0 : 0),
         at0: o0 ? a.orders / o0 : NaN, at1: o1 ? b.orders / o1 : NaN,
         per0: a.orders ? a.units / a.orders : NaN, per1: b.orders ? b.units / b.orders : NaN,
         asp1: b.units ? b.net / b.units : NaN };
     });
-    const big = ['page', 'module_page', 'product', 'module_product'].includes(ui.lineDim);
-    const shown = rows.filter(r => !big || Math.max(r.a.units, r.b.units) >= ui.minUnits)
-      .sort((x, y) => Math.abs(y.du) - Math.abs(x.du));
+  }
+
+  // The sub-rows of one top-level row, from the pair aggregate.
+  function subRows(P, C, o0, o1, topKey) {
+    const d1 = ui.lineDim, d2 = ui.subDim;
+    const i1 = LINE_ORDER.indexOf(d1), i2 = LINE_ORDER.indexOf(d2);
+    const pair = i1 < i2 ? d1 + '__' + d2 : d2 + '__' + d1;
+    const topPos = i1 < i2 ? 0 : 1;
+    const pick = m => Object.fromEntries(Object.entries(m || {}).filter(([k]) => k.split(SEP)[topPos] === topKey));
+    return lineRows(pick(P.lines[pair]), pick(C.lines[pair]), o0, o1, k => k.split(SEP)[1 - topPos]);
+  }
+
+  function unitsCard(P, C) {
+    const o0 = P.totals.orders, o1 = C.totals.orders;
+    const rows = lineRows(P.lines[ui.lineDim] || {}, C.lines[ui.lineDim] || {}, o0, o1, k => k);
+    const big = d => ['page', 'product'].includes(d);
+    const keep = (r, d) => !big(d) || Math.max(r.a.units, r.b.units) >= ui.minUnits;
+    const order = (x, y) => Math.abs(y.du) - Math.abs(x.du);
+    const shown = rows.filter(r => keep(r, ui.lineDim)).sort(order);
     const rest = rows.filter(r => !shown.includes(r));
-    const restSum = rest.reduce((s, r) => ({ du: s.du + r.du, dn: s.dn + r.dn, u0: s.u0 + r.u0, u1: s.u1 + r.u1 }), { du: 0, dn: 0, u0: 0, u1: 0 });
+    const sumRows = rs => rs.reduce((s, r) => ({ du: s.du + r.du, dn: s.dn + r.dn, u0: s.u0 + r.u0, u1: s.u1 + r.u1, n: s.n + 1 }), { du: 0, dn: 0, u0: 0, u1: 0, n: 0 });
+    const restSum = sumRows(rest);
     const tU0 = o0 ? P.totals.paid_units / o0 : NaN, tU1 = o1 ? C.totals.paid_units / o1 : NaN;
     const tN0 = o0 ? P.totals.net / o0 : NaN, tN1 = o1 ? C.totals.net / o1 : NaN;
     // Headline: main products vs every upsell module together.
@@ -488,32 +509,46 @@
     const mainD = ((mod1[MAIN]?.units || 0) / (o1 || 1)) - ((mod0[MAIN]?.units || 0) / (o0 || 1));
     const upD = (tU1 - tU0) - mainD;
     const td = (v, f, d) => `<td class="r ${d ? cls(v) : ''}">${f(v)}</td>`;
+    const cells = r => `${td(r.a.units, int)}${td(r.b.units, int)}${td(r.u0, x2)}${td(r.u1, x2)}
+          <td class="r ${cls(r.du)}"><strong>${sX2(r.du)}</strong></td>
+          ${td(r.at0, pct)}${td(r.at1, pct)}
+          <td class="r">${x2(r.per0)} → ${x2(r.per1)}</td>
+          ${td(r.asp1, $2)}${td(r.dn, s$2, true)}`;
+    const restRow = (s, cls_, indent) => s.n ? `<tr class="na-dim ${cls_}"><td>${indent}${s.n} smaller rows (under ${ui.minUnits} units)</td><td colspan="2"></td>
+            ${td(s.u0, x2)}${td(s.u1, x2)}${td(s.du, sX2, true)}<td colspan="4"></td>${td(s.dn, s$2, true)}</tr>` : '';
+    const label = d => (LINE_DIMS.find(x => x[0] === d) || [])[1] || '';
+    const body = shown.map(r => {
+      const open = ui.subDim && ui.openRows.has(r.key);
+      let html = `<tr class="${ui.subDim ? 'na-row-toggle' : ''}" data-row="${esc(r.key)}"><td>${ui.subDim ? `<span class="na-caret">${open ? '▾' : '▸'}</span> ` : ''}${esc(r.key)}</td>${cells(r)}</tr>`;
+      if (open) {
+        const subs = subRows(P, C, o0, o1, r.key);
+        const subShown = subs.filter(x => keep(x, ui.subDim)).sort(order);
+        html += subShown.map(x => `<tr class="na-sub"><td>${esc(x.key)}</td>${cells(x)}</tr>`).join('');
+        html += restRow(sumRows(subs.filter(x => !subShown.includes(x))), 'na-sub', '');
+      }
+      return html;
+    }).join('');
     return `<div class="card" id="na-units"><h3>What moved paid units / order</h3>
       <p class="card__sub">Every paid line is tagged with the upsell module that added it (none = added as the main product) and the page it was
-        added on. <strong>Units / order</strong> is that row's units ÷ all orders, so rows sum to paid UPT and the Δ column sums to Δ UPT.
-        <strong>Attach</strong> = share of orders with at least one such line; <strong>per attaching order</strong> = units in those orders.
-        Protection, free gifts and $0 lines are excluded.</p>
+        added on. <strong>Units / order</strong> is that row's units ÷ all orders, so rows sum to paid UPT and the Δ column sums to Δ UPT;
+        a row's sub-breakdown sums to that row. <strong>Attach</strong> = share of orders with at least one such line; <strong>per attaching order</strong>
+        = units in those orders. Protection, free gifts and $0 lines are excluded.</p>
       <div class="na-summary" style="margin-bottom:12px">Paid units / order ${x2(tU0)} → ${x2(tU1)} (<span class="${cls(tU1 - tU0)}">${sX2(tU1 - tU0)}</span>):
         main products <span class="${cls(mainD)}">${sX2(mainD)}</span>, all upsell modules together <span class="${cls(upD)}">${sX2(upD)}</span>.</div>
       <div class="na-controls">
         <label>Split by <select data-na="linedim">${LINE_DIMS.map(([k, l]) => `<option value="${k}" ${k === ui.lineDim ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-        ${big ? `<label>Min units <input type="number" min="1" value="${ui.minUnits}" data-na="minunits" style="width:70px"></label>` : ''}
+        <label>then by <select data-na="subdim"><option value="" ${!ui.subDim ? 'selected' : ''}>— no sub-breakdown —</option>${LINE_DIMS.filter(([k]) => k !== ui.lineDim).map(([k, l]) => `<option value="${k}" ${k === ui.subDim ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        ${ui.subDim ? `<button type="button" class="na-btn" data-na-act="open-all">Expand all rows</button><button type="button" class="na-btn" data-na-act="close-all">Collapse rows</button>` : ''}
+        <label>Min units <input type="number" min="1" value="${ui.minUnits}" data-na="minunits" style="width:70px"></label>
       </div>
-      <div class="scroll-x"><table>
-        <thead><tr><th>${esc((LINE_DIMS.find(d => d[0] === ui.lineDim) || [])[1] || '')}</th>
+      ${ui.subDim ? `<p class="na-dim" style="margin:0 0 8px">Click a row to break it down by ${esc(label(ui.subDim).toLowerCase())}.</p>` : ''}
+      <div class="scroll-x"><table class="na-units-table">
+        <thead><tr><th>${esc(label(ui.lineDim))}${ui.subDim ? ` → ${esc(label(ui.subDim))}` : ''}</th>
           <th class="r">Prev units</th><th class="r">Curr units</th>
           <th class="r">Prev units / order</th><th class="r">Curr units / order</th><th class="r">Δ units / order</th>
           <th class="r">Attach prev</th><th class="r">Attach curr</th><th class="r">Per attaching order</th>
           <th class="r">Net $/unit</th><th class="r">Net $/order Δ</th></tr></thead>
-        <tbody>${shown.map(r => `<tr><td>${esc(r.key)}</td>
-          ${td(r.a.units, int)}${td(r.b.units, int)}${td(r.u0, x2)}${td(r.u1, x2)}
-          <td class="r ${cls(r.du)}"><strong>${sX2(r.du)}</strong></td>
-          ${td(r.at0, pct)}${td(r.at1, pct)}
-          <td class="r">${x2(r.per0)} → ${x2(r.per1)}</td>
-          ${td(r.asp1, $2)}${td(r.dn, s$2, true)}</tr>`).join('')}
-          ${rest.length ? `<tr class="na-dim"><td>${rest.length} smaller rows (under ${ui.minUnits} units)</td><td colspan="2"></td>
-            ${td(restSum.u0, x2)}${td(restSum.u1, x2)}${td(restSum.du, sX2, true)}<td colspan="4"></td>${td(restSum.dn, s$2, true)}</tr>` : ''}
-        </tbody>
+        <tbody>${body}${restRow(restSum, '', '')}</tbody>
         <tfoot><tr><td>Total (paid UPT / net AOV)</td><td class="r">${int(P.totals.paid_units)}</td><td class="r">${int(C.totals.paid_units)}</td>
           <td class="r">${x2(tU0)}</td><td class="r">${x2(tU1)}</td><td class="r ${cls(tU1 - tU0)}"><strong>${sX2(tU1 - tU0)}</strong></td>
           <td colspan="4"></td><td class="r ${cls(tN1 - tN0)}">${s$2(tN1 - tN0)}</td></tr></tfoot>
@@ -695,6 +730,16 @@
   }
 
   function wire() {
+    root.querySelectorAll('#na-units tr.na-row-toggle').forEach(tr => tr.addEventListener('click', () => {
+      const k = tr.dataset.row;
+      if (ui.openRows.has(k)) ui.openRows.delete(k); else ui.openRows.add(k);
+      render();
+    }));
+    root.querySelectorAll('#na-units [data-na-act]').forEach(btn => btn.addEventListener('click', () => {
+      if (btn.dataset.naAct === 'close-all') ui.openRows.clear();
+      else root.querySelectorAll('#na-units tr.na-row-toggle').forEach(tr => ui.openRows.add(tr.dataset.row));
+      render();
+    }));
     root.querySelectorAll('[data-na]').forEach(el => {
       const k = el.dataset.na;
       el.addEventListener('change', () => {
@@ -702,7 +747,8 @@
         else if (k === 'zeros') ui.zeros = el.checked;
         else if (k === 'dim') ui.dim = el.value;
         else if (k === 'min') ui.minOrders = Math.max(1, parseInt(el.value, 10) || 1);
-        else if (k === 'linedim') ui.lineDim = el.value;
+        else if (k === 'linedim') { ui.lineDim = el.value; if (ui.subDim === ui.lineDim) ui.subDim = ''; ui.openRows.clear(); }
+        else if (k === 'subdim') { ui.subDim = el.value; ui.openRows.clear(); }
         else if (k === 'minunits') ui.minUnits = Math.max(1, parseInt(el.value, 10) || 1);
         render();
       });
@@ -734,6 +780,12 @@
     #net-aov-root .na-line-avg { fill: none; stroke: #f97316; stroke-width: 2; }
     #net-aov-root .na-dot { fill: var(--fb-blue); }
     #net-aov-root td:first-child { min-width: 180px; }
+    #net-aov-root tr.na-row-toggle { cursor: pointer; }
+    #net-aov-root tr.na-row-toggle:hover td { background: #f7f9fc; }
+    #net-aov-root .na-caret { display: inline-block; width: 12px; color: var(--text-secondary); }
+    #net-aov-root tr.na-sub td { background: #fafbfc; font-size: 0.78rem; }
+    #net-aov-root tr.na-sub td:first-child { padding-left: 34px; }
+    #net-aov-root .na-btn { font: inherit; font-size: 0.75rem; padding: 3px 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
   `;
   document.head.appendChild(css);
 
