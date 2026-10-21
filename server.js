@@ -2503,6 +2503,53 @@ app.get('/api/shopify-aov-data', async (req, res) => {
   }
 });
 
+// --- New-customer AOV baseline: the selected range vs itself shifted −1 / −7 / −30 days ---
+//
+// A quick starting point that doesn't wait for the line-item scan: four
+// ShopifyQL queries (~0.5s each, run together), Shopify's own AOV, so it ties to
+// the Shopify report the user built (sales channel Online Store, not cancelled,
+// new customers). Each comparison window is the selected range moved back by N
+// days, same length — for a single day that is the day before, the same weekday
+// last week, and 30 days earlier.
+app.get('/api/nc-aov-baseline', async (req, res) => {
+  if (!SHOPIFY_URL || !SHOPIFY_TOKEN) {
+    return res.status(500).json({ error: 'Shopify credentials not configured' });
+  }
+  const { start, end } = req.query;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(start || '') || !/^\d{4}-\d{2}-\d{2}$/.test(end || '')) {
+    return res.status(400).json({ error: 'start and end query params required (YYYY-MM-DD)' });
+  }
+  const shift = (d, n) => new Date(new Date(d + 'T00:00:00Z').getTime() - n * 86400000).toISOString().slice(0, 10);
+  const endpoint = `https://${SHOPIFY_URL}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
+  const run = async (s, e) => {
+    const q = `FROM sales SHOW orders, average_order_value
+  WHERE sales_channel = 'Online Store'
+    AND is_canceled_order = false
+    AND new_or_returning_customer = 'New'
+  SINCE ${s} UNTIL ${e}`;
+    const resp = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
+      body: JSON.stringify({ query: `query($q: String!) { shopifyqlQuery(query: $q) { tableData { rows } parseErrors } }`, variables: { q } }),
+    });
+    const j = await resp.json();
+    if (j.errors) throw new Error(j.errors[0].message);
+    const p = j.data?.shopifyqlQuery;
+    if (p?.parseErrors?.length) throw new Error('ShopifyQL parse error: ' + JSON.stringify(p.parseErrors));
+    const r = p?.tableData?.rows?.[0] || {};
+    return { start: s, end: e, orders: parseInt(r.orders || 0, 10) || 0, aov: r.average_order_value == null ? null : parseFloat(r.average_order_value) };
+  };
+  try {
+    const [current, d1, d7, d30] = await Promise.all([
+      run(start, end), run(shift(start, 1), shift(end, 1)), run(shift(start, 7), shift(end, 7)), run(shift(start, 30), shift(end, 30)),
+    ]);
+    res.json({ scope: 'Online Store · not cancelled · new customers', current, compare: { d1, d7, d30 } });
+  } catch (err) {
+    console.error('[nc-aov-baseline] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // --- Product mix: units and AOV contribution per product, period over period ---
 //
 // The AOV tabs can say the basket got smaller; they can't say which products it

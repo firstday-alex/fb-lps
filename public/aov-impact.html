@@ -231,6 +231,14 @@
       <button type="button" id="cc-collapse-all">Collapse all</button>
     </div>
 
+    <!-- New-customer AOV baseline (ShopifyQL, fast) — collapsed by default; its
+         header line carries the numbers so it reads without opening. -->
+    <div class="card" id="nc-aov-card" data-hint-full="1">
+      <h3>New-customer AOV baseline</h3>
+      <p class="card__sub" id="nc-aov-sub">Loading…</p>
+      <div id="nc-aov-body"></div>
+    </div>
+
     <div class="kpi-row" id="kpi-row"></div>
 
     <!-- Net AOV deep-dive (public/net-aov.js): line-item level, loads after the tables -->
@@ -1085,6 +1093,11 @@ async function load() {
     // Online Store reports (renewals, TikTok, Shop, draft orders are out).
     const url = `/api/aov-impact-data?start=${s}&end=${e}&channel=online_store` + (cs && ce ? `&compare_start=${cs}&compare_end=${ce}` : '');
     const t0 = Date.now();
+    // The baseline is a handful of ShopifyQL queries, so it rides alongside the
+    // order fetch and is ready by the time the tables render.
+    const ncP = fetch(`/api/nc-aov-baseline?start=${s}&end=${e}`)
+      .then(x => x.ok ? x.json() : x.text().then(t => ({ error: 'HTTP ' + x.status + ': ' + t.slice(0, 160) })))
+      .catch(err => ({ error: err.message }));
     const r = await fetch(url);
     if (!r.ok) {
       const txt = await r.text();
@@ -1092,6 +1105,7 @@ async function load() {
     }
     const j = await r.json();
     statusEl.textContent = `Loaded in ${(Date.now()-t0)/1000|0}s. ${j.current.order_count} current orders, ${j.previous.order_count} previous.`;
+    renderNcBaseline(await ncP);
     render(j);
     // Slower (it reads line items one day per request), so it fills in after the
     // order-total tables rather than holding them up.
@@ -1103,6 +1117,43 @@ async function load() {
   } finally {
     btn.disabled = false;
   }
+}
+
+function renderNcBaseline(nc) {
+  const sub = document.getElementById('nc-aov-sub');
+  const body = document.getElementById('nc-aov-body');
+  if (!nc || nc.error || !nc.current) {
+    sub.textContent = 'Couldn\'t load the new-customer AOV baseline: ' + (nc && nc.error || 'no data');
+    body.innerHTML = '';
+    const h = document.querySelector('#nc-aov-card .card-toggle__hint');
+    if (h) h.textContent = sub.textContent;
+    return;
+  }
+  const cur = nc.current;
+  const range = w => w.start === w.end ? w.start : `${w.start} → ${w.end}`;
+  const rows = [['−1 day', nc.compare.d1], ['−7 days', nc.compare.d7], ['−30 days', nc.compare.d30]].map(([label, w]) => {
+    const d = cur.aov != null && w.aov != null ? cur.aov - w.aov : null;
+    const pct = d != null && w.aov ? d / w.aov : null;
+    return { label, w, d, pct };
+  });
+  const pctStr = v => v == null ? '—' : (v >= 0 ? '+' : '−') + Math.abs(v * 100).toFixed(1) + '%';
+  sub.textContent = `New-customer AOV ${fmt$2(cur.aov)} (${fmtInt(cur.orders)} orders) — `
+    + rows.map(r => `${r.label}: ${signed$2(r.d)} (${pctStr(r.pct)})`).join(' · ')
+    + '. Shopify AOV, Online Store, not cancelled, new customers.';
+  // The collapsed header copied the line when the card was first wrapped; a later
+  // load has to refresh it there too.
+  const hint = document.querySelector('#nc-aov-card .card-toggle__hint');
+  if (hint) hint.textContent = sub.textContent;
+  body.innerHTML = `<div class="scroll-x"><table>
+    <thead><tr><th>Compared with</th><th>Window</th><th class="r">Orders</th><th class="r">New-customer AOV</th>
+      <th class="r">Current</th><th class="r">$ Δ</th><th class="r">% Δ</th></tr></thead>
+    <tbody>${rows.map(r => `<tr><td>${r.label}</td><td>${range(r.w)}</td><td class="r">${fmtInt(r.w.orders)}</td>
+      <td class="r">${fmt$2(r.w.aov)}</td><td class="r">${fmt$2(cur.aov)}</td>
+      <td class="r ${cls(r.d)}">${signed$2(r.d)}</td><td class="r ${cls(r.pct)}">${pctStr(r.pct)}</td></tr>`).join('')}</tbody>
+  </table></div>
+  <p class="footnote">Current window ${range(cur)}, ${fmtInt(cur.orders)} new-customer orders. Each comparison is the same window moved back
+    1, 7 or 30 days. Straight from ShopifyQL (<code>FROM sales … WHERE sales_channel = 'Online Store' AND is_canceled_order = false
+    AND new_or_returning_customer = 'New'</code>), so it ties to Shopify's report, and independent of the compare dates above.</p>`;
 }
 
 function render(payload) {

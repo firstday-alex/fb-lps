@@ -30,13 +30,17 @@
       const sub = card.querySelector(':scope > p.card__sub');
       const title = h3.textContent.trim();
       const hint = sub ? sub.textContent.trim().replace(/\s+/g, ' ') : '';
+      // A card whose header line IS its summary (the numbers) opts out of the
+      // 90-char cut and wraps instead, and stays visible when the card is open.
+      const full = card.dataset.hintFull === '1';
+      if (full) card.classList.add('hint-full');
 
       const header = document.createElement('div');
       header.className = 'card-toggle';
       header.innerHTML = `
         <span class="card-toggle__chevron">&#9660;</span>
         <span class="card-toggle__title">${esc(title)}</span>
-        ${hint ? `<span class="card-toggle__hint">${esc(hint.length > 90 ? hint.slice(0, 87) + '…' : hint)}</span>` : ''}`;
+        ${hint ? `<span class="card-toggle__hint">${esc(full || hint.length <= 90 ? hint : hint.slice(0, 87) + '…')}</span>` : ''}`;
       const body = document.createElement('div');
       body.className = 'card-toggle__body';
       // The description is useful once the card is open, so it stays in the body;
@@ -75,7 +79,9 @@
     .card-toggle__hint { flex: 1; min-width: 0; font-size: 0.78rem; font-weight: 400; color: var(--text-secondary);
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .card.collapsed .card-toggle__hint { white-space: nowrap; }
-    .card:not(.collapsed) .card-toggle__hint { display: none; }
+    .card:not(.collapsed):not(.hint-full) .card-toggle__hint { display: none; }
+    .card.hint-full .card-toggle { flex-wrap: wrap; }
+    .card.hint-full .card-toggle__hint { white-space: normal; flex-basis: 100%; padding-left: 22px; color: var(--text-primary); }
     .card-toggle__body { padding: 16px 20px 20px; border-top: 1px solid var(--border); }
     .card.collapsed .card-toggle__body { display: none; }
     .cc-bar { display: flex; justify-content: flex-end; gap: 8px; margin: 0 0 10px; }
