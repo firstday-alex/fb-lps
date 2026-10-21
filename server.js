@@ -1958,10 +1958,27 @@ app.get('/api/lp-by-channel-data', async (req, res) => {
   }
 });
 
+// Sales-channel scope for the order-level AOV endpoints. `channel=online_store`
+// keeps only orders placed through the Online Store, which is what Shopify's
+// reports call "Sales channel = Online Store" — on 2026-09-09 that is 1,358
+// orders in both, and Shopify's Online Store AOV ($72.71) is the number the
+// AOV tabs are checked against.
+//
+// The search filter `source_name:web` does the heavy lifting: it skips the
+// subscription renewals (~60% of orders) before they are fetched, which is most
+// of the scan time. It is not exact on its own — it returned 1,379 for those
+// 1,358 (draft orders came along) — so every order is still checked for
+// sourceName === 'web' before it counts.
+function orderChannelScope(param) {
+  const c = String(param || '').toLowerCase().trim();
+  if (c === 'online_store') return { key: c, search: ' AND source_name:web', keep: (sn) => sn === 'web' };
+  return { key: null, search: '', keep: () => true };
+}
+
 // --- AOV Impact (Admin GraphQL orders, paginated, aggregated by source × LP) ---
-// ShopifyQL doesn't expose orders/sales on this store, so we hit the Admin
-// GraphQL Orders API directly and read customerJourneySummary.firstVisit for
-// attribution. Paginates by cursor; pre-aggregates server-side to keep payload
+// ShopifyQL's `sales` dataset does work on this store (see /api/shopify-aov-data),
+// but it can't attribute by first-visit UTM or landing page, so this reads the
+// Admin GraphQL Orders API and customerJourneySummary.firstVisit instead. Paginates by cursor; pre-aggregates server-side to keep payload
 // small. Returns current + previous period as { rows: [{utm_source, utm_medium,
 // landing_page, orders, revenue}], order_count, truncated }.
 //
@@ -1998,6 +2015,7 @@ app.get('/api/aov-impact-data', async (req, res) => {
   const fSource = (req.query.source || '').toString().toLowerCase().trim();
   const fMedium = (req.query.medium || '').toString().toLowerCase().trim();
   const byCampaign = req.query.group === 'campaign_lp';
+  const chan = orderChannelScope(req.query.channel);
 
   const endpoint = `https://${SHOPIFY_URL}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
   const ORDERS_GQL = `query Orders($q: String!, $after: String) {
@@ -2006,6 +2024,7 @@ app.get('/api/aov-impact-data', async (req, res) => {
         cursor
         node {
           id
+          sourceName
           totalPriceSet { shopMoney { amount } }
           subtotalLineItemsQuantity
           customerJourneySummary {
@@ -2032,7 +2051,7 @@ app.get('/api/aov-impact-data', async (req, res) => {
     let pages = 0;
     let scanned = 0;
     const MAX_PAGES = 240; // up to ~60k orders per period — covers ~3 weeks at this store
-    const q = `created_at:>=${s}T00:00:00 AND created_at:<=${e}T23:59:59`;
+    const q = `created_at:>=${s}T00:00:00 AND created_at:<=${e}T23:59:59${chan.search}`;
     while (true) {
       const resp = await fetch(endpoint, {
         method: 'POST',
@@ -2051,6 +2070,7 @@ app.get('/api/aov-impact-data', async (req, res) => {
         const utm = fv?.utmParameters;
         const src = ((utm?.source || (fv?.source && fv.source !== 'an unknown source' ? fv.source : '')) || '').toString().toLowerCase().trim();
         const med = ((utm?.medium || '') + '').toLowerCase().trim();
+        if (!chan.keep(n.sourceName)) continue;
         scanned++;
         if (fSource && src !== fSource) continue;
         if (fMedium && med !== fMedium) continue;
@@ -2101,7 +2121,7 @@ app.get('/api/aov-impact-data', async (req, res) => {
     ]);
     console.log(`[aov-impact-data] orders: current=${cur.orders.length} (pages=${cur.pages}, trunc=${cur.truncated}) previous=${prev.orders.length} (pages=${prev.pages}, trunc=${prev.truncated})`);
     res.json({
-      scope: { source: fSource || null, medium: fMedium || null, group: byCampaign ? 'campaign_lp' : 'source_lp' },
+      scope: { source: fSource || null, medium: fMedium || null, group: byCampaign ? 'campaign_lp' : 'source_lp', channel: chan.key },
       current:  { start, end,    rows: aggregate(cur.orders),  order_count: cur.orders.length,  scanned_count: cur.scanned,  truncated: cur.truncated },
       previous: { start: cs, end: ce, rows: aggregate(prev.orders), order_count: prev.orders.length, scanned_count: prev.scanned, truncated: prev.truncated },
     });
@@ -2156,6 +2176,7 @@ app.get('/api/net-aov-data', async (req, res) => {
   const parseList = (v) => String(v || '').toLowerCase().split(',').map(x => x.trim()).filter(Boolean);
   const fSources = parseList(req.query.source);
   const fMediums = parseList(req.query.medium);
+  const chan = orderChannelScope(req.query.channel);
 
   const endpoint = `https://${SHOPIFY_URL}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
   const ORDERS_GQL = `query Orders($q: String!, $after: String) {
@@ -2244,6 +2265,7 @@ app.get('/api/net-aov-data', async (req, res) => {
     const utm = fv?.utmParameters;
     const src = ((utm?.source || (fv?.source && fv.source !== 'an unknown source' ? fv.source : '')) || '').toString().toLowerCase().trim();
     const med = ((utm?.medium || '') + '').toLowerCase().trim();
+    if (!chan.keep(n.sourceName)) return;
     scanned++;
     if (fSources.length && !fSources.includes(src)) return;
     if (fMediums.length && !fMediums.includes(med)) return;
@@ -2330,7 +2352,7 @@ app.get('/api/net-aov-data', async (req, res) => {
     // The values MUST be quoted. Unquoted, Shopify drops the time and matches the
     // whole day — every window returned all 3,606 orders of 2026-10-14. Quoted,
     // the time is honoured, in the shop's timezone like the day-level queries.
-    const q = `created_at:>='${day}T${hh(h)}:00:00' AND created_at:<='${day}T${hh(h + WINDOW_HOURS - 1)}:59:59'`;
+    const q = `created_at:>='${day}T${hh(h)}:00:00' AND created_at:<='${day}T${hh(h + WINDOW_HOURS - 1)}:59:59'${chan.search}`;
     while (true) {
       const resp = await fetch(endpoint, {
         method: 'POST',
@@ -2364,12 +2386,76 @@ app.get('/api/net-aov-data', async (req, res) => {
     console.log(`[net-aov-data] ${start}..${end}: ${orders} of ${scanned} orders (pages=${pages}, trunc=${truncated})`);
     res.json({
       start, end,
-      scope: { source: fSources.join(',') || null, medium: fMediums.join(',') || null },
+      scope: { source: fSources.join(',') || null, medium: fMediums.join(',') || null, channel: chan.key },
       scanned, pages, truncated, line_item_overflow: lineItemOverflow,
       parts,
     });
   } catch (err) {
     console.error('[net-aov-data] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Shopify's own AOV for the Online Store, with and without protection ---
+//
+// Shopify defines AOV as (gross sales − discounts) ÷ orders, at each order's
+// value when it was placed (changelog, 2023-01-09). That last part is why we
+// read it from ShopifyQL instead of computing it: rebuilding it from order data
+// lands ~1% high (2026-09-09: $73.41 vs Shopify's $72.71), because ~7-9% of
+// Online Store orders are edited after checkout (post-purchase upsells), and
+// neither the current line items nor the agreements' sales sums reproduce the
+// "at creation" value Shopify uses. ShopifyQL is Shopify's number by definition.
+//
+// "Without protection" filters out product_type = 'Protection' (SavedBy). Shopify
+// still divides by every order, so the two differ by protection $ per order —
+// $2.97 that day, matching the protection-per-order the order data gives.
+//
+// ShopifyQL can filter order UTMs, but Shopify's order UTM is not the first-visit
+// UTM the AOV tabs scope on (2026-09-09 facebook / paid_social: 346 orders vs 455),
+// so this endpoint only serves the unscoped (all-sources) view.
+app.get('/api/shopify-aov-data', async (req, res) => {
+  if (!SHOPIFY_URL || !SHOPIFY_TOKEN) {
+    return res.status(500).json({ error: 'Shopify credentials not configured' });
+  }
+  const dates = ['start', 'end', 'compare_start', 'compare_end'].map(k => req.query[k]);
+  if (!dates.every(d => /^\d{4}-\d{2}-\d{2}$/.test(d || ''))) {
+    return res.status(400).json({ error: 'start, end, compare_start, compare_end required (YYYY-MM-DD)' });
+  }
+  const [start, end, cs, ce] = dates;
+  const endpoint = `https://${SHOPIFY_URL}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
+  const run = async (q) => {
+    const resp = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
+      body: JSON.stringify({ query: `query($q: String!) { shopifyqlQuery(query: $q) { tableData { rows } parseErrors } }`, variables: { q } }),
+    });
+    const j = await resp.json();
+    const p = j.data?.shopifyqlQuery;
+    if (j.errors) throw new Error(j.errors[0].message);
+    if (p?.parseErrors?.length) throw new Error('ShopifyQL parse error: ' + JSON.stringify(p.parseErrors));
+    const r = p?.tableData?.rows?.[0] || {};
+    return {
+      orders: parseInt(r.orders || 0, 10) || 0,
+      gross_sales: parseFloat(r.gross_sales || 0) || 0,
+      discounts: parseFloat(r.discounts || 0) || 0,
+      aov: r.average_order_value == null ? null : parseFloat(r.average_order_value),
+    };
+  };
+  const q = (s, e, extra = '') => `FROM sales SHOW orders, gross_sales, discounts, average_order_value
+  WHERE sales_channel = 'Online Store'${extra}
+  SINCE ${s} UNTIL ${e}`;
+  const noProt = ` AND product_type != 'Protection'`;
+  try {
+    const [cWith, cWithout, pWith, pWithout] = await Promise.all([
+      run(q(start, end)), run(q(start, end, noProt)), run(q(cs, ce)), run(q(cs, ce, noProt)),
+    ]);
+    res.json({
+      channel: 'Online Store',
+      current:  { start, end, with_protection: cWith, without_protection: cWithout },
+      previous: { start: cs, end: ce, with_protection: pWith, without_protection: pWithout },
+    });
+  } catch (err) {
+    console.error('[shopify-aov-data] error:', err);
     res.status(500).json({ error: err.message });
   }
 });

@@ -20,12 +20,14 @@
    truncated day is surfaced, never quietly dropped.
    ─────────────────────────────────────────────────────────────────────────── */
 (function () {
-  // One day at a time. The server already reads each day as six parallel windows,
-  // and Shopify's throughput for this query is capped: two days side by side took
-  // 45s against 31s back to back, and three at once pushed every day past its
-  // time budget. ~15s a store-day, so yesterday-vs-day-before is ~30s, a week
-  // against the week before ~3.5 min.
-  const CONCURRENCY = 1;
+  // Two days in flight. The server already reads each day as six parallel
+  // windows and Shopify's throughput is capped, so more doesn't help: on the full
+  // store (renewals included, ~3,500 orders/day) two days side by side were
+  // slower than back to back and three pushed every day past its time budget.
+  // Scoped to the Online Store (~1,400 orders/day) two in flight is the faster
+  // safe setting — a week against the week before took 108s vs 143s one at a
+  // time, with no day truncated.
+  const CONCURRENCY = 2;
   const FIELDS = ['orders', 'list', 'net', 'paid_units', 'protection', 'prot_orders',
     'gift_units', 'gift_orders', 'zero_units', 'zero_list', 'shipping', 'ship_waived', 'tax', 'tips', 'total'];
   const PARTS = ['C', 'C0', 'R', 'R0'];
@@ -167,10 +169,11 @@
     return out;
   }
 
-  async function fetchDay(day, source, medium) {
+  async function fetchDay(day, source, medium, channel) {
     const params = new URLSearchParams({ start: day, end: day });
     if (source) params.set('source', source);
     if (medium) params.set('medium', medium);
+    if (channel) params.set('channel', channel);
     let lastErr;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
@@ -190,13 +193,20 @@
     root = root || document.getElementById('net-aov-root');
     if (!root) return;
     const my = ++gen;
-    const { start, end, cs, ce, source = '', medium = '', groupDim } = opts;
+    const { start, end, cs, ce, source = '', medium = '', channel = '', groupDim, shopifyAov = false } = opts;
     if (groupDim && my === 1) ui.dim = groupDim;
+    // Shopify's own AOV, straight from ShopifyQL — only for the unscoped view,
+    // since Shopify can't filter on the first-visit UTM the scoped tab uses.
+    const shopifyP = shopifyAov
+      ? fetch(`/api/shopify-aov-data?start=${start}&end=${end}&compare_start=${cs}&compare_end=${ce}`)
+          .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+          .catch(e => ({ error: e.message }))
+      : Promise.resolve(null);
     const cur = newPeriod(start, end), prev = newPeriod(cs, ce);
     const jobs = [...days(start, end).map(d => [cur, d]), ...days(cs, ce).map(d => [prev, d])];
     let done = 0, failed = [];
     root.innerHTML = shell(`<div class="na-loading"><span class="spinner"></span><span class="na-loading__text">Loading net AOV — reading
-        line items for ${jobs.length} days (about 15–20s a day)… 0 / ${jobs.length}</span>
+        line items for ${jobs.length} days (about 10s a day)… 0 / ${jobs.length}</span>
         <div class="progress"><div style="width:0%"></div></div></div>`) + placeholders();
     collapse();
 
@@ -208,8 +218,8 @@
           // A day that ran out of time budget is missing its later orders, which
           // are the checkout orders (renewals land first) — retry it, and refuse
           // to render on a second miss rather than show a skewed comparison.
-          let j = await fetchDay(day, source, medium);
-          if (j.truncated) j = await fetchDay(day, source, medium);
+          let j = await fetchDay(day, source, medium, channel);
+          if (j.truncated) j = await fetchDay(day, source, medium, channel);
           if (j.truncated) throw new Error('ran out of time budget twice, data would be partial');
           if (my !== gen) return;
           for (const k of PARTS) mergePart(period.parts[k], j.parts[k]);
@@ -221,7 +231,7 @@
         done++;
         if (my !== gen) return;
         const el = root.querySelector('.na-loading__text');
-        if (el) el.textContent = `Loading net AOV — reading line items for ${jobs.length} days (about 15–20s a day)… ${done} / ${jobs.length}`;
+        if (el) el.textContent = `Loading net AOV — reading line items for ${jobs.length} days (about 10s a day)… ${done} / ${jobs.length}`;
         const bar = root.querySelector('.na-loading .progress > div');
         if (bar) bar.style.width = (done / jobs.length * 100).toFixed(0) + '%';
       }
@@ -231,7 +241,8 @@
       root.innerHTML = shell(`<div class="warning">Net AOV couldn't load ${failed.length} of ${jobs.length} days, so it isn't shown (a missing day would skew the comparison): ${esc(failed.slice(0, 3).join(' · '))}</div>`);
       return;
     }
-    state = { cur, prev, scoped: !!(source || medium) };
+    state = { cur, prev, scoped: !!(source || medium), channel, shopify: await shopifyP };
+    if (my !== gen) return;
     render();
   }
 
@@ -274,12 +285,12 @@
     root.innerHTML = `
       <div class="card na-head" data-no-collapse="1">
         <h3>Net AOV — what an order is worth in product revenue</h3>
-        <p class="card__sub">Paid product revenue after every discount ÷ orders. Excludes shipping, tax and SavedBy protection,
+        <p class="card__sub">${state.channel ? '<strong>Sales channel = Online Store only.</strong> ' : ''}Paid product revenue after every discount ÷ orders. Excludes shipping, tax and SavedBy protection,
           and counts only paid units, so free gifts and $0 lines can't pad units-per-order. The sections further down
           use <strong>gross AOV</strong> (order totals incl. shipping, tax and protection), so their numbers won't match this one.</p>
         <div class="na-toggles">
-          ${state.scoped ? '' : `<label><input type="checkbox" data-na="renewals" ${ui.renewals ? 'checked' : ''}> Include subscription renewals <span class="na-dim">(${int(r0)} orders this period, no first visit)</span></label>`}
-          <label><input type="checkbox" data-na="zeros" ${ui.zeros ? 'checked' : ''}> Include $0 orders <span class="na-dim">(${int(z0)} this period: replacements, seeding, samples, $0 first payments)</span></label>
+          ${state.scoped || !hasRenewals() ? '' : `<label><input type="checkbox" data-na="renewals" ${ui.renewals ? 'checked' : ''}> Include subscription renewals <span class="na-dim">(${int(r0)} orders this period, no first visit)</span></label>`}
+          ${zeroCount() === 0 ? '' : `<label><input type="checkbox" data-na="zeros" ${ui.zeros ? 'checked' : ''}> Include $0 orders <span class="na-dim">(${int(z0)} this period: replacements, seeding, samples, $0 first payments)</span></label>`}
         </div>
         ${warns.map(w => `<div class="warning">${esc(w)}</div>`).join('')}
         ${kpis(p, c)}
@@ -295,12 +306,47 @@
     wire();
   }
 
+  // $0 orders in scope across both periods; the Online Store has none, so the toggle hides.
+  function zeroCount() {
+    return ['cur', 'prev'].reduce((a, k) => a + state[k].parts.C0.totals.orders + state[k].parts.R0.totals.orders, 0);
+  }
+  function hasRenewals() {
+    return ['cur', 'prev'].some(k => state[k].parts.R.totals.orders + state[k].parts.R0.totals.orders > 0);
+  }
+
+  // Shopify AOV = (gross sales − discounts) ÷ orders. From ShopifyQL when the page
+  // asked for it (exact to Shopify's reports); otherwise rebuilt from order data,
+  // which runs ~1% high — Shopify values each order as placed and drops
+  // post-checkout edits, and that can't be reproduced from line items. Either
+  // way every order counts, $0 orders included, as in Shopify.
+  function shopifyAov() {
+    const sh = state.shopify;
+    if (sh && !sh.error && sh.current) {
+      const g = per => ({ with: per.with_protection.aov, without: per.without_protection.aov, orders: per.with_protection.orders });
+      return { source: 'shopifyql', cur: g(sh.current), prev: g(sh.previous) };
+    }
+    const calc = period => {
+      const keep = ['C', 'C0'].concat(ui.renewals ? ['R', 'R0'] : []);
+      const t = keep.reduce((a, k) => addTo(a, period.parts[k].totals), blank());
+      return { with: t.orders ? (t.net + t.protection) / t.orders : NaN, without: t.orders ? t.net / t.orders : NaN, orders: t.orders };
+    };
+    return { source: 'orders', cur: calc(state.cur), prev: calc(state.prev), error: sh && sh.error };
+  }
+
   function kpis(p, c) {
     const k = (label, cv, pv, d, fmt, dfmt, invert) => `
       <div class="kpi"><div class="kpi__label">${label}</div>
         <div class="kpi__value">${fmt(cv)}</div>
         <div class="kpi__delta ${fin(d) && d !== 0 ? ((d > 0) !== !!invert ? 'up' : 'down') : ''}">prev ${fmt(pv)} · ${dfmt(d)}</div></div>`;
+    const sa = shopifyAov();
+    const note = sa.source === 'shopifyql'
+      ? `<strong>Shopify AOV</strong> is Shopify's own number (ShopifyQL, Sales channel = Online Store): (gross sales − discounts) ÷ orders,
+         each order valued as placed. It ties to Shopify's reports. Without protection drops product type "Protection".`
+      : `<strong>Shopify AOV</strong> uses Shopify's definition, (gross sales − discounts) ÷ all orders, computed from this page's orders.
+         Shopify's own report can't filter by first-visit UTM, and it drops post-checkout edits, so it runs ~1% lower.${sa.error ? ` (Shopify figure unavailable: ${esc(sa.error)})` : ''}`;
     return `<div class="kpi-row na-kpis">
+      ${k('Shopify AOV (with protection)', sa.cur.with, sa.prev.with, sa.cur.with - sa.prev.with, $2, s$2)}
+      ${k('Shopify AOV (without protection)', sa.cur.without, sa.prev.without, sa.cur.without - sa.prev.without, $2, s$2)}
       ${k('Net AOV', c.aov, p.aov, c.aov - p.aov, $2, s$2)}
       ${k('Orders', c.orders, p.orders, c.orders - p.orders, int, sInt)}
       ${k('Paid units / order', c.upt, p.upt, c.upt - p.upt, x2, sX2)}
@@ -310,7 +356,8 @@
       ${k('Protection attach', c.protAttach, p.protAttach, c.protAttach - p.protAttach, pct, sPp)}
       ${k('Free-gift attach', c.giftAttach, p.giftAttach, c.giftAttach - p.giftAttach, pct, sPp)}
       ${k('Gross AOV', c.totalPerOrder, p.totalPerOrder, c.totalPerOrder - p.totalPerOrder, $2, s$2)}
-    </div>`;
+    </div>
+    <p class="na-dim na-kpi-note">${note} <strong>Net AOV</strong> is this section's own measure: protection out, and $0 orders only if toggled in.</p>`;
   }
 
   // Plain-language read of the biggest movers. Every number here is one shown in
@@ -324,13 +371,18 @@
       ['list price per unit (product mix / price changes)', drv.price],
       ['discount depth', drv.discount],
     ].sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
-    const seg = segmentSplit(P.seg.order_type, C.seg.order_type, P.totals, C.totals)
-      .sort((a, b) => Math.abs(b.total) - Math.abs(a.total)).slice(0, 3);
-    const segTxt = seg.map(s => `${esc(s.key)} ${s$2(s.total)} (${s$2(s.rate)} own net AOV, ${s$2(s.mix)} share of orders ${sPp(s.s1 - s.s0)})`).join('; ');
+    const line = dim => segmentSplit(P.seg[dim], C.seg[dim], P.totals, C.totals)
+      .sort((a, b) => Math.abs(b.total) - Math.abs(a.total)).slice(0, 3)
+      .map(s => `${esc(s.key)} ${s$2(s.total)} (${s$2(s.rate)} own net AOV, ${s$2(s.mix)} share of orders ${sPp(s.s1 - s.s0)})`).join('; ');
+    // With one sales channel there is one order type, so the useful splits are
+    // who bought (new / returning) and how (subscription / one-time).
+    const lines = state.channel
+      ? [['By customer', line('customer')], ['By purchase type', line('purchase')]]
+      : [['By order type', line('order_type')]];
     return `<div class="na-summary">
       <div><strong>Net AOV ${d >= 0 ? 'rose' : 'fell'} ${$2(Math.abs(d))}</strong> (${$2(p.aov)} → ${$2(c.aov)}).
         By driver: ${drivers.map(([l, v]) => `${l} <span class="${cls(v)}">${s$2(v)}</span>`).join(', ')}.</div>
-      <div>By order type: ${segTxt}.</div>
+      ${lines.map(([l, t]) => `<div>${l}: ${t}.</div>`).join('')}
       <div class="na-dim">Units/order as Shopify counts it (protection and gifts included): ${x2(p.allUpt)} → ${x2(c.allUpt)};
         paid units only: ${x2(p.upt)} → ${x2(c.upt)}.</div>
     </div>`;
@@ -408,7 +460,7 @@
         <strong>Share of orders</strong> = Δ share × (its AOV − old blended AOV): it grew or shrank as a slice of the orders.
         Rows sum to Δ net AOV. Sorted by size of impact.</p>
       <div class="na-controls">
-        <label>Split by <select data-na="dim">${DIMS.map(([k, l]) => `<option value="${k}" ${k === ui.dim ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        <label>Split by <select data-na="dim">${DIMS.filter(([k]) => !(state.channel && k === 'order_type')).map(([k, l]) => `<option value="${k}" ${k === ui.dim ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
         ${small ? `<label>Min orders <input type="number" min="1" value="${ui.minOrders}" data-na="min" style="width:70px"></label>` : ''}
       </div>
       <div class="scroll-x"><table>
@@ -568,7 +620,8 @@
     #net-aov-root .na-controls { display: flex; gap: 16px; flex-wrap: wrap; font-size: 0.82rem; margin-bottom: 10px; }
     #net-aov-root .na-controls select, #net-aov-root .na-controls input { font: inherit; padding: 3px 6px; border: 1px solid var(--border); border-radius: 6px; }
     #net-aov-root .na-dim { color: var(--text-secondary); font-size: 0.78rem; }
-    #net-aov-root .na-kpis { margin-bottom: 12px; }
+    #net-aov-root .na-kpis { margin-bottom: 6px; }
+    #net-aov-root .na-kpi-note { margin: 0 0 12px; line-height: 1.5; }
     #net-aov-root .na-summary { font-size: 0.85rem; line-height: 1.6; background: #f7f8fa; border-radius: 6px; padding: 10px 14px; }
     #net-aov-root .na-summary > div + div { margin-top: 4px; }
     #net-aov-root .na-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; align-items: start; }

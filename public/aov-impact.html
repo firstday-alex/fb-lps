@@ -193,7 +193,7 @@
   <a class="header__back" href="/">&#8592; Ads Viewer</a>
   <div>
     <h1>AOV by Traffic Source</h1>
-    <p>Per-utm_source decomposition of revenue, blended gross AOV and net AOV, loaded from Shopify orders</p>
+    <p>Online Store orders only: per-utm_source decomposition of revenue, blended gross AOV and net AOV</p>
   </div>
 </header>
 
@@ -201,7 +201,7 @@
 <div id="upload-screen">
   <div class="upload-card">
     <h2>AOV Impact Analysis</h2>
-    <p>Loads Shopify orders for a date range and the previous period, attributes by customerJourney first-visit UTM, and decomposes Δ Revenue + Δ Blended Gross AOV across utm_sources, plus a net-AOV (product revenue) breakdown.</p>
+    <p>Loads <strong>Online Store</strong> orders (Shopify sales channel) for a date range and the previous period, attributes by customerJourney first-visit UTM, and decomposes Δ Revenue + Δ Blended Gross AOV across utm_sources, plus a net-AOV (product revenue) breakdown.</p>
     <div class="date-row">
       <label>Start <input type="date" id="date-start"></label>
       <label>End <input type="date" id="date-end"></label>
@@ -1081,7 +1081,9 @@ async function load() {
   statusEl.classList.remove('error');
   btn.disabled = true; statusEl.innerHTML = '<span class="spinner"></span>Fetching orders from Shopify for both periods…';
   try {
-    const url = `/api/aov-impact-data?start=${s}&end=${e}` + (cs && ce ? `&compare_start=${cs}&compare_end=${ce}` : '');
+    // Every panel on this tab is Sales channel = Online Store, matching Shopify's
+    // Online Store reports (renewals, TikTok, Shop, draft orders are out).
+    const url = `/api/aov-impact-data?start=${s}&end=${e}&channel=online_store` + (cs && ce ? `&compare_start=${cs}&compare_end=${ce}` : '');
     const t0 = Date.now();
     const r = await fetch(url);
     if (!r.ok) {
@@ -1093,7 +1095,7 @@ async function load() {
     render(j);
     // Slower (it reads line items one day per request), so it fills in after the
     // order-total tables rather than holding them up.
-    if (cs && ce) NetAOV.load({ start: s, end: e, cs, ce, groupDim: 'order_type' });
+    if (cs && ce) NetAOV.load({ start: s, end: e, cs, ce, channel: 'online_store', shopifyAov: true, groupDim: 'customer' });
   } catch (err) {
     console.error(err);
     statusEl.textContent = 'Failed: ' + err.message;
@@ -1113,6 +1115,7 @@ function render(payload) {
     <strong>Current</strong> ${payload.current.start} → ${payload.current.end}
     &nbsp;·&nbsp;
     <strong>Previous</strong> ${payload.previous.start} → ${payload.previous.end}
+    &nbsp;·&nbsp; <strong>Sales channel</strong> Online Store
   `;
 
   // Truncation warnings

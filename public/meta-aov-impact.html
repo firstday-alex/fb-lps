@@ -230,7 +230,7 @@
   <a class="header__back" href="/">&#8592; Ads Viewer</a>
   <div>
     <h1>AOV &middot; Meta Paid Social</h1>
-    <p>Campaign, ad &amp; landing-page decomposition of revenue, blended gross AOV and net AOV, from Shopify orders</p>
+    <p>Online Store orders only: campaign, ad &amp; landing-page decomposition of revenue, blended gross AOV and net AOV</p>
   </div>
   <a class="header__alt-link" href="/aov-impact.html">All sources (AOV Impact) &#8594;</a>
 </header>
@@ -1289,7 +1289,8 @@ async function load() {
   btn.disabled = true;
   statusEl.innerHTML = '<span class="spinner"></span>Fetching orders from Shopify for both periods…';
   try {
-    const params = new URLSearchParams({ start: s, end: e, source, group: 'campaign_lp' });
+    // Sales channel = Online Store only, like every panel on the AOV tabs.
+    const params = new URLSearchParams({ start: s, end: e, source, group: 'campaign_lp', channel: 'online_store' });
     if (medium) params.set('medium', medium);
     if (cs && ce) { params.set('compare_start', cs); params.set('compare_end', ce); }
     const t0 = Date.now();
@@ -1304,7 +1305,7 @@ async function load() {
     render(j, source, medium);
     // Slower (it reads line items one day per request), so it fills in after the
     // order-total tables rather than holding them up.
-    if (cs && ce) NetAOV.load({ start: s, end: e, cs, ce, source, medium, groupDim: 'campaign' });
+    if (cs && ce) NetAOV.load({ start: s, end: e, cs, ce, source, medium, channel: 'online_store', groupDim: 'campaign' });
   } catch (err) {
     console.error(err);
     statusEl.textContent = 'Failed: ' + err.message;
@@ -1340,9 +1341,9 @@ function render(payload, source, medium) {
     + (medium ? ` AND <code>utm_medium = "${esc(medium)}"</code>` : ' (any medium)');
   const share = (m, t) => (t > 0 ? ((m / t) * 100).toFixed(1) + '%' : '—');
   document.getElementById('scope-note').innerHTML = `
-    <strong>Scope:</strong> ${scopeCond}, matched on each order's first visit.
+    <strong>Scope:</strong> Sales channel = Online Store, and ${scopeCond}, matched on each order's first visit.
     Current period: <strong>${fmtInt(payload.current.order_count)}</strong> of
-    ${fmtInt(payload.current.scanned_count)} orders in range
+    ${fmtInt(payload.current.scanned_count)} Online Store orders in range
     (${share(payload.current.order_count, payload.current.scanned_count)}).
     Previous: <strong>${fmtInt(payload.previous.order_count)}</strong> of
     ${fmtInt(payload.previous.scanned_count)}
