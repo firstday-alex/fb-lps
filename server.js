@@ -2249,7 +2249,14 @@ app.get('/api/net-aov-data', async (req, res) => {
 
   const PARTS = ['C', 'C0', 'R', 'R0'];
   // Base dimensions for the paid-units breakdown; pairs are built from these in order.
-  const LINE_DIMS = ['module', 'page', 'product', 'bundle'];   // C = not a renewal, R = renewal; 0 = $0 net merch
+  // product_qty is the line ("Kids' Multi ×4" — pack size is line quantity here,
+  // every variant is "1 Bottle"); basket is the whole order's paid lines as
+  // product × quantity, so a page's units can be split by what people bought
+  // together. product × product_qty is skipped: one determines the other.
+  const LINE_DIMS = ['module', 'page', 'product', 'bundle', 'product_qty', 'basket'];
+  // Basket keys are long and numerous (~300 a day), so the basket pairs with only
+  // the two "where" dimensions; with every dimension a day's response was 1.1 MB.
+  const SKIP_PAIRS = new Set(['product__product_qty', 'product__basket', 'bundle__basket', 'product_qty__basket']);   // C = not a renewal, R = renewal; 0 = $0 net merch
   const newPart = () => ({
     totals: blank(),
     days: {},
@@ -2292,6 +2299,7 @@ app.get('/api/net-aov-data', async (req, res) => {
     o.orders = 1;
     let anySellingPlan = false;
     const lineAcc = {};
+    const paidLines = [];
     for (const le of (n.lineItems?.edges || [])) {
       const l = le.node;
       const qty = parseInt(l.quantity ?? 0, 10) || 0;
@@ -2315,21 +2323,33 @@ app.get('/api/net-aov-data', async (req, res) => {
         for (const kv of (l.customAttributes || [])) attr[kv.key] = kv.value;
         const mod = (attr._upsell_module || '').trim() || 'Main product (no upsell module)';
         const page = (attr._page_path || '').trim() || '(no page recorded)';
-        const keys = {
+        const product = (l.product?.title || l.title || '(unknown product)').trim();
+        paidLines.push({ qty, net: netUnit * qty, list: listUnit * qty, keys: {
           module: mod,
           page,
+          product,
           bundle: (attr._bundle_title || '').trim() || '(not in a bundle)',
-          product: (l.product?.title || l.title || '(unknown product)').trim(),
-        };
-        for (let i = 0; i < LINE_DIMS.length; i++) {
-          for (let j = i + 1; j < LINE_DIMS.length; j++) {
-            keys[LINE_DIMS[i] + '__' + LINE_DIMS[j]] = keys[LINE_DIMS[i]] + '\u0000' + keys[LINE_DIMS[j]];
-          }
+          product_qty: `${product} ×${qty}`,
+        } });
+      }
+    }
+    // The basket needs every paid line, so line keys are finished after the loop.
+    // Same product on two lines (e.g. two selling plans) is one entry, qty summed.
+    const byProduct = {};
+    for (const pl of paidLines) byProduct[pl.keys.product] = (byProduct[pl.keys.product] || 0) + pl.qty;
+    const basket = Object.keys(byProduct).sort().map(k => `${k} ×${byProduct[k]}`).join(' + ');
+    for (const pl of paidLines) {
+      const keys = pl.keys;
+      keys.basket = basket;
+      for (let i = 0; i < LINE_DIMS.length; i++) {
+        for (let j = i + 1; j < LINE_DIMS.length; j++) {
+          const pair = LINE_DIMS[i] + '__' + LINE_DIMS[j];
+          if (!SKIP_PAIRS.has(pair)) keys[pair] = keys[LINE_DIMS[i]] + '\u0000' + keys[LINE_DIMS[j]];
         }
-        for (const [dim, key] of Object.entries(keys)) {
-          const g = (lineAcc[dim] ||= {})[key] ||= { units: 0, net: 0, list: 0 };
-          g.units += qty; g.net += netUnit * qty; g.list += listUnit * qty;
-        }
+      }
+      for (const [dim, key] of Object.entries(keys)) {
+        const g = (lineAcc[dim] ||= {})[key] ||= { units: 0, net: 0, list: 0 };
+        g.units += pl.qty; g.net += pl.net; g.list += pl.list;
       }
     }
     o.prot_orders = o.protection > 0 ? 1 : 0;
@@ -2427,6 +2447,12 @@ app.get('/api/net-aov-data', async (req, res) => {
     }));
     const orders = PARTS.reduce((a, p) => a + parts[p].totals.orders, 0);
     console.log(`[net-aov-data] ${start}..${end}: ${orders} of ${scanned} orders (pages=${pages}, trunc=${truncated})`);
+    // Cents are plenty, and the line breakdowns are most of the payload.
+    for (const part of Object.values(parts)) {
+      for (const m of Object.values(part.lines)) {
+        for (const g of Object.values(m)) { g.net = Math.round(g.net * 100) / 100; g.list = Math.round(g.list * 100) / 100; }
+      }
+    }
     res.json({
       start, end,
       scope: { source: fSources.join(',') || null, medium: fMediums.join(',') || null, channel: chan.key },

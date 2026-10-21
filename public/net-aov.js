@@ -74,7 +74,13 @@
     ['page', 'Page it was added from'],
     ['product', 'Product'],
     ['bundle', 'Bundle'],
+    ['product_qty', 'Product × quantity'],
+    ['basket', 'Basket (whole order, product × qty)'],
   ];
+  // Mirrors the server's SKIP_PAIRS: a line quantity already names its product, and
+  // the basket only pairs with page and upsell module (payload size).
+  const NO_PAIR = new Set(['product__product_qty', 'product__basket', 'bundle__basket', 'product_qty__basket']);
+  const pairKey = (d1, d2) => LINE_ORDER.indexOf(d1) < LINE_ORDER.indexOf(d2) ? d1 + '__' + d2 : d2 + '__' + d1;
   // Server order for pair keys: `module__page`, `page__product`, … with the
   // values joined by NUL, the first value belonging to the earlier dimension.
   const LINE_ORDER = LINE_DIMS.map(d => d[0]);
@@ -494,7 +500,7 @@
   function unitsCard(P, C) {
     const o0 = P.totals.orders, o1 = C.totals.orders;
     const rows = lineRows(P.lines[ui.lineDim] || {}, C.lines[ui.lineDim] || {}, o0, o1, k => k);
-    const big = d => ['page', 'product'].includes(d);
+    const big = d => ['page', 'product', 'product_qty', 'basket'].includes(d);
     const keep = (r, d) => !big(d) || Math.max(r.a.units, r.b.units) >= ui.minUnits;
     const order = (x, y) => Math.abs(y.du) - Math.abs(x.du);
     const shown = rows.filter(r => keep(r, ui.lineDim)).sort(order);
@@ -537,7 +543,7 @@
         main products <span class="${cls(mainD)}">${sX2(mainD)}</span>, all upsell modules together <span class="${cls(upD)}">${sX2(upD)}</span>.</div>
       <div class="na-controls">
         <label>Split by <select data-na="linedim">${LINE_DIMS.map(([k, l]) => `<option value="${k}" ${k === ui.lineDim ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-        <label>then by <select data-na="subdim"><option value="" ${!ui.subDim ? 'selected' : ''}>— no sub-breakdown —</option>${LINE_DIMS.filter(([k]) => k !== ui.lineDim).map(([k, l]) => `<option value="${k}" ${k === ui.subDim ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        <label>then by <select data-na="subdim"><option value="" ${!ui.subDim ? 'selected' : ''}>— no sub-breakdown —</option>${LINE_DIMS.filter(([k]) => k !== ui.lineDim && !NO_PAIR.has(pairKey(ui.lineDim, k))).map(([k, l]) => `<option value="${k}" ${k === ui.subDim ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
         ${ui.subDim ? `<button type="button" class="na-btn" data-na-act="open-all">Expand all rows</button><button type="button" class="na-btn" data-na-act="close-all">Collapse rows</button>` : ''}
         <label>Min units <input type="number" min="1" value="${ui.minUnits}" data-na="minunits" style="width:70px"></label>
       </div>
@@ -747,7 +753,7 @@
         else if (k === 'zeros') ui.zeros = el.checked;
         else if (k === 'dim') ui.dim = el.value;
         else if (k === 'min') ui.minOrders = Math.max(1, parseInt(el.value, 10) || 1);
-        else if (k === 'linedim') { ui.lineDim = el.value; if (ui.subDim === ui.lineDim) ui.subDim = ''; ui.openRows.clear(); }
+        else if (k === 'linedim') { ui.lineDim = el.value; if (ui.subDim === ui.lineDim || NO_PAIR.has(pairKey(ui.lineDim, ui.subDim))) ui.subDim = ''; ui.openRows.clear(); }
         else if (k === 'subdim') { ui.subDim = el.value; ui.openRows.clear(); }
         else if (k === 'minunits') ui.minUnits = Math.max(1, parseInt(el.value, 10) || 1);
         render();
