@@ -159,7 +159,7 @@
   <a class="header__back" href="/">&#8592; Ads Viewer</a>
   <div>
     <h1>Product Mix &amp; Units</h1>
-    <p>Units per product period over period, their share of units sold, and what each one did to AOV</p>
+    <p>Units per product period over period, their share of units sold, and what each one did to gross AOV</p>
   </div>
   <a class="header__alt-link" href="/aov-impact.html">AOV by Traffic Source &#8594;</a>
 </header>
@@ -169,7 +169,7 @@
   <div class="upload-card">
     <h2>Product mix, period over period</h2>
     <p>Reads Shopify orders and their line items for a date range and a comparison period, then reports
-       each product's units, its share of all units sold, and the part of the AOV change it is responsible for.
+       each product's units, its share of all units sold, and the part of the gross AOV change it is responsible for.
        Leave the UTM filters blank for the whole store, or scope them to one channel.</p>
     <div class="date-row">
       <label>Start <input type="date" id="date-start"></label>
@@ -228,8 +228,8 @@
     </label>
     <label>Sort by
       <select id="sort-by">
-        <option value="aov_abs">biggest AOV impact (either way)</option>
-        <option value="aov_neg">worst AOV impact first</option>
+        <option value="aov_abs">biggest gross AOV impact (either way)</option>
+        <option value="aov_neg">worst gross AOV impact first</option>
         <option value="units_neg">biggest unit loss first</option>
         <option value="units_pos">biggest unit gain first</option>
         <option value="units_curr">most units this period</option>
@@ -249,7 +249,7 @@
       <strong>Δ Units</strong> is the raw change in units sold in this scope. <strong>Share</strong> is that product's
       percentage of every unit sold in the scope, so <strong>Δ Share</strong> (in percentage points) says whether the
       mix moved toward it or away from it — a product can lose units and still gain share when the whole scope shrank.
-      <strong>Units/Order</strong> is units ÷ orders (not ÷ orders containing it), which is the figure that feeds AOV.
+      <strong>Units/Order</strong> is units ÷ orders (not ÷ orders containing it), which is the figure that feeds gross AOV.
       <strong>Attach</strong> is the share of orders that contained it at all, so you can tell "fewer baskets bought it"
       from "the baskets that bought it took fewer".
     </p>
@@ -281,11 +281,11 @@
 
   <!-- AOV impact -->
   <div class="card">
-    <h3>What each product did to AOV</h3>
+    <h3>What each product did to gross AOV</h3>
     <p class="card__sub">
-      AOV is exactly the sum of what every product contributes per order:
+      Gross AOV (order total ÷ orders) is exactly the sum of what every product contributes per order, plus shipping, tax &amp; other charges:
       <strong>$/Order</strong> = that product's net revenue ÷ <em>all</em> orders in scope = Units/Order × ASP.
-      So <strong>Δ $/Order</strong> is the product's contribution to Δ AOV in dollars, and the rows add up to it.
+      So <strong>Δ $/Order</strong> is the product's contribution to Δ gross AOV in dollars, and the rows add up to it.
       The contribution splits into <strong>Units Effect</strong> = ΔU/Order × prevASP (selling more or fewer of it at
       the old price), <strong>ASP Effect</strong> = prevU/Order × ΔASP (the same quantity at a different net price),
       and <strong>Interaction</strong> = ΔU/Order × ΔASP. A product that sold in only one of the two periods
@@ -294,7 +294,7 @@
       ASP here is <em>net</em> — after every discount — and <strong>Δ Discount</strong> is the change in discount depth
       (1 − net ÷ list), which is usually what an ASP move actually is.
       The <em>shipping, tax &amp; other order charges</em> row is the rest of the order total, so the footer ties to the
-      real Δ AOV in the KPI above.
+      real Δ gross AOV in the KPI above.
     </p>
     <div class="scroll-x">
       <table>
@@ -313,7 +313,7 @@
             <th class="r">Units Effect</th>
             <th class="r">ASP Effect</th>
             <th class="r">Interaction</th>
-            <th class="r">% of Δ AOV</th>
+            <th class="r">% of Δ Gross AOV</th>
           </tr>
         </thead>
         <tbody id="aov-tbody"></tbody>
@@ -324,7 +324,7 @@
 
   <p class="footnote">
     Scope is read from each order's <code>customerJourneySummary.firstVisit</code>, the same first-touch attribution the
-    AOV and CVR tabs use, so order counts and AOV match those tabs exactly and will not tie to Ads Manager.
+    AOV and CVR tabs use, so order counts and gross AOV match those tabs exactly and will not tie to Ads Manager.
     Units are line-item <code>quantity</code> — the same thing <code>subtotalLineItemsQuantity</code> counts, verified
     equal on a full day — so a free gift-with-purchase counts as a unit at $0, and an order-protection add-on counts as
     a unit too; both show up as their own rows, and the product-type chips above can take them out of the mix.
@@ -475,7 +475,7 @@ function renderKpi(o) {
     { label: 'Units',         curr: fmtInt(o.unitsCurrAll), prev: fmtInt(o.unitsPrevAll), d: o.unitsCurrAll - o.unitsPrevAll, fmt: signedInt },
     { label: 'Units / Order', curr: o.uptCurr.toFixed(2),   prev: o.uptPrev.toFixed(2),   d: o.uptCurr - o.uptPrev, fmt: n => (n >= 0 ? '+' : '−') + Math.abs(n).toFixed(2) },
     { label: 'Net ASP',       curr: fmt$2(o.aspCurr),       prev: fmt$2(o.aspPrev),       d: o.aspCurr - o.aspPrev, fmt: signed$2 },
-    { label: 'AOV',           curr: fmt$2(o.aovCurr),       prev: fmt$2(o.aovPrev),       d: o.aovCurr - o.aovPrev, fmt: signed$2 },
+    { label: 'Gross AOV',     curr: fmt$2(o.aovCurr),       prev: fmt$2(o.aovPrev),       d: o.aovCurr - o.aovPrev, fmt: signed$2 },
     { label: 'Revenue',       curr: fmt$(o.revCurr),        prev: fmt$(o.revPrev),        d: o.revCurr - o.revPrev, fmt: signed$ },
   ];
   document.getElementById('kpi-row').innerHTML = kpis.map(k => `
@@ -572,7 +572,7 @@ function renderAovTable(rows, o, tailRow) {
   const sumProducts = sum(r => r.dRpo);
   document.getElementById('aov-tfoot').innerHTML = `
     <tr>
-      <td>Total Δ AOV</td>
+      <td>Total Δ Gross AOV</td>
       <td class="r">${fmtUpt(o.uptPrev)}</td>
       <td class="r">${fmtUpt(o.uptCurr)}</td>
       <td class="r">${fmt$2(o.aspPrev)}</td>
@@ -590,7 +590,7 @@ function renderAovTable(rows, o, tailRow) {
     <tr>
       <td class="muted" style="font-weight:400">
         Products ${signed$2(sumProducts)} + residual ${signed$2(res.dRpo)} = ${signed$2(sumProducts + res.dRpo)}
-        — the Δ AOV above, to the cent.
+        — the Δ gross AOV above, to the cent.
       </td>
       <td class="r" colspan="13"></td>
     </tr>`;
@@ -836,7 +836,7 @@ function render(payload, source, medium) {
     // the residual row is absorbing something it shouldn't and the split is off.
     const gap = Math.abs(p.line_revenue - p.order_subtotal);
     if (p.order_subtotal > 0 && gap / p.order_subtotal > 0.005) {
-      warns.push(`${name} period: product revenue misses the order subtotal by ${fmt$(gap)} (${(gap / p.order_subtotal * 100).toFixed(1)}%). The per-product AOV split is approximate.`);
+      warns.push(`${name} period: product revenue misses the order subtotal by ${fmt$(gap)} (${(gap / p.order_subtotal * 100).toFixed(1)}%). The per-product gross AOV split is approximate.`);
     }
   }
   if (payload.current.order_count === 0) warns.push('No current-period orders matched this filter. Check the spelling of utm_source / utm_medium.');

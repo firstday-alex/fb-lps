@@ -235,7 +235,7 @@
     return `<div class="card na-head"><h3>Net AOV — what an order is worth in product revenue</h3>
       <p class="card__sub">Paid product revenue after every discount ÷ orders. Excludes shipping, tax and SavedBy protection,
       and counts only paid units, so free gifts and $0 lines can't pad units-per-order. Everything below this section
-      is gross order value (order totals), so the two won't match.</p>${inner}</div>`;
+      is gross AOV (order totals incl. shipping, tax and protection), so the two won't match.</p>${inner}</div>`;
   }
 
   function render() {
@@ -254,7 +254,7 @@
         <h3>Net AOV — what an order is worth in product revenue</h3>
         <p class="card__sub">Paid product revenue after every discount ÷ orders. Excludes shipping, tax and SavedBy protection,
           and counts only paid units, so free gifts and $0 lines can't pad units-per-order. The sections further down
-          use gross order value (order totals), so their numbers won't match this one.</p>
+          use <strong>gross AOV</strong> (order totals incl. shipping, tax and protection), so their numbers won't match this one.</p>
         <div class="na-toggles">
           ${state.scoped ? '' : `<label><input type="checkbox" data-na="renewals" ${ui.renewals ? 'checked' : ''}> Include subscription renewals <span class="na-dim">(${int(r0)} orders this period, no first visit)</span></label>`}
           <label><input type="checkbox" data-na="zeros" ${ui.zeros ? 'checked' : ''}> Include $0 orders <span class="na-dim">(${int(z0)} this period: replacements, seeding, samples, $0 first payments)</span></label>
@@ -286,7 +286,7 @@
       ${k('Net price / unit', c.netAsp, p.netAsp, c.netAsp - p.netAsp, $2, s$2)}
       ${k('Protection attach', c.protAttach, p.protAttach, c.protAttach - p.protAttach, pct, sPp)}
       ${k('Free-gift attach', c.giftAttach, p.giftAttach, c.giftAttach - p.giftAttach, pct, sPp)}
-      ${k('Order value (gross)', c.totalPerOrder, p.totalPerOrder, c.totalPerOrder - p.totalPerOrder, $2, s$2)}
+      ${k('Gross AOV', c.totalPerOrder, p.totalPerOrder, c.totalPerOrder - p.totalPerOrder, $2, s$2)}
     </div>`;
   }
 
@@ -303,7 +303,7 @@
     ].sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
     const seg = segmentSplit(P.seg.order_type, C.seg.order_type, P.totals, C.totals)
       .sort((a, b) => Math.abs(b.total) - Math.abs(a.total)).slice(0, 3);
-    const segTxt = seg.map(s => `${esc(s.key)} ${s$2(s.total)} (${s$2(s.rate)} own AOV, ${s$2(s.mix)} share of orders ${sPp(s.s1 - s.s0)})`).join('; ');
+    const segTxt = seg.map(s => `${esc(s.key)} ${s$2(s.total)} (${s$2(s.rate)} own net AOV, ${s$2(s.mix)} share of orders ${sPp(s.s1 - s.s0)})`).join('; ');
     return `<div class="na-summary">
       <div><strong>Net AOV ${d >= 0 ? 'rose' : 'fell'} ${$2(Math.abs(d))}</strong> (${$2(p.aov)} → ${$2(c.aov)}).
         By driver: ${drivers.map(([l, v]) => `${l} <span class="${cls(v)}">${s$2(v)}</span>`).join(', ')}.</div>
@@ -335,7 +335,7 @@
             ${row('+ Shipping charged', p.shipPerOrder, c.shipPerOrder)}
             ${row('+ Tax', p.taxPerOrder, c.taxPerOrder)}
             ${row('+ Tips / rounding', p.tipsPerOrder + otherP, c.tipsPerOrder + otherC)}
-            ${row('= Order value (gross AOV)', p.totalPerOrder, c.totalPerOrder, { total: true })}
+            ${row('= Gross AOV', p.totalPerOrder, c.totalPerOrder, { total: true })}
           </tbody></table></div>
         <div class="scroll-x"><table>
           <thead><tr><th>Net AOV driver</th><th class="r">Prev</th><th class="r">Curr</th><th class="r">Effect on net AOV</th></tr></thead>
@@ -381,7 +381,7 @@
     const pT = ratios(P.totals), cT = ratios(C.totals);
     const td = (v, f, d) => `<td class="r ${d ? cls(v) : ''}">${f(v)}</td>`;
     return `<div class="card"><h3>What moved net AOV, by segment</h3>
-      <p class="card__sub"><strong>Own AOV</strong> = the segment's old share × its Δ net AOV (it got more or less valuable).
+      <p class="card__sub"><strong>Own net-AOV effect</strong> = the segment's old share × its Δ net AOV (it got more or less valuable).
         <strong>Share of orders</strong> = Δ share × (its AOV − old blended AOV): it grew or shrank as a slice of the orders.
         Rows sum to Δ net AOV. Sorted by size of impact.</p>
       <div class="na-controls">
@@ -392,7 +392,7 @@
         <thead><tr><th>Segment</th><th class="r">Prev orders</th><th class="r">Curr orders</th><th class="r">Share Δ</th>
           <th class="r">Prev net AOV</th><th class="r">Curr net AOV</th><th class="r">Δ</th>
           <th class="r">Paid UPT</th><th class="r">List $/unit</th><th class="r">Discount</th><th class="r">Protection</th>
-          <th class="r">Own AOV effect</th><th class="r">Share effect</th><th class="r">Impact on net AOV</th></tr></thead>
+          <th class="r">Own net-AOV effect</th><th class="r">Share effect</th><th class="r">Impact on net AOV</th></tr></thead>
         <tbody>${shown.map(r => `<tr><td>${esc(r.key)}</td>
           ${td(r.a0.orders, int)}${td(r.a1.orders, int)}${td(r.s1 - r.s0, sPp, true)}
           ${td(r.r0.aov, $2)}${td(r.r1.aov, $2)}${td(r.a0.orders && r.a1.orders ? r.r1.aov - r.r0.aov : NaN, s$2, true)}
@@ -518,7 +518,7 @@
       ${chart}
       <div class="scroll-x" style="margin-top:10px"><table>
         <thead><tr><th>Day</th><th class="r">Orders</th><th class="r">Net AOV</th><th class="r">vs prev-period day</th><th class="r">Paid UPT</th>
-          <th class="r">List $/unit</th><th class="r">Discount</th><th class="r">Protection</th><th class="r">Free gift</th><th class="r">Order value</th></tr></thead>
+          <th class="r">List $/unit</th><th class="r">Discount</th><th class="r">Protection</th><th class="r">Free gift</th><th class="r">Gross AOV</th></tr></thead>
         <tbody>${cs.map((p, i) => { const q = ps[i]?.r; return `<tr><td>${p.d}</td><td class="r">${int(p.r.orders)}</td><td class="r">${$2(p.r.aov)}</td>
           <td class="r ${q ? cls(p.r.aov - q.aov) : ''}">${q ? s$2(p.r.aov - q.aov) : '—'}</td><td class="r">${x2(p.r.upt)}</td><td class="r">${$2(p.r.listAsp)}</td>
           <td class="r">${pct(p.r.discDepth)}</td><td class="r">${pct(p.r.protAttach)}</td><td class="r">${pct(p.r.giftAttach)}</td><td class="r">${$2(p.r.totalPerOrder)}</td></tr>`; }).join('')}</tbody>

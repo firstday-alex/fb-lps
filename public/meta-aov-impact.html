@@ -230,7 +230,7 @@
   <a class="header__back" href="/">&#8592; Ads Viewer</a>
   <div>
     <h1>AOV &middot; Meta Paid Social</h1>
-    <p>Campaign, ad &amp; landing-page decomposition of revenue and blended-AOV change, from Shopify orders</p>
+    <p>Campaign, ad &amp; landing-page decomposition of revenue, blended gross AOV and net AOV, from Shopify orders</p>
   </div>
   <a class="header__alt-link" href="/aov-impact.html">All sources (AOV Impact) &#8594;</a>
 </header>
@@ -241,7 +241,7 @@
     <h2>Meta Paid Social AOV Impact</h2>
     <p>Loads Shopify orders for a date range and the previous period, keeps only orders whose
        first visit carries the <code>utm_source</code> / <code>utm_medium</code> below, and decomposes
-       Δ Revenue + Δ Blended AOV across campaigns, ads and landing pages.</p>
+       Δ Revenue + Δ Blended Gross AOV across campaigns, ads and landing pages.</p>
     <div class="date-row">
       <label>Start <input type="date" id="date-start"></label>
       <label>End <input type="date" id="date-end"></label>
@@ -283,12 +283,12 @@
       <p class="card__sub">
         Each <code>utm_campaign</code>'s contribution to <strong>Δ Revenue</strong> inside this Meta segment, split into:
         <strong>Orders Effect</strong> = ΔOrders × prevAOV (more/fewer orders at the old basket),
-        <strong>AOV Effect</strong> = prevOrders × ΔAOV (same orders earning a higher/lower basket),
+        <strong>Gross AOV Effect</strong> = prevOrders × ΔAOV (same orders earning a higher/lower basket),
         and <strong>Interaction</strong> = ΔOrders × ΔAOV (the cross-term).
         The three sum to Δ Revenue for that campaign; rows sum to the segment's Δ Revenue.
         <strong>Click a campaign</strong> to break it out by ad (<code>utm_content</code>), each with its
         creative preview and Ads Manager links. Ad rows' Δ Rev sums to the campaign; the
-        Orders / AOV / Interaction split does not, because decomposing at ad level moves the
+        Orders / Gross AOV / Interaction split does not, because decomposing at ad level moves the
         mix shift <em>between</em> a campaign's ads into those ads' own effects.
       </p>
       <div class="scroll-x">
@@ -299,14 +299,14 @@
               <th class="r">Prev Orders</th>
               <th class="r">Curr Orders</th>
               <th class="r">Δ Orders</th>
-              <th class="r">Prev AOV</th>
-              <th class="r">Curr AOV</th>
-              <th class="r">Δ AOV</th>
+              <th class="r">Prev Gross AOV</th>
+              <th class="r">Curr Gross AOV</th>
+              <th class="r">Δ Gross AOV</th>
               <th class="r">Prev Rev</th>
               <th class="r">Curr Rev</th>
               <th class="r">Δ Rev</th>
               <th class="r">Orders Effect</th>
-              <th class="r">AOV Effect</th>
+              <th class="r">Gross AOV Effect</th>
               <th class="r">Interaction</th>
             </tr>
           </thead>
@@ -318,12 +318,12 @@
 
     <!-- UPT × ASP by campaign -->
     <div class="card">
-      <h3>Why is AOV moving? &nbsp;<span style="font-weight:400;color:var(--text-secondary);font-size:0.85rem">(units/order × price/unit, by campaign)</span></h3>
+      <h3>Why is gross AOV moving? &nbsp;<span style="font-weight:400;color:var(--text-secondary);font-size:0.85rem">(units/order × price/unit, by campaign)</span></h3>
       <p class="card__sub">
-        AOV is identical to <strong>UPT × ASP</strong>: units per transaction (basket size) times average selling price per unit.
+        Gross AOV (order total incl. shipping, tax &amp; protection) is identical to <strong>UPT × ASP</strong>, where UPT counts every line — protection and free gifts included. For product-only figures see the <strong>Net AOV</strong> section above. Here,: units per transaction (basket size) times average selling price per unit.
         <strong>UPT Effect</strong> = ΔUPT × prevASP (basket-size move at the old price).
         <strong>ASP Effect</strong> = prevUPT × ΔASP (per-unit price move at the old basket).
-        <strong>Interaction</strong> = ΔUPT × ΔASP. The three sum to Δ AOV for that campaign.
+        <strong>Interaction</strong> = ΔUPT × ΔASP. The three sum to Δ gross AOV for that campaign.
         If UPT Effect dominates → people are buying fewer items per order. If ASP Effect dominates → average unit price fell (discounts or mix-shift to cheaper SKUs).
         <strong>Click a campaign</strong> to see the same split per ad. UPT and ASP are ratios, so each
         ad row describes its own slice rather than adding up to the campaign.
@@ -339,13 +339,13 @@
               <th class="r">Prev ASP</th>
               <th class="r">Curr ASP</th>
               <th class="r">Δ ASP</th>
-              <th class="r">Prev AOV</th>
-              <th class="r">Curr AOV</th>
-              <th class="r">Δ AOV</th>
+              <th class="r">Prev Gross AOV</th>
+              <th class="r">Curr Gross AOV</th>
+              <th class="r">Δ Gross AOV</th>
               <th class="r">UPT Effect</th>
               <th class="r">ASP Effect</th>
               <th class="r">Interaction</th>
-              <th class="r" title="Which effect is the larger driver of Δ AOV?">Driver</th>
+              <th class="r" title="Which effect is the larger driver of Δ gross AOV?">Driver</th>
             </tr>
           </thead>
           <tbody id="camp-upt-tbody"></tbody>
@@ -356,12 +356,12 @@
 
     <!-- Blended AOV decomposition by campaign -->
     <div class="card">
-      <h3>Blended AOV Decomposition by campaign</h3>
+      <h3>Blended Gross AOV Decomposition by campaign</h3>
       <p class="card__sub">
-        Decomposes the change in this segment's <strong>blended AOV</strong> (Meta revenue ÷ Meta orders) into per-campaign contributions.
-        <strong>Own-AOV Effect</strong> = prevOrderShare × ΔAOV (the campaign's own AOV move, weighted by its share of last period's Meta orders).
+        Decomposes the change in this segment's <strong>blended gross AOV</strong> (Meta order revenue ÷ Meta orders) into per-campaign contributions.
+        <strong>Own Gross-AOV Effect</strong> = prevOrderShare × ΔAOV (the campaign's own gross-AOV move, weighted by its share of last period's Meta orders).
         <strong>Mix-Shift Effect</strong> = ΔOrderShare × (currAOV − blended avg) (gaining/losing orders at a basket above or below the blended average).
-        The two sum to the campaign's contribution; rows sum to total Δ Blended AOV.
+        The two sum to the campaign's contribution; rows sum to total Δ Blended Gross AOV.
         <strong>Click a campaign</strong> to see its ads. Ad shares and effects are measured against the
         whole Meta segment, so an ad row is directly comparable with a campaign row — which also means
         a campaign's ads won't add up to its own row: the gap is mix shift between ads inside it.
@@ -374,10 +374,10 @@
               <th class="r">Prev Order Share</th>
               <th class="r">Curr Order Share</th>
               <th class="r">Δ Share</th>
-              <th class="r">Prev AOV</th>
-              <th class="r">Curr AOV</th>
-              <th class="r">Δ AOV</th>
-              <th class="r">Own-AOV Effect</th>
+              <th class="r">Prev Gross AOV</th>
+              <th class="r">Curr Gross AOV</th>
+              <th class="r">Δ Gross AOV</th>
+              <th class="r">Own Gross-AOV Effect</th>
               <th class="r">Mix-Shift Effect</th>
               <th class="r">Total Contribution</th>
               <th class="r">% of Δ Blended</th>
@@ -404,14 +404,14 @@
               <th class="r">Prev Orders</th>
               <th class="r">Curr Orders</th>
               <th class="r">Δ Orders</th>
-              <th class="r">Prev AOV</th>
-              <th class="r">Curr AOV</th>
-              <th class="r">Δ AOV</th>
+              <th class="r">Prev Gross AOV</th>
+              <th class="r">Curr Gross AOV</th>
+              <th class="r">Δ Gross AOV</th>
               <th class="r">Prev Rev</th>
               <th class="r">Curr Rev</th>
               <th class="r">Δ Rev</th>
               <th class="r">Orders Effect</th>
-              <th class="r">AOV Effect</th>
+              <th class="r">Gross AOV Effect</th>
               <th class="r">Interaction</th>
             </tr>
           </thead>
@@ -423,7 +423,7 @@
 
     <!-- UPT × ASP by landing page -->
     <div class="card">
-      <h3>Why is AOV moving, by landing page? &nbsp;<span style="font-weight:400;color:var(--text-secondary);font-size:0.85rem">(units/order × price/unit)</span></h3>
+      <h3>Why is gross AOV moving, by landing page? &nbsp;<span style="font-weight:400;color:var(--text-secondary);font-size:0.85rem">(units/order × price/unit)</span></h3>
       <p class="card__sub">
         The UPT × ASP split grouped by <strong>landing page</strong> (all Meta campaigns combined).
         <strong>UPT Effect</strong> = ΔUPT × prevASP, <strong>ASP Effect</strong> = prevUPT × ΔASP,
@@ -440,13 +440,13 @@
               <th class="r">Prev ASP</th>
               <th class="r">Curr ASP</th>
               <th class="r">Δ ASP</th>
-              <th class="r">Prev AOV</th>
-              <th class="r">Curr AOV</th>
-              <th class="r">Δ AOV</th>
+              <th class="r">Prev Gross AOV</th>
+              <th class="r">Curr Gross AOV</th>
+              <th class="r">Δ Gross AOV</th>
               <th class="r">UPT Effect</th>
               <th class="r">ASP Effect</th>
               <th class="r">Interaction</th>
-              <th class="r" title="Which effect is the larger driver of Δ AOV?">Driver</th>
+              <th class="r" title="Which effect is the larger driver of Δ gross AOV?">Driver</th>
             </tr>
           </thead>
           <tbody id="lp-upt-tbody"></tbody>
@@ -457,10 +457,10 @@
 
     <!-- Blended AOV decomposition by landing page -->
     <div class="card">
-      <h3>Blended AOV Decomposition by landing page</h3>
+      <h3>Blended Gross AOV Decomposition by landing page</h3>
       <p class="card__sub">
-        Decomposes Δ <strong>blended AOV</strong> for this Meta segment into per-landing-page contributions.
-        <strong>Own-AOV Effect</strong> = prevOrderShare × ΔAOV, <strong>Mix-Shift Effect</strong> = ΔOrderShare × (currAOV − blended avg).
+        Decomposes Δ <strong>blended gross AOV</strong> for this Meta segment into per-landing-page contributions.
+        <strong>Own Gross-AOV Effect</strong> = prevOrderShare × ΔAOV, <strong>Mix-Shift Effect</strong> = ΔOrderShare × (currAOV − blended avg).
       </p>
       <div class="scroll-x">
         <table>
@@ -470,10 +470,10 @@
               <th class="r">Prev Order Share</th>
               <th class="r">Curr Order Share</th>
               <th class="r">Δ Share</th>
-              <th class="r">Prev AOV</th>
-              <th class="r">Curr AOV</th>
-              <th class="r">Δ AOV</th>
-              <th class="r">Own-AOV Effect</th>
+              <th class="r">Prev Gross AOV</th>
+              <th class="r">Curr Gross AOV</th>
+              <th class="r">Δ Gross AOV</th>
+              <th class="r">Own Gross-AOV Effect</th>
               <th class="r">Mix-Shift Effect</th>
               <th class="r">Total Contribution</th>
               <th class="r">% of Δ Blended</th>
@@ -504,14 +504,14 @@
               <th class="r">Prev Orders</th>
               <th class="r">Curr Orders</th>
               <th class="r">Δ Orders</th>
-              <th class="r">Prev AOV</th>
-              <th class="r">Curr AOV</th>
-              <th class="r">Δ AOV</th>
+              <th class="r">Prev Gross AOV</th>
+              <th class="r">Curr Gross AOV</th>
+              <th class="r">Δ Gross AOV</th>
               <th class="r">Prev Rev</th>
               <th class="r">Curr Rev</th>
               <th class="r">Δ Rev</th>
               <th class="r">Orders Effect</th>
-              <th class="r">AOV Effect</th>
+              <th class="r">Gross AOV Effect</th>
               <th class="r">Interaction</th>
             </tr>
           </thead>
@@ -550,7 +550,7 @@
               <th class="r">Prev ASP</th>
               <th class="r">Curr ASP</th>
               <th class="r">Δ ASP</th>
-              <th class="r">Δ AOV</th>
+              <th class="r">Δ Gross AOV</th>
             </tr>
           </thead>
           <tbody id="slice-tbody"></tbody>
@@ -574,12 +574,12 @@
               <th class="r">Prev Orders</th>
               <th class="r">Curr Orders</th>
               <th class="r">Δ Orders</th>
-              <th class="r">Prev AOV</th>
-              <th class="r">Curr AOV</th>
-              <th class="r">Δ AOV</th>
+              <th class="r">Prev Gross AOV</th>
+              <th class="r">Curr Gross AOV</th>
+              <th class="r">Δ Gross AOV</th>
               <th class="r">Δ Rev</th>
               <th class="r">Orders Effect</th>
-              <th class="r">AOV Effect</th>
+              <th class="r">Gross AOV Effect</th>
             </tr>
           </thead>
           <tbody id="drill-tbody"></tbody>
@@ -593,7 +593,7 @@
       loaded with. Orders with no recorded first visit, or a different source/medium, are excluded entirely
       (they are not bucketed as Unknown here). Campaign / ad / landing page all come from that same first visit,
       so a blank value shows as <code>(none)</code>.
-      AOV = total_price ÷ orders; UPT = units ÷ orders; ASP = total_price ÷ units.
+      Gross AOV = order total (incl. shipping, tax &amp; protection) ÷ orders; UPT = all units ÷ orders; ASP = order total ÷ units.
       Revenue is order total_price (incl. tax/shipping, currency = shop currency); units is
       <code>subtotalLineItemsQuantity</code>.
       This is <em>order-level first-touch</em> attribution, not Shopify session data — so order counts here will
@@ -870,7 +870,7 @@ function renderKpi(groups) {
   const kpis = [
     { label: 'Meta Revenue', curr: fmt$(currR),   prev: fmt$(prevR),   d: currR - prevR,   fmt: signed$ },
     { label: 'Meta Orders',  curr: fmtInt(currO), prev: fmtInt(prevO), d: currO - prevO,   fmt: signedInt },
-    { label: 'Blended AOV',  curr: fmt$2(currA),  prev: fmt$2(prevA),  d: currA - prevA,   fmt: signed$2 },
+    { label: 'Blended Gross AOV',  curr: fmt$2(currA),  prev: fmt$2(prevA),  d: currA - prevA,   fmt: signed$2 },
     { label: 'UPT (units/order)', curr: fmtUpt(currUpt), prev: fmtUpt(prevUpt), d: currUpt - prevUpt, fmt: sUpt },
     { label: 'ASP (price/unit)',  curr: fmt$2(currAsp),  prev: fmt$2(prevAsp),  d: currAsp - prevAsp, fmt: signed$2 },
   ];
@@ -1090,7 +1090,7 @@ function renderAovTable(groups, tbodyId, tfootId, labelCell, opts = {}) {
   const sumTot = sumOwn + sumMix;
   document.getElementById(tfootId).innerHTML = `
     <tr>
-      <td>Total Δ Blended AOV</td>
+      <td>Total Δ Blended Gross AOV</td>
       <td class="r">100%</td>
       <td class="r">100%</td>
       <td class="r">—</td>
@@ -1342,7 +1342,7 @@ function render(payload, source, medium) {
     Previous: <strong>${fmtInt(payload.previous.order_count)}</strong> of
     ${fmtInt(payload.previous.scanned_count)}
     (${share(payload.previous.order_count, payload.previous.scanned_count)}).
-    All AOV / UPT / ASP figures below are Meta-segment-only, so they will differ from the
+    All AOV / UPT / ASP figures on this page are Meta-segment-only, so they will differ from the
     all-sources numbers on the <a href="/aov-impact.html" style="color:var(--fb-blue)">AOV Impact</a> tab.
   `;
 

@@ -193,7 +193,7 @@
   <a class="header__back" href="/">&#8592; Ads Viewer</a>
   <div>
     <h1>AOV by Traffic Source</h1>
-    <p>Per-utm_source decomposition of revenue and blended-AOV change, loaded from Shopify orders</p>
+    <p>Per-utm_source decomposition of revenue, blended gross AOV and net AOV, loaded from Shopify orders</p>
   </div>
 </header>
 
@@ -201,7 +201,7 @@
 <div id="upload-screen">
   <div class="upload-card">
     <h2>AOV Impact Analysis</h2>
-    <p>Loads Shopify orders for a date range and the previous period, attributes by customerJourney first-visit UTM, and decomposes Δ Revenue + Δ Blended AOV across utm_sources.</p>
+    <p>Loads Shopify orders for a date range and the previous period, attributes by customerJourney first-visit UTM, and decomposes Δ Revenue + Δ Blended Gross AOV across utm_sources, plus a net-AOV (product revenue) breakdown.</p>
     <div class="date-row">
       <label>Start <input type="date" id="date-start"></label>
       <label>End <input type="date" id="date-end"></label>
@@ -237,7 +237,7 @@
       <p class="card__sub">
         Each utm_source's contribution to <strong>Δ Revenue</strong>, split into:
         <strong>Orders Effect</strong> = ΔOrders × prevAOV (more/fewer orders at the old basket),
-        <strong>AOV Effect</strong> = prevOrders × ΔAOV (same orders earning a higher/lower basket),
+        <strong>Gross AOV Effect</strong> = prevOrders × ΔAOV (same orders earning a higher/lower basket),
         and <strong>Interaction</strong> = ΔOrders × ΔAOV (the cross-term).
         The three sum to Δ Revenue for that source; rows sum to the overall Δ Revenue.
       </p>
@@ -249,14 +249,14 @@
               <th class="r">Prev Orders</th>
               <th class="r">Curr Orders</th>
               <th class="r">Δ Orders</th>
-              <th class="r">Prev AOV</th>
-              <th class="r">Curr AOV</th>
-              <th class="r">Δ AOV</th>
+              <th class="r">Prev Gross AOV</th>
+              <th class="r">Curr Gross AOV</th>
+              <th class="r">Δ Gross AOV</th>
               <th class="r">Prev Rev</th>
               <th class="r">Curr Rev</th>
               <th class="r">Δ Rev</th>
               <th class="r">Orders Effect</th>
-              <th class="r">AOV Effect</th>
+              <th class="r">Gross AOV Effect</th>
               <th class="r">Interaction</th>
             </tr>
           </thead>
@@ -268,12 +268,12 @@
 
     <!-- Why is AOV moving? UPT × ASP per channel -->
     <div class="card">
-      <h3>Why is AOV moving? &nbsp;<span style="font-weight:400;color:var(--text-secondary);font-size:0.85rem">(units/order × price/unit)</span></h3>
+      <h3>Why is gross AOV moving? &nbsp;<span style="font-weight:400;color:var(--text-secondary);font-size:0.85rem">(units/order × price/unit)</span></h3>
       <p class="card__sub">
-        AOV is identical to <strong>UPT × ASP</strong>: units per transaction (basket size) times average selling price per unit.
+        Gross AOV (order total incl. shipping, tax &amp; protection) is identical to <strong>UPT × ASP</strong>, where UPT counts every line — protection and free gifts included. For product-only figures see the <strong>Net AOV</strong> section above. Here,: units per transaction (basket size) times average selling price per unit.
         <strong>UPT Effect</strong> = ΔUPT × prevASP (basket-size move at the old price).
         <strong>ASP Effect</strong> = prevUPT × ΔASP (per-unit price move at the old basket).
-        <strong>Interaction</strong> = ΔUPT × ΔASP. The three sum to Δ AOV for that source.
+        <strong>Interaction</strong> = ΔUPT × ΔASP. The three sum to Δ gross AOV for that source.
         If UPT Effect dominates → people are buying fewer items per order. If ASP Effect dominates → average unit price fell (discounts or mix-shift to cheaper SKUs).
       </p>
       <div class="scroll-x">
@@ -287,13 +287,13 @@
               <th class="r">Prev ASP</th>
               <th class="r">Curr ASP</th>
               <th class="r">Δ ASP</th>
-              <th class="r">Prev AOV</th>
-              <th class="r">Curr AOV</th>
-              <th class="r">Δ AOV</th>
+              <th class="r">Prev Gross AOV</th>
+              <th class="r">Curr Gross AOV</th>
+              <th class="r">Δ Gross AOV</th>
               <th class="r">UPT Effect</th>
               <th class="r">ASP Effect</th>
               <th class="r">Interaction</th>
-              <th class="r" title="Which effect is the larger driver of Δ AOV?">Driver</th>
+              <th class="r" title="Which effect is the larger driver of Δ gross AOV?">Driver</th>
             </tr>
           </thead>
           <tbody id="upt-tbody"></tbody>
@@ -304,12 +304,12 @@
 
     <!-- Δ Blended AOV decomposition -->
     <div class="card">
-      <h3>Blended AOV Decomposition</h3>
+      <h3>Blended Gross AOV Decomposition</h3>
       <p class="card__sub">
-        Decomposes the change in <strong>blended AOV</strong> (overall revenue ÷ overall orders) into per-utm_source contributions.
-        <strong>Own-AOV Effect</strong> = prevOrderShare × ΔAOV (this source's own AOV move, weighted by its share of last period's orders).
+        Decomposes the change in <strong>blended gross AOV</strong> (overall order revenue ÷ overall orders) into per-utm_source contributions.
+        <strong>Own Gross-AOV Effect</strong> = prevOrderShare × ΔAOV (this source's own gross-AOV move, weighted by its share of last period's orders).
         <strong>Mix-Shift Effect</strong> = ΔOrderShare × (currAOV − blended avg) (gaining/losing orders at a basket above or below the blended average).
-        The two sum to this source's contribution; rows sum to total Δ Blended AOV.
+        The two sum to this source's contribution; rows sum to total Δ Blended Gross AOV.
       </p>
       <div class="scroll-x">
         <table id="aov-table">
@@ -319,10 +319,10 @@
               <th class="r">Prev Order Share</th>
               <th class="r">Curr Order Share</th>
               <th class="r">Δ Share</th>
-              <th class="r">Prev AOV</th>
-              <th class="r">Curr AOV</th>
-              <th class="r">Δ AOV</th>
-              <th class="r">Own-AOV Effect</th>
+              <th class="r">Prev Gross AOV</th>
+              <th class="r">Curr Gross AOV</th>
+              <th class="r">Δ Gross AOV</th>
+              <th class="r">Own Gross-AOV Effect</th>
               <th class="r">Mix-Shift Effect</th>
               <th class="r">Total Contribution</th>
               <th class="r">% of Δ Blended</th>
@@ -340,7 +340,7 @@
       <p class="card__sub">
         The same Δ Revenue split as the utm_source table above, but grouped by <strong>landing page</strong> (all sources combined).
         Use it to see which pages are moving revenue and whether the shift is order volume vs basket size.
-        <strong>Orders Effect</strong> = ΔOrders × prevAOV, <strong>AOV Effect</strong> = prevOrders × ΔAOV,
+        <strong>Orders Effect</strong> = ΔOrders × prevAOV, <strong>Gross AOV Effect</strong> = prevOrders × ΔAOV,
         <strong>Interaction</strong> = ΔOrders × ΔAOV. The three sum to Δ Revenue for that page; rows sum to the overall Δ Revenue.
       </p>
       <div class="scroll-x">
@@ -351,14 +351,14 @@
               <th class="r">Prev Orders</th>
               <th class="r">Curr Orders</th>
               <th class="r">Δ Orders</th>
-              <th class="r">Prev AOV</th>
-              <th class="r">Curr AOV</th>
-              <th class="r">Δ AOV</th>
+              <th class="r">Prev Gross AOV</th>
+              <th class="r">Curr Gross AOV</th>
+              <th class="r">Δ Gross AOV</th>
               <th class="r">Prev Rev</th>
               <th class="r">Curr Rev</th>
               <th class="r">Δ Rev</th>
               <th class="r">Orders Effect</th>
-              <th class="r">AOV Effect</th>
+              <th class="r">Gross AOV Effect</th>
               <th class="r">Interaction</th>
             </tr>
           </thead>
@@ -370,11 +370,11 @@
 
     <!-- Why is AOV moving? UPT × ASP BY LANDING PAGE -->
     <div class="card">
-      <h3>Why is AOV moving, by landing page? &nbsp;<span style="font-weight:400;color:var(--text-secondary);font-size:0.85rem">(units/order × price/unit)</span></h3>
+      <h3>Why is gross AOV moving, by landing page? &nbsp;<span style="font-weight:400;color:var(--text-secondary);font-size:0.85rem">(units/order × price/unit)</span></h3>
       <p class="card__sub">
         The UPT × ASP split from above, grouped by <strong>landing page</strong> (all sources combined).
         <strong>UPT Effect</strong> = ΔUPT × prevASP, <strong>ASP Effect</strong> = prevUPT × ΔASP,
-        <strong>Interaction</strong> = ΔUPT × ΔASP. The three sum to Δ AOV for that page; <strong>Driver</strong> flags the larger contributor.
+        <strong>Interaction</strong> = ΔUPT × ΔASP. The three sum to Δ gross AOV for that page; <strong>Driver</strong> flags the larger contributor.
       </p>
       <div class="scroll-x">
         <table id="lp-uptasp-table">
@@ -387,13 +387,13 @@
               <th class="r">Prev ASP</th>
               <th class="r">Curr ASP</th>
               <th class="r">Δ ASP</th>
-              <th class="r">Prev AOV</th>
-              <th class="r">Curr AOV</th>
-              <th class="r">Δ AOV</th>
+              <th class="r">Prev Gross AOV</th>
+              <th class="r">Curr Gross AOV</th>
+              <th class="r">Δ Gross AOV</th>
               <th class="r">UPT Effect</th>
               <th class="r">ASP Effect</th>
               <th class="r">Interaction</th>
-              <th class="r" title="Which effect is the larger driver of Δ AOV?">Driver</th>
+              <th class="r" title="Which effect is the larger driver of Δ gross AOV?">Driver</th>
             </tr>
           </thead>
           <tbody id="lp-uptasp-tbody"></tbody>
@@ -404,12 +404,12 @@
 
     <!-- Blended AOV decomposition BY LANDING PAGE -->
     <div class="card">
-      <h3>Blended AOV Decomposition by landing page</h3>
+      <h3>Blended Gross AOV Decomposition by landing page</h3>
       <p class="card__sub">
-        Decomposes Δ <strong>blended AOV</strong> into per-landing-page contributions (all sources combined).
-        <strong>Own-AOV Effect</strong> = prevOrderShare × ΔAOV (the page's own basket move, weighted by its share of last period's orders).
+        Decomposes Δ <strong>blended gross AOV</strong> into per-landing-page contributions (all sources combined).
+        <strong>Own Gross-AOV Effect</strong> = prevOrderShare × ΔAOV (the page's own basket move, weighted by its share of last period's orders).
         <strong>Mix-Shift Effect</strong> = ΔOrderShare × (currAOV − blended avg) (gaining/losing orders at a basket above or below the blended average).
-        The two sum to the page's contribution; rows sum to total Δ Blended AOV.
+        The two sum to the page's contribution; rows sum to total Δ Blended Gross AOV.
       </p>
       <div class="scroll-x">
         <table id="lp-aov-table">
@@ -419,10 +419,10 @@
               <th class="r">Prev Order Share</th>
               <th class="r">Curr Order Share</th>
               <th class="r">Δ Share</th>
-              <th class="r">Prev AOV</th>
-              <th class="r">Curr AOV</th>
-              <th class="r">Δ AOV</th>
-              <th class="r">Own-AOV Effect</th>
+              <th class="r">Prev Gross AOV</th>
+              <th class="r">Curr Gross AOV</th>
+              <th class="r">Δ Gross AOV</th>
+              <th class="r">Own Gross-AOV Effect</th>
               <th class="r">Mix-Shift Effect</th>
               <th class="r">Total Contribution</th>
               <th class="r">% of Δ Blended</th>
@@ -457,7 +457,7 @@
               <th class="r">Prev ASP</th>
               <th class="r">Curr ASP</th>
               <th class="r">Δ ASP</th>
-              <th class="r">Δ AOV</th>
+              <th class="r">Δ Gross AOV</th>
             </tr>
           </thead>
           <tbody id="lp-upt-tbody"></tbody>
@@ -477,12 +477,12 @@
               <th class="r">Prev Orders</th>
               <th class="r">Curr Orders</th>
               <th class="r">Δ Orders</th>
-              <th class="r">Prev AOV</th>
-              <th class="r">Curr AOV</th>
-              <th class="r">Δ AOV</th>
+              <th class="r">Prev Gross AOV</th>
+              <th class="r">Curr Gross AOV</th>
+              <th class="r">Δ Gross AOV</th>
               <th class="r">Δ Rev</th>
               <th class="r">Orders Effect</th>
-              <th class="r">AOV Effect</th>
+              <th class="r">Gross AOV Effect</th>
             </tr>
           </thead>
           <tbody id="drill-tbody"></tbody>
@@ -492,7 +492,7 @@
 
     <p class="footnote">
       Attribution is read from each order's <code>customerJourneySummary.firstVisit</code>. Orders without a recorded
-      first visit are bucketed as <strong>Unknown</strong>. AOV = total_price ÷ orders. Revenue is order
+      first visit are bucketed as <strong>Unknown</strong>. Gross AOV = order total (incl. shipping, tax &amp; protection) ÷ orders. Revenue is order
       total_price (incl. tax/shipping, currency = shop currency).
     </p>
   </div>
@@ -732,7 +732,7 @@ function renderKpi(channels) {
   const kpis = [
     { label: 'Revenue', curr: fmt$(currR), prev: fmt$(prevR), d: currR - prevR, fmt: signed$ },
     { label: 'Orders',  curr: fmtInt(currO), prev: fmtInt(prevO), d: currO - prevO, fmt: signedInt },
-    { label: 'Blended AOV', curr: fmt$2(currA), prev: fmt$2(prevA), d: currA - prevA, fmt: signed$2 },
+    { label: 'Blended Gross AOV', curr: fmt$2(currA), prev: fmt$2(prevA), d: currA - prevA, fmt: signed$2 },
   ];
   document.getElementById('kpi-row').innerHTML = kpis.map(k => `
     <div class="kpi">
@@ -906,7 +906,7 @@ function renderAovTable(channels, opts = {}) {
   const sumTot = sumOwn + sumMix;
   document.getElementById(tfootId).innerHTML = `
     <tr>
-      <td>Total Δ Blended AOV</td>
+      <td>Total Δ Blended Gross AOV</td>
       <td class="r">100%</td>
       <td class="r">100%</td>
       <td class="r">—</td>
