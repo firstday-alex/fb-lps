@@ -47,7 +47,7 @@
   let root = null;
   let gen = 0;                       // bumps on every load so a stale fetch can't render
   let state = null;                  // { cur, prev, meta }
-  const ui = { renewals: true, zeros: false, dim: 'order_type', minOrders: 20 };
+  const ui = { renewals: true, zeros: false, dim: 'order_type', minOrders: 20, lineDim: 'module', minUnits: 10 };
 
   // ── formatting ──
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -67,7 +67,16 @@
   // ── aggregation ──
   const blank = () => Object.fromEntries(FIELDS.map(f => [f, 0]));
   const addTo = (a, b) => { for (const f of FIELDS) a[f] += b[f] || 0; return a; };
-  const newPart = () => ({ totals: blank(), days: {}, seg: {}, hist_net: {}, hist_units: {} });
+  const newPart = () => ({ totals: blank(), days: {}, seg: {}, hist_net: {}, hist_units: {}, lines: {} });
+  const LINE_FIELDS = ['units', 'net', 'list', 'orders'];
+  const LINE_DIMS = [
+    ['module', 'Upsell module'],
+    ['page', 'Page it was added from'],
+    ['module_page', 'Upsell module × page'],
+    ['product', 'Product'],
+    ['module_product', 'Upsell module × product'],
+    ['bundle', 'Bundle'],
+  ];
 
   function mergePart(into, p) {
     addTo(into.totals, p.totals);
@@ -78,6 +87,13 @@
     }
     for (const h of ['hist_net', 'hist_units']) {
       for (const [k, v] of Object.entries(p[h])) into[h][k] = (into[h][k] || 0) + v;
+    }
+    for (const [dim, m] of Object.entries(p.lines || {})) {
+      const t = into.lines[dim] ||= {};
+      for (const [k, v] of Object.entries(m)) {
+        const g = t[k] ||= Object.fromEntries(LINE_FIELDS.map(f => [f, 0]));
+        for (const f of LINE_FIELDS) g[f] += v[f] || 0;
+      }
     }
   }
 
@@ -249,6 +265,7 @@
   // ── render ──
   const SUBCARDS = [
     ['na-bridge', 'Order-value bridge (per order)'],
+    ['na-units', 'What moved paid units / order'],
     ['na-extras', 'Protection, free gifts &amp; $0 units'],
     ['na-segments', 'What moved net AOV, by segment'],
     ['na-dist', 'Order-value distribution (net AOV per order)'],
@@ -297,6 +314,7 @@
         ${summary(P, C, p, c)}
       </div>
       ${bridgeCard(p, c)}
+      ${unitsCard(P, C)}
       ${extrasCard(p, c)}
       ${segmentCard(P, C)}
       ${distributionCard(P, C)}
@@ -383,9 +401,22 @@
       <div><strong>Net AOV ${d >= 0 ? 'rose' : 'fell'} ${$2(Math.abs(d))}</strong> (${$2(p.aov)} → ${$2(c.aov)}).
         By driver: ${drivers.map(([l, v]) => `${l} <span class="${cls(v)}">${s$2(v)}</span>`).join(', ')}.</div>
       ${lines.map(([l, t]) => `<div>${l}: ${t}.</div>`).join('')}
+      ${unitsLine(P, C)}
       <div class="na-dim">Units/order as Shopify counts it (protection and gifts included): ${x2(p.allUpt)} → ${x2(c.allUpt)};
         paid units only: ${x2(p.upt)} → ${x2(c.upt)}.</div>
     </div>`;
+  }
+
+  // One line for the headline: did paid UPT move on main products or upsells,
+  // and which module moved most. Same arithmetic as the units card.
+  function unitsLine(P, C) {
+    const o0 = P.totals.orders, o1 = C.totals.orders;
+    const m0 = P.lines.module || {}, m1 = C.lines.module || {};
+    const keys = [...new Set([...Object.keys(m0), ...Object.keys(m1)])];
+    if (!keys.length || !o0 || !o1) return '';
+    const parts = keys.map(k => [k, (m1[k]?.units || 0) / o1 - (m0[k]?.units || 0) / o0])
+      .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+    return `<div>Paid units / order by upsell module: ${parts.map(([k, v]) => `${esc(k)} <span class="${cls(v)}">${sX2(v)}</span>`).join(', ')}.</div>`;
   }
 
   function bridgeCard(p, c) {
@@ -424,6 +455,69 @@
             Shipping waived on free-shipping orders: ${$2(p.shipWaivedPerOrder)} → ${$2(c.shipWaivedPerOrder)} per order.</p>
         </div>
       </div></div>`;
+  }
+
+  // Paid units per order by where the line came from. Each row's units ÷ ALL
+  // orders, so the rows sum to paid UPT and their Δs sum to Δ UPT exactly; the
+  // same holds for net $ per order and net AOV. Attach rate and units per
+  // attaching order say whether a move is "fewer orders take it" or "those that
+  // take it take fewer".
+  function unitsCard(P, C) {
+    const o0 = P.totals.orders, o1 = C.totals.orders;
+    const m0 = P.lines[ui.lineDim] || {}, m1 = C.lines[ui.lineDim] || {};
+    const z = { units: 0, net: 0, list: 0, orders: 0 };
+    const rows = [...new Set([...Object.keys(m0), ...Object.keys(m1)])].map(k => {
+      const a = m0[k] || z, b = m1[k] || z;
+      const u0 = o0 ? a.units / o0 : 0, u1 = o1 ? b.units / o1 : 0;
+      const n0 = o0 ? a.net / o0 : 0, n1 = o1 ? b.net / o1 : 0;
+      return { key: k, a, b, u0, u1, du: u1 - u0, n0, n1, dn: n1 - n0,
+        at0: o0 ? a.orders / o0 : NaN, at1: o1 ? b.orders / o1 : NaN,
+        per0: a.orders ? a.units / a.orders : NaN, per1: b.orders ? b.units / b.orders : NaN,
+        asp1: b.units ? b.net / b.units : NaN };
+    });
+    const big = ['page', 'module_page', 'product', 'module_product'].includes(ui.lineDim);
+    const shown = rows.filter(r => !big || Math.max(r.a.units, r.b.units) >= ui.minUnits)
+      .sort((x, y) => Math.abs(y.du) - Math.abs(x.du));
+    const rest = rows.filter(r => !shown.includes(r));
+    const restSum = rest.reduce((s, r) => ({ du: s.du + r.du, dn: s.dn + r.dn, u0: s.u0 + r.u0, u1: s.u1 + r.u1 }), { du: 0, dn: 0, u0: 0, u1: 0 });
+    const tU0 = o0 ? P.totals.paid_units / o0 : NaN, tU1 = o1 ? C.totals.paid_units / o1 : NaN;
+    const tN0 = o0 ? P.totals.net / o0 : NaN, tN1 = o1 ? C.totals.net / o1 : NaN;
+    // Headline: main products vs every upsell module together.
+    const mod0 = P.lines.module || {}, mod1 = C.lines.module || {};
+    const MAIN = 'Main product (no upsell module)';
+    const mainD = ((mod1[MAIN]?.units || 0) / (o1 || 1)) - ((mod0[MAIN]?.units || 0) / (o0 || 1));
+    const upD = (tU1 - tU0) - mainD;
+    const td = (v, f, d) => `<td class="r ${d ? cls(v) : ''}">${f(v)}</td>`;
+    return `<div class="card" id="na-units"><h3>What moved paid units / order</h3>
+      <p class="card__sub">Every paid line is tagged with the upsell module that added it (none = added as the main product) and the page it was
+        added on. <strong>Units / order</strong> is that row's units ÷ all orders, so rows sum to paid UPT and the Δ column sums to Δ UPT.
+        <strong>Attach</strong> = share of orders with at least one such line; <strong>per attaching order</strong> = units in those orders.
+        Protection, free gifts and $0 lines are excluded.</p>
+      <div class="na-summary" style="margin-bottom:12px">Paid units / order ${x2(tU0)} → ${x2(tU1)} (<span class="${cls(tU1 - tU0)}">${sX2(tU1 - tU0)}</span>):
+        main products <span class="${cls(mainD)}">${sX2(mainD)}</span>, all upsell modules together <span class="${cls(upD)}">${sX2(upD)}</span>.</div>
+      <div class="na-controls">
+        <label>Split by <select data-na="linedim">${LINE_DIMS.map(([k, l]) => `<option value="${k}" ${k === ui.lineDim ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        ${big ? `<label>Min units <input type="number" min="1" value="${ui.minUnits}" data-na="minunits" style="width:70px"></label>` : ''}
+      </div>
+      <div class="scroll-x"><table>
+        <thead><tr><th>${esc((LINE_DIMS.find(d => d[0] === ui.lineDim) || [])[1] || '')}</th>
+          <th class="r">Prev units</th><th class="r">Curr units</th>
+          <th class="r">Prev units / order</th><th class="r">Curr units / order</th><th class="r">Δ units / order</th>
+          <th class="r">Attach prev</th><th class="r">Attach curr</th><th class="r">Per attaching order</th>
+          <th class="r">Net $/unit</th><th class="r">Net $/order Δ</th></tr></thead>
+        <tbody>${shown.map(r => `<tr><td>${esc(r.key)}</td>
+          ${td(r.a.units, int)}${td(r.b.units, int)}${td(r.u0, x2)}${td(r.u1, x2)}
+          <td class="r ${cls(r.du)}"><strong>${sX2(r.du)}</strong></td>
+          ${td(r.at0, pct)}${td(r.at1, pct)}
+          <td class="r">${x2(r.per0)} → ${x2(r.per1)}</td>
+          ${td(r.asp1, $2)}${td(r.dn, s$2, true)}</tr>`).join('')}
+          ${rest.length ? `<tr class="na-dim"><td>${rest.length} smaller rows (under ${ui.minUnits} units)</td><td colspan="2"></td>
+            ${td(restSum.u0, x2)}${td(restSum.u1, x2)}${td(restSum.du, sX2, true)}<td colspan="4"></td>${td(restSum.dn, s$2, true)}</tr>` : ''}
+        </tbody>
+        <tfoot><tr><td>Total (paid UPT / net AOV)</td><td class="r">${int(P.totals.paid_units)}</td><td class="r">${int(C.totals.paid_units)}</td>
+          <td class="r">${x2(tU0)}</td><td class="r">${x2(tU1)}</td><td class="r ${cls(tU1 - tU0)}"><strong>${sX2(tU1 - tU0)}</strong></td>
+          <td colspan="4"></td><td class="r ${cls(tN1 - tN0)}">${s$2(tN1 - tN0)}</td></tr></tfoot>
+      </table></div></div>`;
   }
 
   function extrasCard(p, c) {
@@ -608,6 +702,8 @@
         else if (k === 'zeros') ui.zeros = el.checked;
         else if (k === 'dim') ui.dim = el.value;
         else if (k === 'min') ui.minOrders = Math.max(1, parseInt(el.value, 10) || 1);
+        else if (k === 'linedim') ui.lineDim = el.value;
+        else if (k === 'minunits') ui.minUnits = Math.max(1, parseInt(el.value, 10) || 1);
         render();
       });
     });

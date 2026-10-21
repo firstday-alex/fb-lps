@@ -2201,7 +2201,9 @@ app.get('/api/net-aov-data', async (req, res) => {
               node {
                 quantity
                 sellingPlan { name }
-                product { productType vendor }
+                customAttributes { key value }
+                title
+                product { title productType vendor }
                 originalUnitPriceSet { shopMoney { amount } }
                 discountedUnitPriceAfterAllDiscountsSet { shopMoney { amount } }
               }
@@ -2254,6 +2256,14 @@ app.get('/api/net-aov-data', async (req, res) => {
     // per order. Both are counts, so they add across days and parts too.
     hist_net: {},
     hist_units: {},
+    // Paid units and revenue by where each line came from. The storefront tags
+    // every line with `_upsell_module` (cart_upsells, pdp_upsells_dialog,
+    // build_box, checkout_upsell — absent on a product added as the main item)
+    // and `_page_path` (the page it was added on). Units per order by module
+    // sums exactly to paid UPT, so a UPT drop splits into "fewer upsell units"
+    // vs "fewer main-product units" with nothing left over. `orders` counts
+    // orders with at least one such line (attach rate), once per order.
+    lines: { module: {}, page: {}, module_page: {}, bundle: {}, product: {}, module_product: {} },
   });
   const parts = Object.fromEntries(PARTS.map(p => [p, newPart()]));
 
@@ -2274,6 +2284,7 @@ app.get('/api/net-aov-data', async (req, res) => {
     const o = blank();
     o.orders = 1;
     let anySellingPlan = false;
+    const lineAcc = { module: {}, page: {}, module_page: {}, bundle: {}, product: {}, module_product: {} };
     for (const le of (n.lineItems?.edges || [])) {
       const l = le.node;
       const qty = parseInt(l.quantity ?? 0, 10) || 0;
@@ -2293,6 +2304,22 @@ app.get('/api/net-aov-data', async (req, res) => {
         o.list += listUnit * qty;
         o.net += netUnit * qty;
         if (l.sellingPlan) anySellingPlan = true;
+        const attr = {};
+        for (const kv of (l.customAttributes || [])) attr[kv.key] = kv.value;
+        const mod = (attr._upsell_module || '').trim() || 'Main product (no upsell module)';
+        const page = (attr._page_path || '').trim() || '(no page recorded)';
+        const keys = {
+          module: mod,
+          page,
+          module_page: mod + ' · ' + page,
+          bundle: (attr._bundle_title || '').trim() || '(not in a bundle)',
+          product: (l.product?.title || l.title || '(unknown product)').trim(),
+        };
+        keys.module_product = mod + ' · ' + keys.product;
+        for (const [dim, key] of Object.entries(keys)) {
+          const g = lineAcc[dim][key] ||= { units: 0, net: 0, list: 0 };
+          g.units += qty; g.net += netUnit * qty; g.list += listUnit * qty;
+        }
       }
     }
     o.prot_orders = o.protection > 0 ? 1 : 0;
@@ -2341,6 +2368,12 @@ app.get('/api/net-aov-data', async (req, res) => {
       landing_page: lpPath(fv?.landingPage) || '(none)',
     };
     for (const [dim, key] of Object.entries(segKeys)) add(part.seg[dim][key] ||= blank(), o);
+    for (const [dim, m] of Object.entries(lineAcc)) {
+      for (const [key, g] of Object.entries(m)) {
+        const t = part.lines[dim][key] ||= { units: 0, net: 0, list: 0, orders: 0 };
+        t.units += g.units; t.net += g.net; t.list += g.list; t.orders += 1;
+      }
+    }
     const bin = Math.floor(o.net);
     part.hist_net[bin] = (part.hist_net[bin] || 0) + 1;
     part.hist_units[o.paid_units] = (part.hist_units[o.paid_units] || 0) + 1;
