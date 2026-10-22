@@ -1981,7 +1981,7 @@ function orderChannelScope(param) {
 // Admin GraphQL Orders API and customerJourneySummary.firstVisit instead. Paginates by cursor; pre-aggregates server-side to keep payload
 // small. Returns current + previous period as { rows: [{utm_source, utm_medium,
 // landing_page, bid, orders, revenue}], order_count, truncated }, where bid is
-// cost_cap | other | unknown, read from the campaign name.
+// cost_cap | troas | highest_volume | other | unknown, read from the campaign name.
 //
 // Optional query params (used by meta-aov-impact.html; omitting them keeps the
 // exact shape aov-impact.html expects):
@@ -2062,7 +2062,12 @@ app.get('/api/aov-impact-data', async (req, res) => {
     }
     if (!name || /^\d+$/.test(name) || /\{\{|\}\}/.test(name)) return 'unknown';
     // "CCAP" shows up as shorthand ("Reactivation - Unconverted | CBO - CCAP").
-    return /cost\s*cap|\bccap\b/i.test(name) ? 'cost_cap' : 'other';
+    if (/cost\s*cap|\bccap\b/i.test(name)) return 'cost_cap';
+    // TROAS is written "CBO - TROAS" or "CBO | TROAS"; Highest Volume is spelled
+    // out ("CBO - Highest Volume"). "Max Value" and untagged names stay 'other'.
+    if (/\btroas\b/i.test(name)) return 'troas';
+    if (/highest\s*volume/i.test(name)) return 'highest_volume';
+    return 'other';
   };
 
   const fetchOrders = async (s, e) => {
@@ -2118,7 +2123,7 @@ app.get('/api/aov-impact-data', async (req, res) => {
   const aggregate = (orders) => {
     const map = new Map();
     for (const o of orders) {
-      // `bid` is in the key so aov-impact.html can split Meta by cost cap without
+      // `bid` is in the key so aov-impact.html can split Meta by bid strategy without
       // the full campaign dimension; in campaign_lp mode the campaign already
       // fixes it, so it adds no rows there.
       const key = byCampaign
@@ -2184,7 +2189,7 @@ HOW TO READ THE BRIEF:
 - revenue_vs_meta_aov = orders × aov_vs_meta: how much more or less revenue the ad's orders brought in than the same number of orders at Meta's AOV. Rank and weigh by this.
 - basket_effect + price_effect + interaction = aov_vs_meta. basket_effect is the part from units per order (upt) differing from Meta; price_effect is the part from price per unit (asp) differing. Say which one leads.
 - prev_orders / prev_aov are the same ad in the comparison window; null means it had no orders then. An ad that was also far from Meta last period is a more persistent outlier than one that wasn't.
-- campaigns lists the ad's campaigns with their bid tag (cost_cap / other / unknown, read from the campaign name). top_landing_pages is where its orders landed.
+- campaigns lists the ad's campaigns with their bid tag (cost_cap / troas / highest_volume / other / unknown, read from the campaign name). top_landing_pages is where its orders landed.
 - method.ads_tested and method.expected_by_chance: with many ads tested, roughly expected_by_chance of them would clear the threshold by luck alone. If the number of outliers found is close to that, say the list is mostly noise. Treat outliers with orders under 20 as tentative.
 
 Ad names are long and follow a token schema (segments like SKU-…, F-…, C-…, A-…, URL-…). Quote a SHORT distinguishing fragment of each name (e.g. the SKU and C- tokens), never the full name. If several outliers on the same side share a token, you may point that out as a pattern worth checking, quoting the token — but don't say what the token means or claim it causes the gap. Never write URLs; the page renders ad links itself.

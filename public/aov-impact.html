@@ -359,13 +359,13 @@
       </div>
     </div>
 
-    <!-- Meta split by bid strategy: Cost Cap vs everything else -->
+    <!-- Meta split by bid strategy: Cost Cap / TROAS / Highest Volume / everything else -->
     <div class="card" id="bid-card">
-      <h3>Meta: Cost Cap vs non-Cost Cap</h3>
+      <h3>Meta: by bid strategy</h3>
       <p class="card__sub" id="bid-sub">
         Meta orders only (utm_source facebook / ig / instagram), split by the campaign name: <strong>Cost Cap</strong> is any
-        campaign named with "Cost Cap" or "CCAP"; <strong>Non-Cost Cap</strong> is every other named campaign (TROAS, Highest Volume,
-        untagged lowest-cost, testing). <strong>Unclassified</strong> is orders whose first visit carried a bare campaign ID,
+        campaign named with "Cost Cap" or "CCAP"; <strong>TROAS</strong> and <strong>Highest Volume</strong> are campaigns tagged
+        with those names; <strong>Other</strong> is every other named campaign (Max Value, untagged lowest-cost, testing). <strong>Unclassified</strong> is orders whose first visit carried a bare campaign ID,
         an unresolved macro or no campaign, so the bid strategy can't be read. Same three breakdowns as above, totalled across Meta.
       </p>
       <h4 class="sub-h">Revenue decomposition</h4>
@@ -799,13 +799,16 @@ function aggregateLandingPage(rowsCur, rowsPrev) {
 }
 
 // Meta orders grouped by the server's campaign-name bid tag. Fixed order rather
-// than sorted by Δ revenue: three rows, and the reader compares Cost Cap with the
-// rest, so the rows shouldn't swap places between date ranges.
+// than sorted by Δ revenue: the reader compares bid strategies with each other,
+// so the rows shouldn't swap places between date ranges.
 const BID_GROUPS = [
-  { key: 'cost_cap', label: 'Cost Cap',       color: '#1877f2' },
-  { key: 'other',    label: 'Non-Cost Cap',   color: '#22c55e' },
-  { key: 'unknown',  label: 'Unclassified',   color: '#9ca3af' },
+  { key: 'cost_cap',       label: 'Cost Cap',       color: '#1877f2' },
+  { key: 'troas',          label: 'TROAS',          color: '#22c55e' },
+  { key: 'highest_volume', label: 'Highest Volume', color: '#f59e0b' },
+  { key: 'other',          label: 'Other',          color: '#8b5cf6' },
+  { key: 'unknown',        label: 'Unclassified',   color: '#9ca3af' },
 ];
+const BID_UNKNOWN = BID_GROUPS.find(b => b.key === 'unknown');
 function aggregateMetaBid(rowsCur, rowsPrev) {
   const isMeta = r => CHANNELS.meta.match(String(r.utm_source || '').trim().toLowerCase());
   const m = new Map(BID_GROUPS.map(b => [b.key, { bid: b.key, prevO: 0, prevR: 0, prevU: 0, currO: 0, currR: 0, currU: 0 }]));
@@ -829,7 +832,7 @@ function aggregateMetaBid(rowsCur, rowsPrev) {
     }));
 }
 function bidCell(key) {
-  const b = BID_GROUPS.find(x => x.key === key) || BID_GROUPS[2];
+  const b = BID_GROUPS.find(x => x.key === key) || BID_UNKNOWN;
   return `<span class="channel-cell"><span class="channel-dot" style="background:${b.color}"></span>${b.label}</span>`;
 }
 
@@ -1331,7 +1334,7 @@ function renderOutlierTables(o) {
     const shown = list.slice(0, OUTLIER_TOP_N);
     const body = shown.length ? shown.map(x => {
       const c = x.camps[0];
-      const bidLabel = c ? (BID_GROUPS.find(b => b.key === c.bid) || BID_GROUPS[2]).label : '—';
+      const bidLabel = c ? (BID_GROUPS.find(b => b.key === c.bid) || BID_UNKNOWN).label : '—';
       // An ad id can't be resolved by name, so it only gets the copy chip.
       const links = AdLink.cellHtml(x.ad, /^\d+$/.test(x.ad) ? { links: false } : {});
       return `<tr>
