@@ -43,6 +43,12 @@
     details > summary { cursor:pointer; font-weight:600; color:var(--fb-blue); font-size:0.85rem; padding:6px 0; }
     .status { padding:40px; text-align:center; color:var(--text-secondary); }
     .status.err { color:var(--negative); }
+    .run-bar { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-bottom:16px; }
+    .run-bar button { font:inherit; font-size:0.88rem; font-weight:600; padding:8px 16px; border-radius:8px; border:1px solid var(--fb-blue); background:var(--fb-blue); color:#fff; cursor:pointer; }
+    .run-bar button.secondary { background:#fff; color:var(--fb-blue); }
+    .run-bar button:disabled { opacity:0.5; cursor:default; }
+    .run-status { font-size:0.85rem; color:var(--text-secondary); }
+    .run-status.err { color:var(--negative); }
   </style>
 </head>
 <body>
@@ -50,11 +56,18 @@
   <a class="back" href="/">&#8592; Ads Viewer</a>
   <div>
     <h1>Morning Brief</h1>
-    <p>Auto-generated each weekday morning · grounded in Shopify session data</p>
+    <p>Runs when you click · grounded in Shopify session data</p>
   </div>
 </header>
-<div class="wrap" id="wrap">
-  <div class="status" id="status">Loading…</div>
+<div class="wrap">
+  <div class="run-bar">
+    <button id="run-yesterday">Yesterday vs day prior</button>
+    <button id="run-today" class="secondary">Today so far vs yesterday</button>
+    <span class="run-status" id="run-status"></span>
+  </div>
+  <div id="wrap">
+    <div class="status" id="status">Loading…</div>
+  </div>
 </div>
 
 <script>
@@ -131,7 +144,7 @@ function renderBrief(b){
     const cvrRel=deltaPct(cvr.curr,cvr.prev);
     const tPct=deltaPct(txn.curr,txn.prev);
     h += `<div class="kpis">
-      <div class="kpi"><div class="kpi__label">Sessions</div><div class="kpi__value">${fmtN(sess.curr)}</div><div class="kpi__sub ${cls(sPct)}">${fmtPct(sPct)} vs prior day</div>${trailHtml(o.trailing, sess.curr, w=>w.sessionsPerDay, 'pct', v=>(v<10?v.toFixed(1):fmtN(v))+'/day', 'Averaged')}</div>
+      <div class="kpi"><div class="kpi__label">Sessions</div><div class="kpi__value">${fmtN(sess.curr)}</div><div class="kpi__sub ${cls(sPct)}">${fmtPct(sPct)} ${b.mode==='today'?'vs same hours yesterday':'vs prior day'}</div>${trailHtml(o.trailing, sess.curr, w=>w.sessionsPerDay, 'pct', v=>(v<10?v.toFixed(1):fmtN(v))+'/day', 'Averaged')}</div>
       <div class="kpi"><div class="kpi__label">Conversion Rate</div><div class="kpi__value">${cvr.curr!=null?(cvr.curr*100).toFixed(2)+'%':'—'}</div><div class="kpi__sub ${cls(cvrPP)}">${fmtPP(cvrPP)} (${fmtPct(cvrRel)})</div>${trailHtml(o.trailing, cvr.curr, w=>w.cvr, 'pp', v=>(v*100).toFixed(2)+'%', 'Blended CVR')}</div>
       <div class="kpi"><div class="kpi__label">Transactions</div><div class="kpi__value">${fmtN(txn.curr)}</div><div class="kpi__sub ${cls(tPct)}">${fmtPct(tPct)}</div>${trailHtml(o.trailing, txn.curr, w=>w.transactionsPerDay, 'pct', v=>(v<10?v.toFixed(1):fmtN(v))+'/day', 'Averaged')}</div>`;
     if(b.aov && b.aov.averageOrderValue){
@@ -164,30 +177,63 @@ function renderBrief(b){
   return h;
 }
 
+function renderReport(data){
+  const wrap = document.getElementById('wrap');
+  const label = data.mode === 'today' && data.brief && data.brief.through
+    ? `Today so far (${esc(data.date)}, through ${esc(data.brief.through)}) vs the same hours yesterday`
+    : `${esc(data.date||'—')} vs the day prior`;
+  const genLine = `${label} · generated ${data.generatedAt?new Date(data.generatedAt).toLocaleString():'—'}`;
+  wrap.innerHTML = `
+    <div class="meta-line">${genLine}</div>
+    <div class="card"><div class="kpis-wrap" id="brief"></div></div>
+    <div class="card"><div class="narrative" id="narrative"></div></div>
+  `;
+  // Render brief and narrative independently — a failure in one must not blank the other.
+  try { document.getElementById('brief').innerHTML = renderBrief(data.brief); }
+  catch(e){ document.getElementById('brief').innerHTML = '<p style="color:var(--negative);font-size:0.8rem">Could not render numbers: '+esc(e.message)+'</p>'; }
+  try {
+    document.getElementById('narrative').innerHTML = data.markdown
+      ? mdToHtml(data.markdown)
+      : '<p style="color:var(--text-secondary)">No narrative provided.</p>';
+  } catch(e){ document.getElementById('narrative').innerHTML = '<p style="color:var(--negative)">Could not render narrative: '+esc(e.message)+'</p>'; }
+  // Note: markdown is escaped before conversion; raw `html` field is intentionally
+  // not injected (avoids unsafe HTML from the stored report).
+}
+
+// Generation is on demand: the brief's ShopifyQL plus a Claude write-up, so it
+// takes ~30-60s. The result is also saved server-side as the latest run.
+async function runBrief(mode){
+  const btns = [document.getElementById('run-yesterday'), document.getElementById('run-today')];
+  const st = document.getElementById('run-status');
+  btns.forEach(b => b.disabled = true);
+  st.className = 'run-status';
+  st.textContent = (mode === 'today' ? 'Running today so far vs yesterday' : 'Running yesterday vs the day prior') + '… this takes 30-60 seconds.';
+  try {
+    const resp = await fetch(`/api/generate-daily-report?mode=${mode}&token=${encodeURIComponent(key)}`);
+    const data = await resp.json().catch(() => ({}));
+    if(resp.status===401) throw new Error('access denied — append ?key=<token> to the URL');
+    if(!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
+    renderReport(data);
+    st.textContent = '';
+  } catch(err){
+    st.className = 'run-status err';
+    st.textContent = 'Run failed: ' + err.message;
+  } finally {
+    btns.forEach(b => b.disabled = false);
+  }
+}
+document.getElementById('run-yesterday').addEventListener('click', () => runBrief('yesterday'));
+document.getElementById('run-today').addEventListener('click', () => runBrief('today'));
+
+// On open, show the last run (whichever mode) until a button asks for a new one.
 (async () => {
   const status = document.getElementById('status');
-  const wrap = document.getElementById('wrap');
   try {
     const resp = await fetch(`/api/daily-report?key=${encodeURIComponent(key)}`);
     if(resp.status===401){ status.className='status err'; status.textContent='Access denied — append ?key=<token> to the URL.'; return; }
     const data = await resp.json();
-    if(!data || data.report===null){ status.textContent = data && data.message ? data.message : 'No report generated yet. The first one arrives after the next scheduled run.'; return; }
-    const genLine = `Report for ${esc(data.date||'—')} · generated ${data.generatedAt?new Date(data.generatedAt).toLocaleString():'—'}`;
-    wrap.innerHTML = `
-      <div class="meta-line">${genLine}</div>
-      <div class="card"><div class="kpis-wrap" id="brief"></div></div>
-      <div class="card"><div class="narrative" id="narrative"></div></div>
-    `;
-    // Render brief and narrative independently — a failure in one must not blank the other.
-    try { document.getElementById('brief').innerHTML = renderBrief(data.brief); }
-    catch(e){ document.getElementById('brief').innerHTML = '<p style="color:var(--negative);font-size:0.8rem">Could not render numbers: '+esc(e.message)+'</p>'; }
-    try {
-      document.getElementById('narrative').innerHTML = data.markdown
-        ? mdToHtml(data.markdown)
-        : '<p style="color:var(--text-secondary)">No narrative provided.</p>';
-    } catch(e){ document.getElementById('narrative').innerHTML = '<p style="color:var(--negative)">Could not render narrative: '+esc(e.message)+'</p>'; }
-    // Note: markdown is escaped before conversion; raw `html` field is intentionally
-    // not injected (avoids unsafe HTML from the stored report).
+    if(!data || data.report===null){ status.textContent = 'No brief run yet. Pick one above.'; return; }
+    renderReport(data);
   } catch (err) {
     status.className='status err'; status.textContent = 'Error loading report: ' + err.message;
   }

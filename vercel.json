@@ -14,11 +14,5 @@
       "src": "/(.*)",
       "dest": "server.js"
     }
-  ],
-  "crons": [
-    {
-      "path": "/api/generate-daily-report",
-      "schedule": "0 14 * * 1-5"
-    }
   ]
 }

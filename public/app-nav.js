@@ -20,7 +20,7 @@
     {
       label: 'Daily',
       items: [
-        { href: '/daily-report.html',       name: 'Morning Brief',            desc: 'Auto-generated each weekday, grounded in Shopify session data' },
+        { href: '/daily-report.html',       name: 'Morning Brief',            desc: 'Run on demand for yesterday or today so far, grounded in Shopify session data' },
         { href: '/all-tabs-analysis.html',  name: 'Tab Summaries',            desc: 'Run an automated summary of any dashboard for a date range' },
       ],
     },

@@ -54,7 +54,7 @@ the parent row it expanded from), then look at the page in a browser.
 
 - `server.js` — every route: page serving, the `/api/*-data` endpoints that build
   and run ShopifyQL, Meta OAuth + creative lookups, the password gate, and the
-  daily-report cron target (`/api/generate-daily-report`, weekdays 14:00 UTC).
+  on-demand Morning Brief generator (`/api/generate-daily-report?mode=yesterday|today`).
 - `public/*.html` — one self-contained page per dashboard tab. Each carries its
   own CSS and script inline; they are not built or bundled.
 - `public/app-nav.js` — the shared tab nav injected into every page.

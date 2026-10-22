@@ -4831,13 +4831,15 @@ app.post('/api/diag-criteria', async (req, res) => {
 // DAILY BRIEF + DAILY REPORT
 // ─────────────────────────────────────────────
 // /api/daily-brief  — DETERMINISTIC. Runs a compact set of ShopifyQL queries
-//   for a single day vs the prior day and returns the key figures for every
-//   Shopify-backed tab. No interpretation — the numbers are computed by code so
-//   the narrative layer (a scheduled Claude agent) can cite them without any
-//   risk of hallucinated values.
-// /api/daily-report — the agent POSTs its grounded narrative here (token-gated);
-//   /daily-report.html renders the latest. Stored in Vercel KV (falls back to a
-//   JSON file locally), same mechanism as diag-criteria.
+//   for yesterday vs the day prior, or today so far vs the same hours yesterday,
+//   and returns the key figures. No interpretation — the numbers are computed by
+//   code so the narrative layer can cite them without any risk of hallucinated
+//   values.
+// /api/generate-daily-report — brief + Claude narrative, run on demand by the
+//   buttons on /daily-report.html (there is no schedule any more).
+// /api/daily-report — the latest run (token-gated), so reopening the page shows
+//   it. Stored in Vercel KV (falls back to a JSON file locally), same mechanism
+//   as diag-criteria.
 
 const REPORT_TOKEN = process.env.DAILY_REPORT_TOKEN || '';
 const REPORT_KV_KEY = 'daily-report';
@@ -4858,21 +4860,37 @@ async function writeStoredReport(data) {
 // When no token is configured, endpoints stay open (dev convenience) with a warning.
 function reportTokenOk(supplied) { return !REPORT_TOKEN || supplied === REPORT_TOKEN; }
 
-// Compute the deterministic daily brief for a given day (YYYY-MM-DD; default
-// yesterday). Shared by GET /api/daily-brief and the cron generate endpoint.
-async function buildDailyBrief(day) {
+// Compute the deterministic daily brief. Shared by GET /api/daily-brief and the
+// generate endpoint the Morning Brief page's buttons call. Two modes:
+//   'yesterday' (default) — `day` (YYYY-MM-DD, default yesterday) vs the day prior.
+//   'today'               — today from midnight to now vs yesterday over the SAME
+//                           hours. A partial today against all of yesterday would
+//                           always read as a collapse, and ShopifyQL's
+//                           previous_period on "startOfDay(0d) UNTIL now" is the
+//                           LAST N hours of yesterday, not its first N — so both
+//                           ranges are spelled out as timestamps.
+async function buildDailyBrief(day, mode = 'yesterday') {
   if (!SHOPIFY_URL || !SHOPIFY_TOKEN) throw new Error('Shopify credentials not configured');
-  if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) {
-    // Yesterday in the business timezone (not server UTC) so it's always the
-    // last COMPLETE day. Vercel runs in UTC (7h ahead of PT), so a UTC-based
-    // "yesterday" can land on the store's partial current day.
-    const tz = process.env.DAILY_REPORT_TZ || 'America/Los_Angeles';
-    const todayLocal = new Intl.DateTimeFormat('en-CA', {
-      timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
-    }).format(new Date());                       // "YYYY-MM-DD" in the business tz
-    const d = new Date(todayLocal + 'T00:00:00Z');
-    d.setUTCDate(d.getUTCDate() - 1);            // step back one full local day
-    day = d.toISOString().slice(0, 10);
+  // Days and clock times are in the business timezone, not server UTC: Vercel
+  // runs in UTC (7h ahead of PT), so a UTC "yesterday" can land on the store's
+  // partial current day. ShopifyQL reads bare timestamps in the shop's timezone.
+  const tz = process.env.DAILY_REPORT_TZ || 'America/Los_Angeles';
+  const nowParts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(new Date()).map(p => [p.type, p.value]));
+  const todayLocal = `${nowParts.year}-${nowParts.month}-${nowParts.day}`;
+  let range, through = null;
+  if (mode === 'today') {
+    day = todayLocal;
+    through = `${nowParts.hour}:${nowParts.minute}`;
+    const prev = shiftDate(day, -1);
+    range = `SINCE ${day}T00:00:00 UNTIL ${day}T${through}:00
+  COMPARE TO ${prev}T00:00:00 UNTIL ${prev}T${through}:00`;
+  } else {
+    mode = 'yesterday';
+    if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) day = shiftDate(todayLocal, -1);
+    range = `SINCE ${day} UNTIL ${day}
+  COMPARE TO previous_period`;
   }
   const googleIn = "utm_source IN ('google', 'youtube', 'demand-gen')";
 
@@ -4898,7 +4916,9 @@ async function buildDailyBrief(day) {
     const lc = names.map(n => (n || '').toLowerCase());
     return {
       idx: (n) => lc.findIndex(s => s === n),
-      prior: (m) => lc.findIndex(s => s === `comparison_${m}__previous_period` || s === `comparison_${m}__yesterday`),
+      // previous_period → comparison_sessions__previous_period; an explicit
+      // timestamp range (today mode) → comparison_sessions__20261021T000000.
+      prior: (m) => lc.findIndex(s => s.startsWith(`comparison_${m}__`)),
       get: (row, i) => i < 0 ? undefined : (Array.isArray(row) ? row[i] : row[names[i]]),
     };
   };
@@ -4906,28 +4926,27 @@ async function buildDailyBrief(day) {
   const normCvr = (v) => { const n = num(v); return n > 1 ? n / 100 : n; };
 
   const errors = [];
-  const brief = { date: day, compare: 'previous day (COMPARE TO previous_period)', generatedAt: new Date().toISOString() };
+  const brief = mode === 'today'
+    ? { date: day, mode, through: `${through} ${tz}`, compare: `yesterday (${shiftDate(day, -1)}), midnight to ${through}`, generatedAt: new Date().toISOString() }
+    : { date: day, mode, compare: 'previous day (COMPARE TO previous_period)', generatedAt: new Date().toISOString() };
 
   // 1) Overall totals + funnel steps (single totals row).
   const overallQuery = `FROM sessions
   SHOW sessions, conversion_rate, sessions_with_cart_additions, sessions_that_reached_checkout, sessions_that_reached_and_completed_checkout
-  SINCE ${day} UNTIL ${day}
-  COMPARE TO previous_period`;
+  ${range}`;
 
   // 2) By channel (utm_source), top 15.
   const channelQuery = `FROM sessions
   SHOW sessions, conversion_rate
   GROUP BY utm_source
-  SINCE ${day} UNTIL ${day}
-  COMPARE TO previous_period
+  ${range}
   ORDER BY sessions DESC`;
 
   const campaignQuery = (whereClause) => `FROM sessions
   SHOW sessions, conversion_rate
   WHERE ${whereClause}
   GROUP BY utm_campaign
-  SINCE ${day} UNTIL ${day}
-  COMPARE TO previous_period
+  ${range}
   ORDER BY sessions DESC`;
 
   // AOV scoped to the Online Store (web) sales channel — excludes subscription
@@ -4937,8 +4956,7 @@ async function buildDailyBrief(day) {
   const aovQuery = `FROM sales
   SHOW average_order_value, total_sales, orders
   WHERE sales_channel = 'Online Store'
-  SINCE ${day} UNTIL ${day}
-  COMPARE TO previous_period`;
+  ${range}`;
 
   // 5) Trailing run-rate baselines. Day-over-day is the noisiest comparison
   // there is — a Tuesday-vs-Monday move is mostly day-of-week — so the brief
@@ -4966,10 +4984,13 @@ async function buildDailyBrief(day) {
     runQL(campaignQuery(googleIn)).catch(e => { errors.push('google: ' + e.message); return null; }),
     runQL(campaignQuery("utm_source = 'facebook' AND utm_medium = 'paid_social'")).catch(e => { errors.push('meta: ' + e.message); return null; }),
     runQL(aovQuery).catch(e => { errors.push('aov: ' + e.message); return null; }),
-    runQL(trailSessQuery(trailWindows.d7)).catch(e => { errors.push('trail7: ' + e.message); return null; }),
-    runQL(trailSessQuery(trailWindows.d30)).catch(e => { errors.push('trail30: ' + e.message); return null; }),
-    runQL(trailAovQuery(trailWindows.d7)).catch(e => { errors.push('trail7aov: ' + e.message); return null; }),
-    runQL(trailAovQuery(trailWindows.d30)).catch(e => { errors.push('trail30aov: ' + e.message); return null; }),
+    // Full-day run-rates don't compare with a partial today, so today skips them.
+    ...(mode === 'today' ? [null, null, null, null] : [
+      runQL(trailSessQuery(trailWindows.d7)).catch(e => { errors.push('trail7: ' + e.message); return null; }),
+      runQL(trailSessQuery(trailWindows.d30)).catch(e => { errors.push('trail30: ' + e.message); return null; }),
+      runQL(trailAovQuery(trailWindows.d7)).catch(e => { errors.push('trail7aov: ' + e.message); return null; }),
+      runQL(trailAovQuery(trailWindows.d30)).catch(e => { errors.push('trail30aov: ' + e.message); return null; }),
+    ]),
   ]);
 
   // Sessions/CVR/transactions over a trailing window, as per-day rates so they
@@ -5080,7 +5101,7 @@ async function buildDailyBrief(day) {
 
 app.get('/api/daily-brief', async (req, res) => {
   try {
-    const brief = await buildDailyBrief(req.query.date);
+    const brief = await buildDailyBrief(req.query.date, req.query.mode);
     res.json(brief);
   } catch (err) {
     console.error('[daily-brief] error:', err);
@@ -5088,7 +5109,7 @@ app.get('/api/daily-brief', async (req, res) => {
   }
 });
 
-// ── Server-side narrative generation (driven by Vercel Cron) ──
+// ── Server-side narrative generation (run from the Morning Brief buttons) ──
 // Computes the deterministic brief, then calls the Claude Messages API to write
 // a grounded markdown analysis from ONLY those numbers, and stores it in KV.
 // Auth: Vercel Cron sends `Authorization: Bearer $CRON_SECRET`; manual runs may
@@ -5101,11 +5122,13 @@ async function callClaudeForNarrative(brief) {
 
 CRITICAL RULE: use ONLY numbers present in the BRIEF JSON below. Never invent, estimate, or extrapolate any figure. Cite the actual values (round sensibly). If a section has no data, say so rather than guessing.
 
-CONTEXT ON THE COMPARISONS: every curr/prev pair is this day vs the PRIOR DAY, which is dominated by day-of-week effects. Where \`trailing\` is present (overall.trailing and aov.trailing, holding d7 and d30 over the 7 and 30 days BEFORE this day, excluding it), weigh it more heavily than the prior-day delta — sessionsPerDay and transactionsPerDay are per-day rates directly comparable to this single day, cvr and averageOrderValue compare directly. Call out when the two disagree, e.g. down vs yesterday but above the 7-day run-rate. If \`trailing\` is absent or null, just use the prior-day comparison and don't mention run-rates.
+CONTEXT ON THE COMPARISONS: ${brief.mode === 'today'
+    ? `every curr/prev pair is TODAY SO FAR (midnight to ${brief.through}) vs YESTERDAY over the same hours. Today is incomplete: never call it a finished day, and never project a full-day total.`
+    : 'every curr/prev pair is this day vs the PRIOR DAY, which is dominated by day-of-week effects.'} Where \`trailing\` is present (overall.trailing and aov.trailing, holding d7 and d30 over the 7 and 30 days BEFORE this day, excluding it), weigh it more heavily than the prior-day delta — sessionsPerDay and transactionsPerDay are per-day rates directly comparable to this single day, cvr and averageOrderValue compare directly. Call out when the two disagree, e.g. down vs yesterday but above the 7-day run-rate. If \`trailing\` is absent or null, just use the prior-day comparison and don't mention run-rates.
 
 Write markdown with these sections:
-# Morning Brief — ${brief.date}
-## Headline — what moved in sessions / CVR / transactions vs the prior day AND vs the 7/30-day run-rate, and why it matters (2-3 sentences).
+# Morning Brief — ${brief.mode === 'today' ? `${brief.date}, through ${brief.through}` : brief.date}
+## Headline — what moved in sessions / CVR / transactions vs ${brief.mode === 'today' ? 'the same hours yesterday' : 'the prior day AND vs the 7/30-day run-rate'}, and why it matters (2-3 sentences).
 ## Channels — biggest session and CVR movers among channels[]; name the drags and the bright spots.
 ## Paid campaigns — notable movers in googleCampaigns[] and metaCampaigns[].
 ## AOV & funnel — AOV change and any funnel-step signal.
@@ -5145,18 +5168,21 @@ app.get('/api/generate-daily-report', async (req, res) => {
   if (gated && !cronOk && !tokenOk) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
-    const brief = await buildDailyBrief(req.query.date);
+    const brief = await buildDailyBrief(req.query.date, req.query.mode);
     const markdown = await callClaudeForNarrative(brief);
     const record = {
       date: brief.date,
+      mode: brief.mode,
       markdown,
       brief,
       generatedAt: new Date().toISOString(),
       generatedBy: cronOk ? 'vercel-cron' : 'manual',
     };
+    // Saved as the latest run so reopening the page shows it; returned in full
+    // so the button that asked for it can render without a second fetch.
     const result = await writeStoredReport(record);
-    console.log(`[generate-daily-report] ${brief.date} · ${markdown.length} chars → ${result.label}`);
-    res.json({ ok: true, date: brief.date, chars: markdown.length, generatedBy: record.generatedBy });
+    console.log(`[generate-daily-report] ${brief.mode} ${brief.date} · ${markdown.length} chars → ${result.label}`);
+    res.json({ ok: true, ...record });
   } catch (err) {
     console.error('[generate-daily-report] error:', err);
     res.status(500).json({ error: err.message });
