@@ -1980,7 +1980,8 @@ function orderChannelScope(param) {
 // but it can't attribute by first-visit UTM or landing page, so this reads the
 // Admin GraphQL Orders API and customerJourneySummary.firstVisit instead. Paginates by cursor; pre-aggregates server-side to keep payload
 // small. Returns current + previous period as { rows: [{utm_source, utm_medium,
-// landing_page, orders, revenue}], order_count, truncated }.
+// landing_page, bid, orders, revenue}], order_count, truncated }, where bid is
+// cost_cap | other | unknown, read from the campaign name.
 //
 // Optional query params (used by meta-aov-impact.html; omitting them keeps the
 // exact shape aov-impact.html expects):
@@ -2045,6 +2046,25 @@ app.get('/api/aov-impact-data', async (req, res) => {
     try { return new URL(url).pathname || ''; } catch { return url; }
   };
 
+  // Bid strategy is only knowable from the campaign name ("CBO - Cost Cap"),
+  // the same read meta-cvr-impact.html's Bid Strategy split makes. Some Meta
+  // orders carry the bare campaign ID (120248…) or an unresolved
+  // {{campaign.name}} macro instead of the name, and the Meta token here is
+  // per-user OAuth so the server can't look those up — they are kept apart as
+  // 'unknown' rather than counted as non-cost-cap.
+  const bidOf = (raw) => {
+    let name = String(raw || '').trim();
+    // Only treat "+" as a space when the name is actually URL-encoded — clean
+    // names use it literally ("USA+CA").
+    if (/%[0-9A-Fa-f]{2}/.test(name)) {
+      name = name.replace(/\+/g, ' ');
+      try { name = decodeURIComponent(name); } catch { /* keep partially decoded */ }
+    }
+    if (!name || /^\d+$/.test(name) || /\{\{|\}\}/.test(name)) return 'unknown';
+    // "CCAP" shows up as shorthand ("Reactivation - Unconverted | CBO - CCAP").
+    return /cost\s*cap|\bccap\b/i.test(name) ? 'cost_cap' : 'other';
+  };
+
   const fetchOrders = async (s, e) => {
     const all = [];
     let cursor = null;
@@ -2080,6 +2100,7 @@ app.get('/api/aov-impact-data', async (req, res) => {
           source: src,
           medium: med,
           campaign: ((utm?.campaign || '') + '').trim(),
+          bid: bidOf(utm?.campaign),
           content: ((utm?.content || '') + '').trim(),
           landing_page: lpPath(fv?.landingPage),
         });
@@ -2097,12 +2118,15 @@ app.get('/api/aov-impact-data', async (req, res) => {
   const aggregate = (orders) => {
     const map = new Map();
     for (const o of orders) {
+      // `bid` is in the key so aov-impact.html can split Meta by cost cap without
+      // the full campaign dimension; in campaign_lp mode the campaign already
+      // fixes it, so it adds no rows there.
       const key = byCampaign
         ? o.source + '|' + o.medium + '|' + o.campaign + '|' + o.content + '|' + o.landing_page
-        : o.source + '|' + o.medium + '|' + o.landing_page;
+        : o.source + '|' + o.medium + '|' + o.landing_page + '|' + o.bid;
       let g = map.get(key);
       if (!g) {
-        g = { utm_source: o.source, utm_medium: o.medium, landing_page: o.landing_page, orders: 0, revenue: 0, units: 0 };
+        g = { utm_source: o.source, utm_medium: o.medium, landing_page: o.landing_page, bid: o.bid, orders: 0, revenue: 0, units: 0 };
         if (byCampaign) { g.utm_campaign = o.campaign; g.utm_content = o.content; }
         map.set(key, g);
       }

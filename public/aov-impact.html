@@ -131,6 +131,8 @@
     }
     .card h3 { font-size: 1rem; margin-bottom: 8px; }
     .card__sub { font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 14px; }
+    .sub-h { font-size: 0.85rem; font-weight: 600; margin: 18px 0 6px; }
+    .sub-h:first-of-type { margin-top: 0; }
     .card__sub strong { color: var(--text-primary); }
 
     table { width: 100%; border-collapse: collapse; font-size: 0.83rem; }
@@ -343,6 +345,88 @@
           </thead>
           <tbody id="aov-tbody"></tbody>
           <tfoot id="aov-tfoot"></tfoot>
+        </table>
+      </div>
+    </div>
+
+    <!-- Meta split by bid strategy: Cost Cap vs everything else -->
+    <div class="card" id="bid-card">
+      <h3>Meta: Cost Cap vs non-Cost Cap</h3>
+      <p class="card__sub" id="bid-sub">
+        Meta orders only (utm_source facebook / ig / instagram), split by the campaign name: <strong>Cost Cap</strong> is any
+        campaign named with "Cost Cap" or "CCAP"; <strong>Non-Cost Cap</strong> is every other named campaign (TROAS, Highest Volume,
+        untagged lowest-cost, testing). <strong>Unclassified</strong> is orders whose first visit carried a bare campaign ID,
+        an unresolved macro or no campaign, so the bid strategy can't be read. Same three breakdowns as above, totalled across Meta.
+      </p>
+      <h4 class="sub-h">Revenue decomposition</h4>
+      <div class="scroll-x">
+        <table>
+          <thead>
+            <tr>
+              <th>Bid strategy</th>
+              <th class="r">Prev Orders</th>
+              <th class="r">Curr Orders</th>
+              <th class="r">Δ Orders</th>
+              <th class="r">Prev Gross AOV</th>
+              <th class="r">Curr Gross AOV</th>
+              <th class="r">Δ Gross AOV</th>
+              <th class="r">Prev Rev</th>
+              <th class="r">Curr Rev</th>
+              <th class="r">Δ Rev</th>
+              <th class="r">Orders Effect</th>
+              <th class="r">Gross AOV Effect</th>
+              <th class="r">Interaction</th>
+            </tr>
+          </thead>
+          <tbody id="bid-rev-tbody"></tbody>
+          <tfoot id="bid-rev-tfoot"></tfoot>
+        </table>
+      </div>
+      <h4 class="sub-h">Units/order × price/unit</h4>
+      <div class="scroll-x">
+        <table>
+          <thead>
+            <tr>
+              <th>Bid strategy</th>
+              <th class="r">Prev UPT</th>
+              <th class="r">Curr UPT</th>
+              <th class="r">Δ UPT</th>
+              <th class="r">Prev ASP</th>
+              <th class="r">Curr ASP</th>
+              <th class="r">Δ ASP</th>
+              <th class="r">Prev Gross AOV</th>
+              <th class="r">Curr Gross AOV</th>
+              <th class="r">Δ Gross AOV</th>
+              <th class="r">UPT Effect</th>
+              <th class="r">ASP Effect</th>
+              <th class="r">Interaction</th>
+              <th class="r" title="Which effect is the larger driver of Δ gross AOV?">Driver</th>
+            </tr>
+          </thead>
+          <tbody id="bid-upt-tbody"></tbody>
+          <tfoot id="bid-upt-tfoot"></tfoot>
+        </table>
+      </div>
+      <h4 class="sub-h">Meta gross AOV: own move vs mix shift</h4>
+      <div class="scroll-x">
+        <table>
+          <thead>
+            <tr>
+              <th>Bid strategy</th>
+              <th class="r">Prev Order Share</th>
+              <th class="r">Curr Order Share</th>
+              <th class="r">Δ Share</th>
+              <th class="r">Prev Gross AOV</th>
+              <th class="r">Curr Gross AOV</th>
+              <th class="r">Δ Gross AOV</th>
+              <th class="r">Own Gross-AOV Effect</th>
+              <th class="r">Mix-Shift Effect</th>
+              <th class="r">Total Contribution</th>
+              <th class="r">% of Δ Meta</th>
+            </tr>
+          </thead>
+          <tbody id="bid-aov-tbody"></tbody>
+          <tfoot id="bid-aov-tfoot"></tfoot>
         </table>
       </div>
     </div>
@@ -684,6 +768,41 @@ function aggregateLandingPage(rowsCur, rowsPrev) {
   return list;
 }
 
+// Meta orders grouped by the server's campaign-name bid tag. Fixed order rather
+// than sorted by Δ revenue: three rows, and the reader compares Cost Cap with the
+// rest, so the rows shouldn't swap places between date ranges.
+const BID_GROUPS = [
+  { key: 'cost_cap', label: 'Cost Cap',       color: '#1877f2' },
+  { key: 'other',    label: 'Non-Cost Cap',   color: '#22c55e' },
+  { key: 'unknown',  label: 'Unclassified',   color: '#9ca3af' },
+];
+function aggregateMetaBid(rowsCur, rowsPrev) {
+  const isMeta = r => CHANNELS.meta.match(String(r.utm_source || '').trim().toLowerCase());
+  const m = new Map(BID_GROUPS.map(b => [b.key, { bid: b.key, prevO: 0, prevR: 0, prevU: 0, currO: 0, currR: 0, currU: 0 }]));
+  const apply = (rows, slot) => rows.forEach(r => {
+    if (!isMeta(r)) return;
+    const g = m.get(r.bid) || m.get('unknown');
+    g[slot + 'O'] += r.orders; g[slot + 'R'] += r.revenue; g[slot + 'U'] += (r.units || 0);
+  });
+  apply(rowsCur, 'curr');
+  apply(rowsPrev, 'prev');
+  return Array.from(m.values())
+    .filter(g => g.prevO > 0 || g.currO > 0)
+    .map(g => ({
+      ...g,
+      prevA: g.prevO > 0 ? g.prevR / g.prevO : 0,
+      currA: g.currO > 0 ? g.currR / g.currO : 0,
+      prevUpt: g.prevO > 0 ? g.prevU / g.prevO : 0,
+      currUpt: g.currO > 0 ? g.currU / g.currO : 0,
+      prevAsp: g.prevU > 0 ? g.prevR / g.prevU : 0,
+      currAsp: g.currU > 0 ? g.currR / g.currU : 0,
+    }));
+}
+function bidCell(key) {
+  const b = BID_GROUPS.find(x => x.key === key) || BID_GROUPS[2];
+  return `<span class="channel-cell"><span class="channel-dot" style="background:${b.color}"></span>${b.label}</span>`;
+}
+
 function lpCell(lp) {
   const label = (lp == null || lp === '') ? '(none)' : lp;
   return `<code style="font-size:0.82rem">${label}</code>`;
@@ -890,7 +1009,7 @@ function renderUptTable(channels, opts = {}) {
 }
 
 function renderAovTable(channels, opts = {}) {
-  const { tbodyId = 'aov-tbody', tfootId = 'aov-tfoot', labelCell = srcCell, labelKey = 'source' } = opts;
+  const { tbodyId = 'aov-tbody', tfootId = 'aov-tfoot', labelCell = srcCell, labelKey = 'source', totalLabel = 'Total Δ Blended Gross AOV' } = opts;
   const prevTotalO = channels.reduce((a,c)=>a+c.prevO,0);
   const currTotalO = channels.reduce((a,c)=>a+c.currO,0);
   const prevTotalR = channels.reduce((a,c)=>a+c.prevR,0);
@@ -919,7 +1038,7 @@ function renderAovTable(channels, opts = {}) {
   const sumTot = sumOwn + sumMix;
   document.getElementById(tfootId).innerHTML = `
     <tr>
-      <td>Total Δ Blended Gross AOV</td>
+      <td>${totalLabel}</td>
       <td class="r">100%</td>
       <td class="r">100%</td>
       <td class="r">—</td>
@@ -1184,6 +1303,11 @@ function render(payload) {
   renderUptTable(landingPages, { tbodyId: 'lp-uptasp-tbody', tfootId: 'lp-uptasp-tfoot', labelCell: lpCell, labelKey: 'landingPage' });
   renderAovTable(sources);
   renderAovTable(landingPages, { tbodyId: 'lp-aov-tbody', tfootId: 'lp-aov-tfoot', labelCell: lpCell, labelKey: 'landingPage' });
+  const bids = aggregateMetaBid(payload.current.rows, payload.previous.rows);
+  const bidOpts = (t) => ({ tbodyId: `bid-${t}-tbody`, tfootId: `bid-${t}-tfoot`, labelCell: bidCell, labelKey: 'bid' });
+  renderRevTable(bids, bidOpts('rev'));
+  renderUptTable(bids, bidOpts('upt'));
+  renderAovTable(bids, { ...bidOpts('aov'), totalLabel: 'Total Δ Meta Gross AOV' });
   const minOrders = parseInt(document.getElementById('lp-min-orders').value, 10) || 20;
   renderLpUpt(_drillTree, minOrders);
   renderDrill();
