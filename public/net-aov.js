@@ -77,11 +77,13 @@
     ['product_qty', 'Product × quantity'],
     ['basket', 'Basket (whole order, product × qty)'],
     ['product_qty_plan', 'Product × quantity × Sub/OTP'],
+    ['plan_qty', 'Sub/OTP × quantity'],
   ];
   // Mirrors the server's SKIP_PAIRS: a line quantity already names its product, and
   // the basket only pairs with page and upsell module (payload size).
   const NO_PAIR = new Set(['product__product_qty', 'product__basket', 'bundle__basket', 'product_qty__basket',
-    'product__product_qty_plan', 'product_qty__product_qty_plan', 'basket__product_qty_plan']);
+    'product__product_qty_plan', 'product_qty__product_qty_plan', 'basket__product_qty_plan',
+    'product_qty__plan_qty', 'basket__plan_qty', 'product_qty_plan__plan_qty']);
   const pairKey = (d1, d2) => LINE_ORDER.indexOf(d1) < LINE_ORDER.indexOf(d2) ? d1 + '__' + d2 : d2 + '__' + d1;
   // Server order for pair keys: `module__page`, `page__product`, … with the
   // values joined by NUL, the first value belonging to the earlier dimension.

@@ -2254,13 +2254,15 @@ app.get('/api/net-aov-data', async (req, res) => {
   // product × quantity, so a page's units can be split by what people bought
   // together. product × product_qty is skipped: one determines the other.
   // product_qty_plan adds subscription vs one-time (the line has a selling plan or not).
-  const LINE_DIMS = ['module', 'page', 'product', 'bundle', 'product_qty', 'basket', 'product_qty_plan'];
+  // plan_qty is the roll-up without the product: "OTP ×4", "Sub ×1".
+  const LINE_DIMS = ['module', 'page', 'product', 'bundle', 'product_qty', 'basket', 'product_qty_plan', 'plan_qty'];
   // Basket keys are long and numerous (~300 a day), so the basket pairs with only
   // the two "where" dimensions; with every dimension a day's response was 1.1 MB.
   // product_qty_plan names its product and quantity, so it skips those pairs (and
   // the basket, for size) and pairs with module, page and bundle only.
   const SKIP_PAIRS = new Set(['product__product_qty', 'product__basket', 'bundle__basket', 'product_qty__basket',
-    'product__product_qty_plan', 'product_qty__product_qty_plan', 'basket__product_qty_plan']);   // C = not a renewal, R = renewal; 0 = $0 net merch
+    'product__product_qty_plan', 'product_qty__product_qty_plan', 'basket__product_qty_plan',
+    'product_qty__plan_qty', 'basket__plan_qty', 'product_qty_plan__plan_qty']);   // C = not a renewal, R = renewal; 0 = $0 net merch
   const newPart = () => ({
     totals: blank(),
     days: {},
@@ -2335,6 +2337,7 @@ app.get('/api/net-aov-data', async (req, res) => {
           bundle: (attr._bundle_title || '').trim() || '(not in a bundle)',
           product_qty: `${product} ×${qty}`,
           product_qty_plan: `${product} ×${qty} · ${l.sellingPlan ? 'Sub' : 'OTP'}`,
+          plan_qty: `${l.sellingPlan ? 'Sub' : 'OTP'} ×${qty}`,
         } });
       }
     }
