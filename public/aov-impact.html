@@ -439,6 +439,32 @@
           <tfoot id="bid-aov-tfoot"></tfoot>
         </table>
       </div>
+      <h4 class="sub-h">Spend efficiency (Shopify-attributed)</h4>
+      <p class="card__sub" id="bid-spend-status">
+        Meta campaign spend for each bid strategy against the Shopify orders and gross revenue above. ROAS is gross order
+        revenue ÷ spend and runs well below Ads Manager by design. Unclassified orders have no matching spend, so they only
+        count in the Total row.
+      </p>
+      <div class="scroll-x">
+        <table>
+          <thead>
+            <tr>
+              <th>Bid strategy</th>
+              <th class="r">Prev Spend</th>
+              <th class="r">Curr Spend</th>
+              <th class="r">Δ Spend</th>
+              <th class="r">Prev ROAS</th>
+              <th class="r">Curr ROAS</th>
+              <th class="r">Δ ROAS</th>
+              <th class="r">Prev Cost / Order</th>
+              <th class="r">Curr Cost / Order</th>
+              <th class="r">Δ Cost / Order</th>
+            </tr>
+          </thead>
+          <tbody id="bid-spend-tbody"></tbody>
+          <tfoot id="bid-spend-tfoot"></tfoot>
+        </table>
+      </div>
     </div>
 
     <!-- Δ Revenue decomposition BY LANDING PAGE (aggregated across sources) -->
@@ -834,6 +860,62 @@ function aggregateMetaBid(rowsCur, rowsPrev) {
 function bidCell(key) {
   const b = BID_GROUPS.find(x => x.key === key) || BID_UNKNOWN;
   return `<span class="channel-cell"><span class="channel-dot" style="background:${b.color}"></span>${b.label}</span>`;
+}
+
+// Spend comes from Meta (per-user OAuth), so it loads after the Shopify tables
+// and the card says why it's empty rather than failing the whole page.
+const fmtRoas = n => (n == null || !isFinite(n)) ? '—' : n.toFixed(2) + '×';
+const signedRoas = n => (n == null || !isFinite(n)) ? '—' : (n >= 0 ? '+' : '−') + Math.abs(n).toFixed(2) + '×';
+async function loadBidSpend(win, bids) {
+  const statusEl = document.getElementById('bid-spend-status');
+  const tbody = document.getElementById('bid-spend-tbody');
+  const tfoot = document.getElementById('bid-spend-tfoot');
+  tbody.innerHTML = '<tr><td colspan="10"><span class="spinner"></span>Fetching Meta spend…</td></tr>';
+  tfoot.innerHTML = '';
+  try {
+    const qs = new URLSearchParams(win).toString();
+    const r = await fetch(`/api/meta-bid-spend?${qs}`);
+    if (r.status === 401) {
+      tbody.innerHTML = `<tr><td colspan="10"><a href="/auth/facebook?next=${encodeURIComponent('/aov-impact.html')}">Log in with Facebook</a> to load spend by bid strategy.</td></tr>`;
+      return;
+    }
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+    renderBidSpend(bids, data);
+    if (data.account_name) statusEl.title = `Meta account: ${data.account_name}`;
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="10" class="num-neg">Couldn't load Meta spend: ${escHtml(err.message)}</td></tr>`;
+  }
+}
+function renderBidSpend(bids, data) {
+  const row = (label, pS, cS, pO, cO, pR, cR) => {
+    const pRoas = pS > 0 ? pR / pS : null, cRoas = cS > 0 ? cR / cS : null;
+    const pCpo = pO > 0 && pS > 0 ? pS / pO : null, cCpo = cO > 0 && cS > 0 ? cS / cO : null;
+    const dRoas = pRoas != null && cRoas != null ? cRoas - pRoas : null;
+    const dCpo = pCpo != null && cCpo != null ? cCpo - pCpo : null;
+    // Cost per order is better when it falls, so its colour is flipped.
+    return `
+      <td>${label}</td>
+      <td class="r">${fmt$(pS)}</td>
+      <td class="r">${fmt$(cS)}</td>
+      <td class="r">${pS == null ? '—' : signed$(cS - pS)}</td>
+      <td class="r">${fmtRoas(pRoas)}</td>
+      <td class="r">${fmtRoas(cRoas)}</td>
+      <td class="r ${cls(dRoas)}">${signedRoas(dRoas)}</td>
+      <td class="r">${fmt$2(pCpo)}</td>
+      <td class="r">${fmt$2(cCpo)}</td>
+      <td class="r ${cls(dCpo == null ? null : -dCpo)}">${signed$2(dCpo)}</td>`;
+  };
+  document.getElementById('bid-spend-tbody').innerHTML = bids.map(b => {
+    if (b.bid === 'unknown') {
+      return `<tr>${row(bidCell(b.bid), null, null, b.prevO, b.currO, b.prevR, b.currR)}</tr>`;
+    }
+    const pS = data.previous.spend[b.bid] || 0, cS = data.current.spend[b.bid] || 0;
+    return `<tr>${row(bidCell(b.bid), pS, cS, b.prevO, b.currO, b.prevR, b.currR)}</tr>`;
+  }).join('');
+  const sum = k => bids.reduce((a, b) => a + b[k], 0);
+  document.getElementById('bid-spend-tfoot').innerHTML =
+    `<tr>${row('Total Meta', data.previous.total, data.current.total, sum('prevO'), sum('currO'), sum('prevR'), sum('currR'))}</tr>`;
 }
 
 function lpCell(lp) {
@@ -1569,6 +1651,7 @@ function render(payload) {
   renderRevTable(bids, bidOpts('rev'));
   renderUptTable(bids, bidOpts('upt'));
   renderAovTable(bids, { ...bidOpts('aov'), totalLabel: 'Total Δ Meta Gross AOV' });
+  loadBidSpend(_lastWindow, bids);
   const minOrders = parseInt(document.getElementById('lp-min-orders').value, 10) || 20;
   renderLpUpt(_drillTree, minOrders);
   renderDrill();

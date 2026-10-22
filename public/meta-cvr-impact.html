@@ -3603,18 +3603,22 @@ const SEG_DIMENSIONS = [
   {
     key: 'bid',
     title: 'Bid Strategy',
-    desc: 'Cost Cap vs TROAS vs Bid Cap, read from the name. Names with no bid tag are grouped as unspecified (typically lowest-cost).',
+    desc: 'Cost Cap vs TROAS vs Highest Volume vs Bid Cap, read from the name. Names with no bid tag are grouped as unspecified (typically lowest-cost).',
     buckets: [
-      { key: 'cost_cap', label: 'Cost Cap',              color: '#1877f2' },
-      { key: 'troas',    label: 'TROAS / ROAS',          color: '#22c55e' },
-      { key: 'bid_cap',  label: 'Bid Cap',               color: '#8b5cf6' },
-      { key: 'lowest',   label: 'Lowest Cost (tagged)',  color: '#14b8a6' },
-      { key: 'unspec',   label: 'Unspecified',           color: SEG_GRAY },
+      { key: 'cost_cap',       label: 'Cost Cap',              color: '#1877f2' },
+      { key: 'troas',          label: 'TROAS / ROAS',          color: '#22c55e' },
+      { key: 'highest_volume', label: 'Highest Volume',        color: '#f59e0b' },
+      { key: 'bid_cap',        label: 'Bid Cap',               color: '#8b5cf6' },
+      { key: 'lowest',         label: 'Lowest Cost (tagged)',  color: '#14b8a6' },
+      { key: 'unspec',         label: 'Unspecified',           color: SEG_GRAY },
     ],
     classify: c => {
       const l = c.lower;
-      if (/cost\s*cap/.test(l)) return 'cost_cap';
+      // Same rules as bidOf() in server.js, so this split and AOV by Traffic
+      // Source agree. "CCAP" is shorthand ("Reactivation - Unconverted | CBO - CCAP").
+      if (/cost\s*cap|\bccap\b/.test(l)) return 'cost_cap';
       if (/\bt?roas\b/.test(l)) return 'troas';
+      if (/highest\s*volume/.test(l)) return 'highest_volume';
       if (/bid\s*cap/.test(l)) return 'bid_cap';
       if (/lowest\s*cost|\blc\b/.test(l)) return 'lowest';
       return 'unspec';

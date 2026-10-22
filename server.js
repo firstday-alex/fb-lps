@@ -1988,6 +1988,32 @@ function orderChannelScope(param) {
 //   source / medium  — restrict to one utm_source / utm_medium
 //   group=campaign_lp — add utm_campaign + utm_content to the aggregation key
 
+// Bid strategy is only knowable from the campaign name ("CBO - Cost Cap"),
+// the same read meta-cvr-impact.html's Bid Strategy split makes. Shared by
+// /api/aov-impact-data (Shopify's utm_campaign) and /api/meta-bid-spend (Meta's
+// own campaign names), so orders and spend land in the same buckets. Some Meta
+// orders carry the bare campaign ID (120248…) or an unresolved
+// {{campaign.name}} macro instead of the name, and the Meta token here is
+// per-user OAuth so the server can't look those up — they are kept apart as
+// 'unknown' rather than counted as non-cost-cap.
+function bidOf(raw) {
+  let name = String(raw || '').trim();
+  // Only treat "+" as a space when the name is actually URL-encoded — clean
+  // names use it literally ("USA+CA").
+  if (/%[0-9A-Fa-f]{2}/.test(name)) {
+    name = name.replace(/\+/g, ' ');
+    try { name = decodeURIComponent(name); } catch { /* keep partially decoded */ }
+  }
+  if (!name || /^\d+$/.test(name) || /\{\{|\}\}/.test(name)) return 'unknown';
+  // "CCAP" shows up as shorthand ("Reactivation - Unconverted | CBO - CCAP").
+  if (/cost\s*cap|\bccap\b/i.test(name)) return 'cost_cap';
+  // TROAS is written "CBO - TROAS" or "CBO | TROAS"; Highest Volume is spelled
+  // out ("CBO - Highest Volume"). "Max Value" and untagged names stay 'other'.
+  if (/\bt?roas\b/i.test(name)) return 'troas';
+  if (/highest\s*volume/i.test(name)) return 'highest_volume';
+  return 'other';
+}
+
 app.get('/api/aov-impact-data', async (req, res) => {
   if (!SHOPIFY_URL || !SHOPIFY_TOKEN) {
     return res.status(500).json({ error: 'Shopify credentials not configured' });
@@ -2044,30 +2070,6 @@ app.get('/api/aov-impact-data', async (req, res) => {
   const lpPath = (url) => {
     if (!url) return '';
     try { return new URL(url).pathname || ''; } catch { return url; }
-  };
-
-  // Bid strategy is only knowable from the campaign name ("CBO - Cost Cap"),
-  // the same read meta-cvr-impact.html's Bid Strategy split makes. Some Meta
-  // orders carry the bare campaign ID (120248…) or an unresolved
-  // {{campaign.name}} macro instead of the name, and the Meta token here is
-  // per-user OAuth so the server can't look those up — they are kept apart as
-  // 'unknown' rather than counted as non-cost-cap.
-  const bidOf = (raw) => {
-    let name = String(raw || '').trim();
-    // Only treat "+" as a space when the name is actually URL-encoded — clean
-    // names use it literally ("USA+CA").
-    if (/%[0-9A-Fa-f]{2}/.test(name)) {
-      name = name.replace(/\+/g, ' ');
-      try { name = decodeURIComponent(name); } catch { /* keep partially decoded */ }
-    }
-    if (!name || /^\d+$/.test(name) || /\{\{|\}\}/.test(name)) return 'unknown';
-    // "CCAP" shows up as shorthand ("Reactivation - Unconverted | CBO - CCAP").
-    if (/cost\s*cap|\bccap\b/i.test(name)) return 'cost_cap';
-    // TROAS is written "CBO - TROAS" or "CBO | TROAS"; Highest Volume is spelled
-    // out ("CBO - Highest Volume"). "Max Value" and untagged names stay 'other'.
-    if (/\btroas\b/i.test(name)) return 'troas';
-    if (/highest\s*volume/i.test(name)) return 'highest_volume';
-    return 'other';
   };
 
   const fetchOrders = async (s, e) => {
@@ -2160,6 +2162,53 @@ app.get('/api/aov-impact-data', async (req, res) => {
   } catch (err) {
     console.error('[aov-impact-data] error:', err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Meta spend by bid strategy (AOV by Traffic Source bid card) ---
+// Campaign-level spend for the current and compare windows, bucketed with the
+// same bidOf() as the orders, so the page can put Shopify-attributed ROAS and
+// cost per order next to each bid group. Campaign level on purpose: the
+// ad-level bulk pull times out on this account (see resolveAdAccountId), while
+// a week has only a few dozen campaigns. Read-only insights calls.
+// Returns { account_id, account_name, current|previous: { start, end,
+// spend: { cost_cap, troas, highest_volume, other }, total, campaigns } }.
+app.get('/api/meta-bid-spend', requireAuth, async (req, res) => {
+  const isDate = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
+  const { start, end, compare_start: cs, compare_end: ce } = req.query;
+  if (![start, end, cs, ce].every(isDate)) {
+    return res.status(400).json({ error: 'start, end, compare_start and compare_end query params required (YYYY-MM-DD)' });
+  }
+  try {
+    const acct = await resolveAdAccountId(req, start, end);
+    const fetchWindow = async (since, until) => {
+      const campaigns = [];
+      let url = `${META_BASE_URL}/${acct.accountId}/insights`
+        + `?level=campaign&fields=campaign_id,campaign_name,spend&limit=500`
+        + `&time_range=${encodeURIComponent(JSON.stringify({ since, until }))}`
+        + `&${metaParams(req.accessToken)}`;
+      // Paging `next` URLs already carry the token and proof.
+      for (let page = 0; url && page < 20; page++) {
+        const j = await (await fetch(url, { signal: AbortSignal.timeout(25000) })).json();
+        if (j.error) throw Object.assign(new Error(j.error.message || 'Meta insights error'), { code: j.error.code });
+        for (const r of j.data || []) {
+          const spend = parseFloat(r.spend) || 0;
+          if (spend > 0) campaigns.push({ id: r.campaign_id, name: r.campaign_name, bid: bidOf(r.campaign_name), spend });
+        }
+        url = j.paging?.next || null;
+      }
+      const spend = { cost_cap: 0, troas: 0, highest_volume: 0, other: 0 };
+      // A Meta campaign always has a name, so 'unknown' only means an empty one.
+      for (const c of campaigns) spend[c.bid in spend ? c.bid : 'other'] += c.spend;
+      campaigns.sort((a, b) => b.spend - a.spend);
+      return { start: since, end: until, spend, total: campaigns.reduce((a, c) => a + c.spend, 0), campaigns };
+    };
+    const [current, previous] = await Promise.all([fetchWindow(start, end), fetchWindow(cs, ce)]);
+    res.json({ account_id: acct.accountId, account_name: acct.accountName, current, previous });
+  } catch (err) {
+    console.error('[meta-bid-spend] error:', err);
+    // 190 = expired/invalid token; the page treats 401 as "log in again".
+    res.status(err.code === 190 ? 401 : (err.status || 500)).json({ error: err.message });
   }
 });
 
