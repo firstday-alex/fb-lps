@@ -2126,12 +2126,15 @@ app.get('/api/aov-impact-data', async (req, res) => {
         : o.source + '|' + o.medium + '|' + o.landing_page + '|' + o.bid;
       let g = map.get(key);
       if (!g) {
-        g = { utm_source: o.source, utm_medium: o.medium, landing_page: o.landing_page, bid: o.bid, orders: 0, revenue: 0, units: 0 };
+        g = { utm_source: o.source, utm_medium: o.medium, landing_page: o.landing_page, bid: o.bid, orders: 0, revenue: 0, revenue_sq: 0, units: 0 };
         if (byCampaign) { g.utm_campaign = o.campaign; g.utm_content = o.content; }
         map.set(key, g);
       }
       g.orders += 1;
       g.revenue += o.revenue;
+      // Σ order total² lets the page get the spread of order values (and so tell
+      // an outlier ad from noise) without shipping every order.
+      g.revenue_sq += o.revenue * o.revenue;
       g.units   += o.units;
     }
     return Array.from(map.values());
@@ -2151,6 +2154,66 @@ app.get('/api/aov-impact-data', async (req, res) => {
     });
   } catch (err) {
     console.error('[aov-impact-data] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Meta ad AOV outliers: Claude write-up of the ads aov-impact.html flags ---
+// The page finds the outliers itself (from /api/aov-impact-data, source=facebook,
+// group=campaign_lp) and posts only that brief here. Two requests rather than one
+// on purpose: a 7-day order scan alone takes ~30s, and the scan plus a Claude call
+// in the same request runs past Vercel's 60s limit. Same grounding contract as
+// the tab analysis: the model may only quote numbers that are in the brief.
+app.post('/api/meta-ad-aov-analysis', async (req, res) => {
+  const brief = req.body && req.body.brief;
+  if (!brief || typeof brief !== 'object' || !Array.isArray(brief.high_outliers) || !Array.isArray(brief.low_outliers)) {
+    return res.status(400).json({ error: 'brief with high_outliers and low_outliers required' });
+  }
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured' });
+  const model = process.env.DAILY_REPORT_MODEL || 'claude-opus-4-8';
+
+  const prompt = `You are reviewing which individual Meta (Facebook) ads are unusually good or bad for average order value (AOV) at Firstday, for a growth operator deciding which ads to look at. Be specific and decision-useful — every claim carries its numbers.
+
+CRITICAL RULE: use ONLY numbers present in the JSON below. Never invent, estimate, or extrapolate, and do not do your own arithmetic to produce a new figure — every comparison you need is already computed. You cannot know WHY an ad's AOV differs from these numbers: never assert causation. Describe the size of the gap, the volume behind it, and what it is made of.
+
+HOW TO READ THE BRIEF:
+- Scope: Online Store orders whose first visit had utm_source facebook (any capitalisation). "meta" is every such order in the window; each ad is compared with it.
+- aov is gross AOV (order total incl. shipping, tax and protection). aov_vs_meta = ad AOV minus Meta AOV.
+- z = aov_vs_meta divided by its standard error (Meta order-value spread ÷ √orders). |z| ≥ method.z_threshold is what makes an ad an outlier. Bigger |z| = less likely to be chance.
+- revenue_vs_meta_aov = orders × aov_vs_meta: how much more or less revenue the ad's orders brought in than the same number of orders at Meta's AOV. Rank and weigh by this.
+- basket_effect + price_effect + interaction = aov_vs_meta. basket_effect is the part from units per order (upt) differing from Meta; price_effect is the part from price per unit (asp) differing. Say which one leads.
+- prev_orders / prev_aov are the same ad in the comparison window; null means it had no orders then. An ad that was also far from Meta last period is a more persistent outlier than one that wasn't.
+- campaigns lists the ad's campaigns with their bid tag (cost_cap / other / unknown, read from the campaign name). top_landing_pages is where its orders landed.
+- method.ads_tested and method.expected_by_chance: with many ads tested, roughly expected_by_chance of them would clear the threshold by luck alone. If the number of outliers found is close to that, say the list is mostly noise. Treat outliers with orders under 20 as tentative.
+
+Ad names are long and follow a token schema (segments like SKU-…, F-…, C-…, A-…, URL-…). Quote a SHORT distinguishing fragment of each name (e.g. the SKU and C- tokens), never the full name. If several outliers on the same side share a token, you may point that out as a pattern worth checking, quoting the token — but don't say what the token means or claim it causes the gap. Never write URLs; the page renders ad links itself.
+
+Write GitHub-flavored markdown, no title, in this shape:
+- **Read** — 1-2 sentences: Meta AOV for the window, how many ads were tested, how many cleared the bar on each side vs how many chance alone would produce.
+- **High-AOV ads** — up to 5 bullets, largest revenue_vs_meta_aov first: AOV vs Meta, orders, z, whether it's basket- or price-led, whether it held last period, its campaign's bid tag and main landing page.
+- **Low-AOV ads** — same format, up to 5 bullets.
+- **Patterns** — up to 3 bullets on what the outliers share (campaign, bid tag, landing page, name tokens), only where it's in the data.
+- **Worth checking** — 2-3 concrete next steps tied to named ads and their numbers.
+If a list is empty, say no ad cleared the bar on that side. Keep bullets to 1-2 lines. Output ONLY the markdown, no preamble.
+
+BRIEF:
+${JSON.stringify(brief)}`;
+
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({ model, max_tokens: 2000, messages: [{ role: 'user', content: prompt }] }),
+    });
+    const dj = await resp.json();
+    if (!resp.ok) throw new Error(`Claude API ${resp.status}: ${JSON.stringify(dj).slice(0, 300)}`);
+    if (dj.stop_reason === 'refusal') throw new Error('Claude refused to generate the analysis');
+    const text = (dj.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+    if (!text) throw new Error('Empty analysis from Claude');
+    res.json({ summary: text, model });
+  } catch (err) {
+    console.error('[meta-ad-aov-analysis] error:', err);
     res.status(500).json({ error: err.message });
   }
 });

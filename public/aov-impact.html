@@ -133,6 +133,16 @@
     .card__sub { font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 14px; }
     .sub-h { font-size: 0.85rem; font-weight: 600; margin: 18px 0 6px; }
     .sub-h:first-of-type { margin-top: 0; }
+    .outlier-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 12px; }
+    .outlier-controls label { font-size: 0.82rem; color: var(--text-secondary); display: flex; gap: 6px; align-items: center; }
+    .outlier-controls input { width: 64px; padding: 2px 4px; font: inherit; font-size: 0.85rem; border: 1px solid var(--border); border-radius: 4px; }
+    .outlier-controls .load-btn { width: auto; margin: 0; }
+    .outlier-controls .load-status { margin-top: 0; }
+    .outlier-summary { font-size: 0.88rem; line-height: 1.55; }
+    .outlier-summary:not(:empty) { border-left: 3px solid var(--fb-blue); padding: 4px 0 4px 14px; margin-bottom: 16px; }
+    .outlier-summary ul { margin: 4px 0 10px 18px; }
+    .outlier-summary p { margin: 6px 0; }
+    .outlier-ad { font-size: 0.75rem; word-break: break-all; max-width: 420px; }
     .card__sub strong { color: var(--text-primary); }
 
     table { width: 100%; border-collapse: collapse; font-size: 0.83rem; }
@@ -585,6 +595,26 @@
           <tbody id="drill-tbody"></tbody>
         </table>
       </div>
+    </div>
+
+    <!-- On-demand: Facebook ads whose AOV is an outlier, plus a Claude write-up -->
+    <div class="card" id="outlier-card" data-no-collapse="1">
+      <h3>Facebook ad AOV outliers</h3>
+      <p class="card__sub">
+        Finds individual ads (utm_content) whose gross AOV is far above or below the Meta average for the same window,
+        for orders whose first visit had utm_source <code>facebook</code> or <code>Facebook</code>. An ad counts as an outlier
+        when it has at least the minimum orders and its AOV gap is at least 2 standard errors from the Meta AOV, then Claude
+        writes up what stands out. Pulls orders again, so a 7-day range takes about half a minute before the write-up starts.
+      </p>
+      <div class="outlier-controls">
+        <label>Min orders per ad
+          <input type="number" id="outlier-min-orders" value="10" min="3" step="1">
+        </label>
+        <button type="button" class="load-btn" id="btn-outliers" disabled>Analyze outlier ads</button>
+        <span class="load-status" id="outlier-status"></span>
+      </div>
+      <div id="outlier-summary" class="outlier-summary"></div>
+      <div id="outlier-tables"></div>
     </div>
 
     <p class="footnote">
@@ -1166,6 +1196,229 @@ function renderDrill() {
 }
 
 // ─────────────────────────────────────────────
+// FACEBOOK AD AOV OUTLIERS (on demand, bottom card)
+// ─────────────────────────────────────────────
+// Window of the last load, so the button analyses exactly what the tables show.
+let _lastWindow = null;
+const OUTLIER_Z = 2;
+const OUTLIER_TOP_N = 10;
+
+const escHtml = (v) => String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+// Blank and {{ad.name}} aren't one ad — they're every ad whose tag failed — so
+// they're reported as excluded rather than ranked as if they were a creative.
+// A bare numeric utm_content IS one ad (its id), so it stays in.
+const isUnattributableAd = (name) => !name || /\{\{|\}\}/.test(name);
+
+// Minimal, safe markdown → HTML (same subset as all-tabs-analysis.html).
+function mdToHtml(md) {
+  const lines = escHtml(md).split('\n');
+  let html = '', inList = false;
+  const inline = (t) => t.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/`(.+?)`/g, '<code>$1</code>');
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    const bullet = line.match(/^\s*[-*]\s+(.*)$/);
+    const head = line.match(/^(#{1,3})\s+(.*)$/);
+    if (bullet) { if (!inList) { html += '<ul>'; inList = true; } html += '<li>' + inline(bullet[1]) + '</li>'; continue; }
+    if (inList) { html += '</ul>'; inList = false; }
+    if (head) { html += `<h4 class="sub-h">${inline(head[2])}</h4>`; continue; }
+    if (line.trim() === '') continue;
+    html += '<p>' + inline(line) + '</p>';
+  }
+  if (inList) html += '</ul>';
+  return html;
+}
+
+// Per-ad AOV vs the Meta average for the same window. The standard error uses the
+// spread of ALL Meta orders (pooled) rather than each ad's own: an ad with 10
+// orders gives a very noisy SD of its own, and the question is "is this ad's
+// basket unusual for Meta", which is exactly what the pooled spread measures.
+function computeAdOutliers(payload, minOrders) {
+  const r2 = n => n == null || !isFinite(n) ? null : Math.round(n * 100) / 100;
+  const sumUp = (rows) => {
+    const ads = new Map();
+    const t = { o: 0, r: 0, rsq: 0, u: 0 };
+    rows.forEach(r => {
+      t.o += r.orders; t.r += r.revenue; t.rsq += (r.revenue_sq || 0); t.u += (r.units || 0);
+      const k = r.utm_content || '';
+      let a = ads.get(k);
+      if (!a) { a = { ad: k, o: 0, r: 0, u: 0, camps: new Map(), lps: new Map() }; ads.set(k, a); }
+      a.o += r.orders; a.r += r.revenue; a.u += (r.units || 0);
+      const ck = r.utm_campaign || '(none)';
+      const c = a.camps.get(ck) || { name: ck, bid: r.bid, orders: 0 };
+      c.orders += r.orders; a.camps.set(ck, c);
+      const lk = r.landing_page || '(none)';
+      a.lps.set(lk, (a.lps.get(lk) || 0) + r.orders);
+    });
+    return { ads, t };
+  };
+  const cur = sumUp(payload.current.rows);
+  const prev = sumUp(payload.previous.rows);
+  const T = cur.t;
+  const metaAov = T.o > 0 ? T.r / T.o : 0;
+  const metaUpt = T.o > 0 ? T.u / T.o : 0;
+  const metaAsp = T.u > 0 ? T.r / T.u : 0;
+  const metaSd = T.o > 1 ? Math.sqrt(Math.max(0, (T.rsq - T.o * metaAov * metaAov) / (T.o - 1))) : 0;
+
+  const excluded = [];
+  const tested = [];
+  for (const a of cur.ads.values()) {
+    if (isUnattributableAd(a.ad)) { excluded.push({ ad: a.ad || '(blank)', orders: a.o }); continue; }
+    if (a.o < minOrders) continue;
+    const aov = a.r / a.o, upt = a.u / a.o, asp = a.u > 0 ? a.r / a.u : 0;
+    const diff = aov - metaAov;
+    const se = metaSd / Math.sqrt(a.o);
+    const p = prev.ads.get(a.ad);
+    tested.push({
+      ad: a.ad,
+      orders: a.o,
+      revenue: a.r,
+      aov, diff,
+      z: se > 0 ? diff / se : 0,
+      revVsMeta: a.o * diff,
+      upt, asp,
+      // aov_vs_meta = basket + price + interaction, against Meta's UPT and ASP.
+      basket: (upt - metaUpt) * metaAsp,
+      price: metaUpt * (asp - metaAsp),
+      interaction: (upt - metaUpt) * (asp - metaAsp),
+      prevO: p ? p.o : 0,
+      prevAov: p && p.o > 0 ? p.r / p.o : null,
+      camps: [...a.camps.values()].sort((x, y) => y.orders - x.orders),
+      lps: [...a.lps].sort((x, y) => y[1] - x[1]).map(([lp, orders]) => ({ lp, orders })),
+    });
+  }
+  const high = tested.filter(x => x.z >= OUTLIER_Z).sort((a, b) => b.revVsMeta - a.revVsMeta);
+  const low  = tested.filter(x => x.z <= -OUTLIER_Z).sort((a, b) => a.revVsMeta - b.revVsMeta);
+  // Two-sided |z| ≥ 2 is ~4.6% of ads by chance alone.
+  const expected = tested.length * 0.0455;
+
+  const briefAd = (x) => ({
+    ad: x.ad.slice(0, 160),
+    orders: x.orders,
+    aov: r2(x.aov),
+    aov_vs_meta: r2(x.diff),
+    z: r2(x.z),
+    revenue_vs_meta_aov: r2(x.revVsMeta),
+    upt: r2(x.upt), asp: r2(x.asp),
+    basket_effect: r2(x.basket), price_effect: r2(x.price), interaction: r2(x.interaction),
+    prev_orders: x.prevO,
+    prev_aov: r2(x.prevAov),
+    campaigns: x.camps.slice(0, 2).map(c => ({ name: c.name.slice(0, 110), bid: c.bid, orders: c.orders })),
+    top_landing_pages: x.lps.slice(0, 2),
+  });
+  const brief = {
+    window: { ..._lastWindow },
+    scope: 'Online Store orders, first-visit utm_source facebook (case-insensitive)',
+    meta: {
+      orders: T.o, aov: r2(metaAov), upt: r2(metaUpt), asp: r2(metaAsp), order_value_sd: r2(metaSd),
+      prev_orders: prev.t.o, prev_aov: r2(prev.t.o > 0 ? prev.t.r / prev.t.o : null),
+    },
+    method: {
+      min_orders: minOrders, z_threshold: OUTLIER_Z, ads_tested: tested.length,
+      expected_by_chance: r2(expected), high_found: high.length, low_found: low.length,
+      listed_per_side: OUTLIER_TOP_N,
+    },
+    excluded_unattributable: excluded.sort((a, b) => b.orders - a.orders),
+    high_outliers: high.slice(0, OUTLIER_TOP_N).map(briefAd),
+    low_outliers: low.slice(0, OUTLIER_TOP_N).map(briefAd),
+  };
+  return { brief, high, low, tested, excluded, metaAov, metaSd, T, expected };
+}
+
+function renderOutlierTables(o) {
+  const z2 = n => (n >= 0 ? '+' : '−') + Math.abs(n).toFixed(1);
+  const table = (title, list) => {
+    const shown = list.slice(0, OUTLIER_TOP_N);
+    const body = shown.length ? shown.map(x => {
+      const c = x.camps[0];
+      const bidLabel = c ? (BID_GROUPS.find(b => b.key === c.bid) || BID_GROUPS[2]).label : '—';
+      // An ad id can't be resolved by name, so it only gets the copy chip.
+      const links = AdLink.cellHtml(x.ad, /^\d+$/.test(x.ad) ? { links: false } : {});
+      return `<tr>
+        <td><code class="outlier-ad">${escHtml(x.ad)}</code>${links}</td>
+        <td class="r">${fmtInt(x.orders)}</td>
+        <td class="r">${fmt$2(x.aov)}</td>
+        <td class="r ${cls(x.diff)}">${signed$2(x.diff)}</td>
+        <td class="r">${z2(x.z)}</td>
+        <td class="r ${cls(x.revVsMeta)}">${signed$(x.revVsMeta)}</td>
+        <td class="r ${cls(x.basket)}">${signed$2(x.basket)}</td>
+        <td class="r ${cls(x.price)}">${signed$2(x.price)}</td>
+        <td class="r">${x.prevO ? fmtInt(x.prevO) : '—'}</td>
+        <td class="r">${fmt$2(x.prevAov)}</td>
+        <td title="${escHtml(c ? c.name : '')}">${bidLabel}</td>
+        <td><code style="font-size:0.75rem">${escHtml(x.lps[0] ? x.lps[0].lp : '')}</code></td>
+      </tr>`;
+    }).join('') : `<tr><td colspan="12" style="text-align:center;color:var(--text-secondary);padding:16px">No ad cleared the bar on this side.</td></tr>`;
+    const more = list.length > OUTLIER_TOP_N ? ` <span style="font-weight:400;color:var(--text-secondary)">(top ${OUTLIER_TOP_N} of ${list.length})</span>` : '';
+    return `<h4 class="sub-h">${title}${more}</h4>
+      <div class="scroll-x"><table>
+        <thead><tr>
+          <th>Ad (utm_content)</th><th class="r">Orders</th><th class="r">Gross AOV</th><th class="r">vs Meta</th>
+          <th class="r" title="AOV gap ÷ standard error">z</th><th class="r" title="Orders × AOV gap">Rev vs Meta AOV</th>
+          <th class="r" title="Part of the gap from units per order">Basket</th><th class="r" title="Part of the gap from price per unit">Price</th>
+          <th class="r">Prev Orders</th><th class="r">Prev AOV</th><th>Top campaign bid</th><th>Top landing page</th>
+        </tr></thead>
+        <tbody>${body}</tbody>
+      </table></div>`;
+  };
+  const excl = o.excluded.length
+    ? ` Not ranked: ${o.excluded.map(e => `<code>${escHtml(e.ad)}</code> (${fmtInt(e.orders)} orders)`).join(', ')}, which aren't a single ad.`
+    : '';
+  document.getElementById('outlier-tables').innerHTML = `
+    <p class="footnote" style="margin-top:0">
+      Meta: ${fmtInt(o.T.o)} orders at ${fmt$2(o.metaAov)} gross AOV (order-value SD ${fmt$2(o.metaSd)}).
+      ${fmtInt(o.tested.length)} ads had enough orders to test; ${o.high.length} high and ${o.low.length} low cleared |z| ≥ ${OUTLIER_Z},
+      against ~${o.expected.toFixed(1)} expected by chance alone. Basket + Price (+ a small interaction) = vs Meta.${excl}
+    </p>
+    ${table('High-AOV ads', o.high)}
+    ${table('Low-AOV ads', o.low)}`;
+  AdLink.setLookupEnd(_lastWindow.end);
+  AdLink.enqueue([...o.high, ...o.low].slice(0, 2 * OUTLIER_TOP_N).map(x => x.ad).filter(a => !/^\d+$/.test(a)));
+}
+
+async function runOutlierAnalysis() {
+  if (!_lastWindow) return;
+  const btn = document.getElementById('btn-outliers');
+  const statusEl = document.getElementById('outlier-status');
+  const summaryEl = document.getElementById('outlier-summary');
+  const minOrders = Math.max(3, parseInt(document.getElementById('outlier-min-orders').value, 10) || 10);
+  const w = _lastWindow;
+  btn.disabled = true;
+  statusEl.classList.remove('error');
+  summaryEl.innerHTML = '';
+  document.getElementById('outlier-tables').innerHTML = '';
+  try {
+    statusEl.innerHTML = '<span class="spinner"></span>Pulling facebook orders by ad…';
+    // The server lowercases utm_source before matching, so source=facebook also
+    // picks up "Facebook".
+    const params = new URLSearchParams({ start: w.start, end: w.end, compare_start: w.compare_start, compare_end: w.compare_end,
+      source: 'facebook', group: 'campaign_lp', channel: 'online_store' });
+    const r = await fetch(`/api/aov-impact-data?${params}`);
+    if (!r.ok) throw new Error('HTTP ' + r.status + ': ' + (await r.text()).slice(0, 200));
+    const o = computeAdOutliers(await r.json(), minOrders);
+    renderOutlierTables(o);
+    if (!o.high.length && !o.low.length) {
+      statusEl.textContent = `No ad with ≥${minOrders} orders cleared the bar — nothing to write up. Try a longer range or a lower minimum.`;
+      return;
+    }
+    statusEl.innerHTML = '<span class="spinner"></span>Writing up the outliers with Claude…';
+    const a = await fetch('/api/meta-ad-aov-analysis', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ brief: o.brief }),
+    });
+    const aj = await a.json().catch(() => ({}));
+    if (!a.ok) throw new Error(aj.error || 'HTTP ' + a.status);
+    summaryEl.innerHTML = mdToHtml(aj.summary);
+    statusEl.textContent = `Written by ${aj.model} from the numbers in the tables below.`;
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = 'Failed: ' + err.message;
+    statusEl.classList.add('error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ─────────────────────────────────────────────
 // LOADER
 // ─────────────────────────────────────────────
 // Tracks whether the user has manually edited the compare-* inputs. While
@@ -1303,6 +1556,11 @@ function render(payload) {
   renderUptTable(landingPages, { tbodyId: 'lp-uptasp-tbody', tfootId: 'lp-uptasp-tfoot', labelCell: lpCell, labelKey: 'landingPage' });
   renderAovTable(sources);
   renderAovTable(landingPages, { tbodyId: 'lp-aov-tbody', tfootId: 'lp-aov-tfoot', labelCell: lpCell, labelKey: 'landingPage' });
+  _lastWindow = { start: payload.current.start, end: payload.current.end, compare_start: payload.previous.start, compare_end: payload.previous.end };
+  document.getElementById('btn-outliers').disabled = false;
+  document.getElementById('outlier-summary').innerHTML = '';
+  document.getElementById('outlier-tables').innerHTML = '';
+  document.getElementById('outlier-status').textContent = `Will analyse ${_lastWindow.start} → ${_lastWindow.end} vs ${_lastWindow.compare_start} → ${_lastWindow.compare_end}.`;
   const bids = aggregateMetaBid(payload.current.rows, payload.previous.rows);
   const bidOpts = (t) => ({ tbodyId: `bid-${t}-tbody`, tfootId: `bid-${t}-tfoot`, labelCell: bidCell, labelKey: 'bid' });
   renderRevTable(bids, bidOpts('rev'));
@@ -1328,6 +1586,7 @@ document.addEventListener('DOMContentLoaded', () => {
   ['compare-start','compare-end'].forEach(id => document.getElementById(id).addEventListener('change', () => { _compareManualOverride = true; }));
   document.getElementById('compare-reset').addEventListener('click', () => { _compareManualOverride = false; autoCompare(); });
   document.getElementById('btn-load').addEventListener('click', load);
+  document.getElementById('btn-outliers').addEventListener('click', runOutlierAnalysis);
   document.getElementById('cc-expand-all').addEventListener('click', () => CardCollapse.setAll(document.getElementById('results-screen'), true));
   document.getElementById('cc-collapse-all').addEventListener('click', () => CardCollapse.setAll(document.getElementById('results-screen'), false));
   document.getElementById('lp-min-orders').addEventListener('input', () => {
@@ -1344,6 +1603,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 <script src="/card-collapse.js"></script>
 <script src="/net-aov.js"></script>
+<script src="/ad-preview-link.js"></script>
 <script src="/app-nav.js" defer></script>
 </body>
 </html>
