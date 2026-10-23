@@ -221,6 +221,7 @@
     root = root || document.getElementById('net-aov-root');
     if (!root) return;
     const my = ++gen;
+    document.dispatchEvent(new CustomEvent('netaov:loading'));
     const { start, end, cs, ce, source = '', medium = '', channel = '', groupDim, shopifyAov = false } = opts;
     if (groupDim && my === 1) ui.dim = groupDim;
     // Shopify's own AOV, straight from ShopifyQL — only for the unscoped view,
@@ -267,6 +268,7 @@
     if (my !== gen) return;
     if (failed.length) {
       root.innerHTML = shell(`<div class="warning">Net AOV couldn't load ${failed.length} of ${jobs.length} days, so it isn't shown (a missing day would skew the comparison): ${esc(failed.slice(0, 3).join(' · '))}</div>`);
+      document.dispatchEvent(new CustomEvent('netaov:failed', { detail: { failed: failed.length, of: jobs.length } }));
       return;
     }
     state = { cur, prev, scoped: !!(source || medium), channel, shopify: await shopifyP };
@@ -303,6 +305,9 @@
   function render() {
     if (!state || !root) return;
     const P = view(state.prev), C = view(state.cur);
+    // Other cards on the page (Meta net AOV by bid strategy) build on the same
+    // merged view, so they follow the renewals / $0 toggles too.
+    document.dispatchEvent(new CustomEvent('netaov:render', { detail: { prev: P, cur: C } }));
     const p = ratios(P.totals), c = ratios(C.totals);
     const warns = [];
     for (const [lbl, per] of [['Current', state.cur], ['Previous', state.prev]]) {
@@ -807,5 +812,5 @@
   `;
   document.head.appendChild(css);
 
-  window.NetAOV = { load };
+  window.NetAOV = { load, ratios, driverSplit, blank, addTo };
 })();

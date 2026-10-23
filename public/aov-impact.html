@@ -366,7 +366,8 @@
         Meta orders only (utm_source facebook / ig / instagram), split by the campaign name: <strong>Cost Cap</strong> is any
         campaign named with "Cost Cap" or "CCAP"; <strong>TROAS</strong> and <strong>Highest Volume</strong> are campaigns tagged
         with those names; <strong>Other</strong> is every other named campaign (Max Value, untagged lowest-cost, testing). <strong>Unclassified</strong> is orders whose first visit carried a bare campaign ID,
-        an unresolved macro or no campaign, so the bid strategy can't be read. Same three breakdowns as above, totalled across Meta.
+        an unresolved macro or no campaign, so the bid strategy can't be read. Every table here is gross (order totals, like the tables
+        above) except the own-move vs mix-shift table, which is net AOV.
       </p>
       <h4 class="sub-h">Revenue decomposition</h4>
       <div class="scroll-x">
@@ -417,7 +418,15 @@
           <tfoot id="bid-upt-tfoot"></tfoot>
         </table>
       </div>
-      <h4 class="sub-h">Meta gross AOV: own move vs mix shift</h4>
+      <h4 class="sub-h">Meta net AOV: own move vs mix shift</h4>
+      <p class="card__sub">
+        Net AOV, as in the Net AOV section at the top: paid product revenue after every discount ÷ orders, so shipping,
+        tax and protection are out and free gifts or $0 lines don't count as units. It follows that section's
+        "$0 orders" toggle. Δ Meta net AOV splits into each bid strategy's <strong>own move</strong> (its net AOV changed, at
+        its old share of orders) and <strong>mix shift</strong> (its share of orders changed). The own move is split again
+        into units per order, list price per unit and discount depth. A group with no orders in one period
+        counts entirely as mix.
+      </p>
       <div class="scroll-x">
         <table>
           <thead>
@@ -426,16 +435,19 @@
               <th class="r">Prev Order Share</th>
               <th class="r">Curr Order Share</th>
               <th class="r">Δ Share</th>
-              <th class="r">Prev Gross AOV</th>
-              <th class="r">Curr Gross AOV</th>
-              <th class="r">Δ Gross AOV</th>
-              <th class="r">Own Gross-AOV Effect</th>
+              <th class="r">Prev Net AOV</th>
+              <th class="r">Curr Net AOV</th>
+              <th class="r">Δ Net AOV</th>
+              <th class="r" title="Own move from paid units per order, at the old list price and discount depth">Own: UPT</th>
+              <th class="r" title="Own move from list price per paid unit (product mix and price changes)">Own: List Price</th>
+              <th class="r" title="Own move from discount depth (share of list price given away)">Own: Discount</th>
+              <th class="r">Own Net-AOV Effect</th>
               <th class="r">Mix-Shift Effect</th>
               <th class="r">Total Contribution</th>
               <th class="r">% of Δ Meta</th>
             </tr>
           </thead>
-          <tbody id="bid-aov-tbody"></tbody>
+          <tbody id="bid-aov-tbody"><tr><td colspan="14"><span class="spinner"></span>Waiting for net AOV (loads with the Net AOV section)…</td></tr></tbody>
           <tfoot id="bid-aov-tfoot"></tfoot>
         </table>
       </div>
@@ -917,6 +929,87 @@ function renderBidSpend(bids, data) {
   document.getElementById('bid-spend-tfoot').innerHTML =
     `<tr>${row('Total Meta', data.previous.total, data.current.total, sum('prevO'), sum('currO'), sum('prevR'), sum('currR'))}</tr>`;
 }
+
+// Meta net AOV by bid strategy, from the Net AOV section's line-item data (the
+// server tags each Meta order with the same campaign-name bid key). Rendered on
+// every Net AOV render, so it tracks that section's $0-orders toggle.
+// Exact: B1 − B0 = Σ s0·(c1 − c0) + Σ (s1 − s0)·(c1 − B0), since Σ(s1 − s0) = 0.
+// A group missing from one period borrows the other period's ratios (as the
+// Net AOV segment split does), so a new or retired campaign is all mix rather
+// than a fake jump from $0.
+function renderBidNetAov(prev, cur) {
+  const { ratios, driverSplit, blank, addTo } = NetAOV;
+  const segP = (prev.seg && prev.seg.meta_bid) || {}, segC = (cur.seg && cur.seg.meta_bid) || {};
+  const T0 = blank(), T1 = blank();
+  BID_GROUPS.forEach(b => { if (segP[b.key]) addTo(T0, segP[b.key]); if (segC[b.key]) addTo(T1, segC[b.key]); });
+  const tbody = document.getElementById('bid-aov-tbody'), tfoot = document.getElementById('bid-aov-tfoot');
+  if (!T0.orders || !T1.orders) {
+    tbody.innerHTML = '<tr><td colspan="14">No Meta orders in one of the periods.</td></tr>';
+    tfoot.innerHTML = '';
+    return;
+  }
+  const B0 = T0.net / T0.orders, B1 = T1.net / T1.orders, dB = B1 - B0;
+  const z = v => isFinite(v) ? v : 0;
+  const rows = BID_GROUPS.filter(b => segP[b.key] || segC[b.key]).map(b => {
+    const a0 = segP[b.key] || blank(), a1 = segC[b.key] || blank();
+    const r0 = ratios(a0), r1 = ratios(a1);
+    const c0 = a0.orders ? r0 : r1, c1 = a1.orders ? r1 : r0;
+    const s0 = a0.orders / T0.orders, s1 = a1.orders / T1.orders;
+    const own = s0 * z(c1.aov - c0.aov);
+    const mix = (s1 - s0) * (z(c1.aov) - B0);
+    const ds = driverSplit(c0, c1);
+    return { bid: b.key, a0, a1, r0, r1, s0, s1, own, mix,
+      upt: s0 * ds.upt, price: s0 * ds.price, disc: s0 * ds.discount, total: own + mix };
+  });
+  const pctOf = v => dB === 0 ? '—' : (v / dB * 100).toFixed(0) + '%';
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td>${bidCell(r.bid)}</td>
+      <td class="r">${fmtPct(r.s0)}</td>
+      <td class="r">${fmtPct(r.s1)}</td>
+      <td class="r ${cls(r.s1 - r.s0)}">${signedPct(r.s1 - r.s0)}</td>
+      <td class="r">${r.a0.orders ? fmt$2(r.r0.aov) : '—'}</td>
+      <td class="r">${r.a1.orders ? fmt$2(r.r1.aov) : '—'}</td>
+      <td class="r ${cls(r.r1.aov - r.r0.aov)}">${r.a0.orders && r.a1.orders ? signed$2(r.r1.aov - r.r0.aov) : '—'}</td>
+      <td class="r ${cls(r.upt)}">${signed$2(r.upt)}</td>
+      <td class="r ${cls(r.price)}">${signed$2(r.price)}</td>
+      <td class="r ${cls(r.disc)}">${signed$2(r.disc)}</td>
+      <td class="r ${cls(r.own)}">${signed$2(r.own)}</td>
+      <td class="r ${cls(r.mix)}">${signed$2(r.mix)}</td>
+      <td class="r ${cls(r.total)}">${signed$2(r.total)}</td>
+      <td class="r">${pctOf(r.total)}</td>
+    </tr>`).join('');
+  const sum = k => rows.reduce((a, r) => a + r[k], 0);
+  tfoot.innerHTML = `
+    <tr>
+      <td>Total Δ Meta Net AOV</td>
+      <td class="r">100%</td>
+      <td class="r">100%</td>
+      <td class="r">—</td>
+      <td class="r">${fmt$2(B0)}</td>
+      <td class="r">${fmt$2(B1)}</td>
+      <td class="r ${cls(dB)}">${signed$2(dB)}</td>
+      <td class="r ${cls(sum('upt'))}">${signed$2(sum('upt'))}</td>
+      <td class="r ${cls(sum('price'))}">${signed$2(sum('price'))}</td>
+      <td class="r ${cls(sum('disc'))}">${signed$2(sum('disc'))}</td>
+      <td class="r ${cls(sum('own'))}">${signed$2(sum('own'))}</td>
+      <td class="r ${cls(sum('mix'))}">${signed$2(sum('mix'))}</td>
+      <td class="r ${cls(sum('total'))}">${signed$2(sum('total'))}</td>
+      <td class="r">100%</td>
+    </tr>`;
+}
+document.addEventListener('netaov:loading', () => {
+  document.getElementById('bid-aov-tbody').innerHTML = '<tr><td colspan="14"><span class="spinner"></span>Waiting for net AOV (loads with the Net AOV section)…</td></tr>';
+  document.getElementById('bid-aov-tfoot').innerHTML = '';
+});
+document.addEventListener('netaov:failed', () => {
+  document.getElementById('bid-aov-tbody').innerHTML = '<tr><td colspan="14" class="num-neg">Net AOV didn\'t load (see the Net AOV section), so this split isn\'t shown.</td></tr>';
+  document.getElementById('bid-aov-tfoot').innerHTML = '';
+});
+document.addEventListener('netaov:render', e => {
+  try { renderBidNetAov(e.detail.prev, e.detail.cur); }
+  catch (err) { document.getElementById('bid-aov-tbody').innerHTML = `<tr><td colspan="14" class="num-neg">Couldn't build Meta net AOV: ${escHtml(err.message)}</td></tr>`; }
+});
 
 function lpCell(lp) {
   const label = (lp == null || lp === '') ? '(none)' : lp;
@@ -1650,7 +1743,6 @@ function render(payload) {
   const bidOpts = (t) => ({ tbodyId: `bid-${t}-tbody`, tfootId: `bid-${t}-tfoot`, labelCell: bidCell, labelKey: 'bid' });
   renderRevTable(bids, bidOpts('rev'));
   renderUptTable(bids, bidOpts('upt'));
-  renderAovTable(bids, { ...bidOpts('aov'), totalLabel: 'Total Δ Meta Gross AOV' });
   loadBidSpend(_lastWindow, bids);
   const minOrders = parseInt(document.getElementById('lp-min-orders').value, 10) || 20;
   renderLpUpt(_drillTree, minOrders);

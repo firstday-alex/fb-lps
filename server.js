@@ -2407,7 +2407,7 @@ app.get('/api/net-aov-data', async (req, res) => {
   const newPart = () => ({
     totals: blank(),
     days: {},
-    seg: { order_type: {}, customer: {}, purchase: {}, discount: {}, discount_code: {}, protection: {}, gift: {}, source: {}, campaign: {}, landing_page: {} },
+    seg: { order_type: {}, customer: {}, purchase: {}, discount: {}, discount_code: {}, protection: {}, gift: {}, source: {}, campaign: {}, landing_page: {}, meta_bid: {} },
     // Net AOV in $1 bins (so percentiles are exact to the dollar) and paid units
     // per order. Both are counts, so they add across days and parts too.
     hist_net: {},
@@ -2545,6 +2545,11 @@ app.get('/api/net-aov-data', async (req, res) => {
       source: (src || '(none)') + ' / ' + (med || '(none)'),
       campaign: (utm?.campaign || '').trim() || '(none)',
       landing_page: lpPath(fv?.landingPage) || '(none)',
+      // Meta orders by campaign-name bid strategy, for aov-impact.html's
+      // "Meta net AOV: own move vs mix shift". Same Meta source set as that
+      // page's channel grouping; everything else lands in one 'not_meta' row.
+      meta_bid: (['facebook', 'ig', 'instagram', 'igshopping'].includes(src) || src.startsWith('facebook'))
+        ? bidOf(utm?.campaign) : 'not_meta',
     };
     for (const [dim, key] of Object.entries(segKeys)) add(part.seg[dim][key] ||= blank(), o);
     for (const [dim, m] of Object.entries(lineAcc)) {
