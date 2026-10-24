@@ -285,7 +285,9 @@ function render() {
   const ft = data.follow_action_types || [];
   document.getElementById('engage-sub').innerHTML =
     `Follows = Facebook Page follows (Meta's <code>like</code> action) + Instagram follows`
-    + (ft.length ? ` (from ${ft.map(t => `<code>${esc(t)}</code>`).join(', ')})` : ' (Meta returned no Instagram-follow action for this range, so those count as 0)')
+    + (data.ig_follow_source === 'instagram_profile_follow' ? ' (Meta\'s <code>instagram_profile_follow</code> field)'
+      : ft.length ? ` (Meta rejected the <code>instagram_profile_follow</code> field, so counted from ${ft.map(t => `<code>${esc(t)}</code>`).join(', ')})`
+      : ' (Meta rejected the <code>instagram_profile_follow</code> field for this account, so they show 0)')
     + `. Engagements = Meta's post engagement. Hook rate = 3-second video views ÷ impressions; hold rate = ThruPlays ÷ 3-second views. `
     + `Costs show "—" on days or campaigns with none of the action.`;
   document.getElementById('delivery-sub').textContent =

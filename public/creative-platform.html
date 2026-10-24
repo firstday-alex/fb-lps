@@ -412,9 +412,11 @@ function renderTable() {
 
 function renderFootnotes() {
   const f = document.getElementById('actions-foot');
-  const follow = data.follow_action_types.length
-    ? `Instagram follows counted from: ${data.follow_action_types.map(t => `<code>${esc(t)}</code>`).join(', ')}.`
-    : 'Meta returned no Instagram-follow action for these ads, so IG follows are 0. Either nothing was followed, or this account doesn\'t report it at ad level.';
+  const follow = data.ig_follow_source === 'instagram_profile_follow'
+    ? 'Instagram follows come from Meta\'s <code>instagram_profile_follow</code> insights field.'
+    : data.follow_action_types.length
+      ? `Meta rejected the <code>instagram_profile_follow</code> field for this account, so Instagram follows were counted from: ${data.follow_action_types.map(t => `<code>${esc(t)}</code>`).join(', ')}.`
+      : 'Meta rejected the <code>instagram_profile_follow</code> field for this account and returned no follow action, so IG follows show 0.';
   f.innerHTML = `<summary>Where the follower numbers come from</summary>
     <p style="margin-top:6px">Facebook follows come from Meta's <code>like</code> action (Page likes/follows). ${follow}</p>
     <p style="margin-top:6px">Every action type Meta returned for these ads: ${data.action_types_seen.map(t => `<code>${esc(t)}</code>`).join(' ')}</p>`;

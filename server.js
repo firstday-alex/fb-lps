@@ -6802,6 +6802,53 @@ app.get('/api/campaign-daily', requireAuth, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────
+// INSTAGRAM FOLLOWS — a top-level insights field, not an action_type
+// ─────────────────────────────────────────────
+// Meta's action-type reference (ads-action-stats) has `like` for Facebook Page
+// likes/follows but NO Instagram-follow action. Instagram follows attributed to
+// ads arrived in 2025–26 as their own Ads Insights field,
+// `instagram_profile_follow`, which the rest of this app's API version (v21.0,
+// META_API_VERSION) predates. Scanning `actions` for "follow" therefore found
+// nothing and IG follows read 0.
+//
+// So the Facebook Metrics and Creative Platform pulls go out on v26.0 with the
+// field requested. If Meta rejects the request as an invalid parameter (#100 —
+// field unknown on this account/version), the same pull is retried on the app's
+// usual version without it and the response says `ig_follow_source: 'actions'`,
+// so a missing field degrades to the old behaviour instead of breaking the tab.
+const META_IG_FOLLOW_BASE_URL = 'https://graph.facebook.com/v26.0';
+const IG_FOLLOW_FIELD = 'instagram_profile_follow';
+
+// The field's shape isn't pinned down in public docs: accept a plain number /
+// numeric string, an actions-style [{ action_type, value }] list, or { value }.
+function igFollowCount(row) {
+  const v = row[IG_FOLLOW_FIELD];
+  if (v == null) return 0;
+  if (Array.isArray(v)) return v.reduce((s, a) => s + (parseFloat(a && a.value) || 0), 0);
+  if (typeof v === 'object') return parseFloat(v.value) || 0;
+  return parseFloat(v) || 0;
+}
+
+// Pages through an insights query, first with the IG-follow field on v26.0,
+// falling back to the app's base version without it on a #100 error.
+// `buildUrl(base, igField)` returns the first-page URL; `fetchPages(url)`
+// returns rows and may stop early (time budgets). Each row gets `_ig` set to
+// its IG follow count, or null when the field wasn't available.
+async function pullWithIgFollows(buildUrl, fetchPages) {
+  try {
+    const rows = await fetchPages(buildUrl(META_IG_FOLLOW_BASE_URL, ',' + IG_FOLLOW_FIELD));
+    for (const r of rows) r._ig = igFollowCount(r);
+    return { rows, igField: true };
+  } catch (err) {
+    if (err.code !== 100) throw err;
+    console.warn(`[ig-follows] ${IG_FOLLOW_FIELD} rejected (${err.message}); retrying without it`);
+    const rows = await fetchPages(buildUrl(META_BASE_URL, ''));
+    for (const r of rows) r._ig = null;
+    return { rows, igField: false };
+  }
+}
+
+// ─────────────────────────────────────────────
 // FACEBOOK METRICS — reach, impressions, frequency, CTR (Meta-reported only)
 // ─────────────────────────────────────────────
 // Backs public/facebook-metrics.html. Four read-only insights pulls:
@@ -6836,23 +6883,30 @@ app.get('/api/meta-delivery-metrics', requireAuth, async (req, res) => {
   // inline_link_click_ctr = clicks on links to the destination ÷ impressions —
   // the one that matters for site traffic, so the page leads with it.
   const FIELDS = 'spend,reach,impressions,frequency,clicks,ctr,inline_link_clicks,inline_link_click_ctr,cpm,actions,video_thruplay_watched_actions';
-  // Follows/engagement/video come out of the `actions` array with the same
-  // mapping as /api/meta-creative-platform: `like` = Facebook Page follows, any
-  // other action_type containing "follow" = Instagram follows (names surfaced
-  // in follow_action_types), `video_view` = 3-second video plays.
+  // Follows/engagement/video use the same mapping as /api/meta-creative-platform:
+  // `like` action = Facebook Page follows, the instagram_profile_follow field =
+  // Instagram follows (see pullWithIgFollows), `video_view` = 3-second plays.
+  // Only if that field is unavailable do we fall back to scanning `actions` for
+  // a "follow" action_type (names surfaced in follow_action_types).
   const followTypes = new Set();
+  let igField = true;
   const pull = async (range, extra, label) => {
-    let url = `${META_BASE_URL}/${account_id}/insights`
-      + `?fields=${FIELDS}${extra}`
-      + `&time_range=${encodeURIComponent(JSON.stringify(range))}`
-      + `&limit=500&${metaParams(req.accessToken)}`;
-    const rows = [];
-    while (url) {
-      const j = await metaFetchWithBackoff(url, label);
-      rows.push(...(j.data || []));
-      url = j.paging?.next || null;
-    }
-    return rows;
+    const r = await pullWithIgFollows(
+      (base, igf) => `${base}/${account_id}/insights`
+        + `?fields=${FIELDS}${igf}${extra}`
+        + `&time_range=${encodeURIComponent(JSON.stringify(range))}`
+        + `&limit=500&${metaParams(req.accessToken)}`,
+      async (url) => {
+        const rows = [];
+        while (url) {
+          const j = await metaFetchWithBackoff(url, label);
+          rows.push(...(j.data || []));
+          url = j.paging?.next || null;
+        }
+        return rows;
+      });
+    if (!r.igField) igField = false;
+    return r.rows;
   };
   const norm = r => {
     const reach = parseFloat(r.reach) || 0;
@@ -6879,7 +6933,8 @@ app.get('/api/meta-delivery-metrics', requireAuth, async (req, res) => {
       if (a.action_type !== 'like' && /follow/i.test(a.action_type)) followTypes.add(a.action_type);
     }
     const fb = acts.like || 0;
-    const ig = Object.entries(acts).filter(([t]) => t !== 'like' && /follow/i.test(t)).reduce((s, [, v]) => s + v, 0);
+    const ig = r._ig != null ? r._ig
+      : Object.entries(acts).filter(([t]) => t !== 'like' && /follow/i.test(t)).reduce((s, [, v]) => s + v, 0);
     const eng = acts.post_engagement || 0;
     const v3 = acts.video_view || 0;
     const thru = (r.video_thruplay_watched_actions || []).reduce((s, a) => s + (parseFloat(a.value) || 0), 0);
@@ -6912,6 +6967,7 @@ app.get('/api/meta-delivery-metrics', requireAuth, async (req, res) => {
       previous: prevRows[0] ? norm(prevRows[0]) : null,
       days: daily.map(d => ({ date: d.date_start, ...norm(d) })).sort((a, b) => a.date.localeCompare(b.date)),
       campaigns: camps.map(c => ({ campaign_id: c.campaign_id, campaign_name: c.campaign_name, ...norm(c) })),
+      ig_follow_source: igField ? IG_FOLLOW_FIELD : 'actions',
       follow_action_types: [...followTypes].sort(),
     };
     setEndpointCache(cacheKey, out);
@@ -6939,10 +6995,10 @@ app.get('/api/meta-delivery-metrics', requireAuth, async (req, res) => {
 // and stops after MAX_PAGES or a time budget — the top spenders always land
 // first, and `truncated` tells the page when the tail was cut.
 //
-// Follows: `like` is Facebook Page follows/likes. Instagram follows have no
-// stable public action_type name we can rely on, so any action_type containing
-// "follow" is counted as an IG follow and its exact name is returned in
-// `follow_action_types` for the page to show — nothing is assumed silently.
+// Follows: the `like` action is Facebook Page follows/likes; Instagram follows
+// come from the instagram_profile_follow field (see pullWithIgFollows). If that
+// field is unavailable, any action_type containing "follow" is counted instead
+// and its exact name returned in `follow_action_types`.
 app.get('/api/meta-creative-platform', requireAuth, async (req, res) => {
   const { account_id, since, until } = req.query;
   const campaign = String(req.query.campaign || '').trim().slice(0, 100);
@@ -6959,17 +7015,21 @@ app.get('/api/meta-creative-platform', requireAuth, async (req, res) => {
   const filtering = [{ field: 'spend', operator: 'GREATER_THAN', value: '0' }];
   if (campaign) filtering.push({ field: 'campaign.name', operator: 'CONTAIN', value: campaign });
 
-  let url = `${META_BASE_URL}/${account_id}/insights`
+  const buildUrl = (base, igf) => `${base}/${account_id}/insights`
     + `?level=ad`
-    + `&fields=ad_id,ad_name,campaign_name,spend,impressions,clicks,inline_link_clicks,actions,video_thruplay_watched_actions`
+    + `&fields=ad_id,ad_name,campaign_name,spend,impressions,clicks,inline_link_clicks,actions,video_thruplay_watched_actions${igf}`
     + `&time_range=${encodeURIComponent(JSON.stringify({ since, until }))}`
     + `&filtering=${encodeURIComponent(JSON.stringify(filtering))}`
     + `&sort=spend_descending&limit=${PAGE}&${metaParams(req.accessToken)}`;
 
   const t0 = Date.now();
-  const rows = [];
-  let pages = 0, truncated = false;
-  try {
+  let rows = [];
+  let truncated = false, igField = true;
+  // Pages land in `rows` as they arrive, so a failure after page one keeps
+  // what we have. A #100 on the very first page restarts on the fallback.
+  const fetchPages = async (url) => {
+    rows = [];
+    let pages = 0;
     while (url) {
       const j = await metaFetchWithBackoff(url, 'creative-platform', 2);
       rows.push(...(j.data || []));
@@ -6977,6 +7037,16 @@ app.get('/api/meta-creative-platform', requireAuth, async (req, res) => {
       url = j.paging?.next || null;
       if (url && (pages >= MAX_PAGES || Date.now() - t0 > TIME_BUDGET_MS)) { truncated = true; break; }
     }
+    return rows;
+  };
+  try {
+    const r = await pullWithIgFollows(buildUrl, async (url) => {
+      try { return await fetchPages(url); }
+      // A #100 after some pages landed isn't the field being rejected — keep them.
+      catch (e) { if (e.code === 100 && rows.length) { e.code = 'partial'; } throw e; }
+    });
+    rows = r.rows;
+    igField = r.igField;
   } catch (err) {
     if (err.code === 190) {
       clearTokenCookie(res);
@@ -6987,6 +7057,8 @@ app.get('/api/meta-creative-platform', requireAuth, async (req, res) => {
     // when nothing came back at all.
     if (!rows.length) return res.status(400).json({ error: err.message });
     truncated = true;
+    // Partial pages from the v26 attempt still carry the IG field.
+    for (const r of rows) if (r[IG_FOLLOW_FIELD] !== undefined) r._ig = igFollowCount(r);
   }
 
   const actionTypesSeen = new Set();
@@ -6999,9 +7071,8 @@ app.get('/api/meta-creative-platform', requireAuth, async (req, res) => {
       actionTypesSeen.add(a.action_type);
       if (a.action_type !== 'like' && /follow/i.test(a.action_type)) followTypes.add(a.action_type);
     }
-    const igFollows = Object.entries(acts)
-      .filter(([t]) => t !== 'like' && /follow/i.test(t))
-      .reduce((s, [, v]) => s + v, 0);
+    const igFollows = r._ig != null ? r._ig
+      : Object.entries(acts).filter(([t]) => t !== 'like' && /follow/i.test(t)).reduce((s, [, v]) => s + v, 0);
     const thru = (r.video_thruplay_watched_actions || []).reduce((s, a) => s + (parseFloat(a.value) || 0), 0);
 
     const name = String(r.ad_name || '(unnamed ad)').trim();
@@ -7042,6 +7113,7 @@ app.get('/api/meta-creative-platform', requireAuth, async (req, res) => {
   const out = {
     account_id, range: { since, until }, campaign: campaign || null,
     ad_rows: rows.length, truncated,
+    ig_follow_source: igField ? IG_FOLLOW_FIELD : 'actions',
     follow_action_types: [...followTypes].sort(),
     action_types_seen: [...actionTypesSeen].sort(),
     ads,
