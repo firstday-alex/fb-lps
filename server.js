@@ -6835,7 +6835,12 @@ app.get('/api/meta-delivery-metrics', requireAuth, async (req, res) => {
   // ctr = all clicks (likes, profile taps, "see more"…) ÷ impressions.
   // inline_link_click_ctr = clicks on links to the destination ÷ impressions —
   // the one that matters for site traffic, so the page leads with it.
-  const FIELDS = 'spend,reach,impressions,frequency,clicks,ctr,inline_link_clicks,inline_link_click_ctr,cpm';
+  const FIELDS = 'spend,reach,impressions,frequency,clicks,ctr,inline_link_clicks,inline_link_click_ctr,cpm,actions,video_thruplay_watched_actions';
+  // Follows/engagement/video come out of the `actions` array with the same
+  // mapping as /api/meta-creative-platform: `like` = Facebook Page follows, any
+  // other action_type containing "follow" = Instagram follows (names surfaced
+  // in follow_action_types), `video_view` = 3-second video plays.
+  const followTypes = new Set();
   const pull = async (range, extra, label) => {
     let url = `${META_BASE_URL}/${account_id}/insights`
       + `?fields=${FIELDS}${extra}`
@@ -6861,6 +6866,33 @@ app.get('/api/meta-delivery-metrics', requireAuth, async (req, res) => {
       ctr: impressions > 0 ? clicks / impressions * 100 : 0,
       link_ctr: impressions > 0 ? linkClicks / impressions * 100 : 0,
       cpm: impressions > 0 ? spend / impressions * 1000 : 0,
+      ...platform(r, spend, impressions),
+    };
+  };
+  // Costs and rates are null (not 0) when their denominator is zero, so a day
+  // with no follows shows "—" rather than a $0 cost per follow.
+  const ratio = (a, b, k = 1) => b > 0 ? a / b * k : null;
+  const platform = (r, spend, impressions) => {
+    const acts = {};
+    for (const a of r.actions || []) {
+      acts[a.action_type] = (acts[a.action_type] || 0) + (parseFloat(a.value) || 0);
+      if (a.action_type !== 'like' && /follow/i.test(a.action_type)) followTypes.add(a.action_type);
+    }
+    const fb = acts.like || 0;
+    const ig = Object.entries(acts).filter(([t]) => t !== 'like' && /follow/i.test(t)).reduce((s, [, v]) => s + v, 0);
+    const eng = acts.post_engagement || 0;
+    const v3 = acts.video_view || 0;
+    const thru = (r.video_thruplay_watched_actions || []).reduce((s, a) => s + (parseFloat(a.value) || 0), 0);
+    return {
+      fb_follows: fb, ig_follows: ig, follows: fb + ig,
+      cost_per_follow: ratio(spend, fb + ig),
+      follows_per_1k: ratio(fb + ig, impressions, 1000),
+      post_engagement: eng,
+      eng_rate: ratio(eng, impressions, 100),
+      cost_per_eng: ratio(spend, eng),
+      video_3s: v3, thruplays: thru,
+      hook_rate: ratio(v3, impressions, 100),
+      hold_rate: ratio(thru, v3, 100),
     };
   };
 
@@ -6880,6 +6912,7 @@ app.get('/api/meta-delivery-metrics', requireAuth, async (req, res) => {
       previous: prevRows[0] ? norm(prevRows[0]) : null,
       days: daily.map(d => ({ date: d.date_start, ...norm(d) })).sort((a, b) => a.date.localeCompare(b.date)),
       campaigns: camps.map(c => ({ campaign_id: c.campaign_id, campaign_name: c.campaign_name, ...norm(c) })),
+      follow_action_types: [...followTypes].sort(),
     };
     setEndpointCache(cacheKey, out);
     res.json(out);

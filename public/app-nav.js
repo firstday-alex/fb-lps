@@ -55,7 +55,7 @@
       items: [
         { href: '/',                        name: 'Top Ads by Spend',         desc: 'Highest-spend Meta ads with creatives and destination URLs', match: ['/', '/index.html'] },
         { href: '/ad-diagnostic.html',      name: 'Ad Diagnostic',            desc: 'Meta spend joined to Shopify sessions, ad by ad' },
-        { href: '/facebook-metrics.html',   name: 'Facebook Metrics',         desc: 'Meta-reported reach, impressions, frequency and CTR, by day and campaign' },
+        { href: '/facebook-metrics.html',   name: 'Facebook Metrics',         desc: 'Meta-reported reach, frequency, CTR, follows and engagement, by day and campaign' },
         { href: '/creative-platform.html',  name: 'Creative Platform Metrics', desc: 'Top ads by spend on follows, cost per follow, CTR, engagement and video hold' },
         { href: '/campaign-analysis.html',  name: 'Campaign Performance',     desc: 'Campaign metrics day by day over a date range' },
         { href: '/creative-fatigue.html',   name: 'Creative Fatigue',         desc: 'Per-ad lifecycle scoring with runway projection' },
