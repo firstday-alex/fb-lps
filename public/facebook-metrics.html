@@ -119,6 +119,24 @@
     tr.sel td:first-child { font-weight: 700; }
     .approx { color: var(--text-secondary); }
 
+    /* Ad image preview */
+    .chip {
+      margin-left: 6px; padding: 1px 8px; border: 1px solid var(--border); border-radius: 10px; background: white;
+      font: inherit; font-size: 0.7rem; font-weight: 600; color: var(--fb-blue); cursor: pointer; vertical-align: 1px;
+    }
+    .chip:hover { background: #e7f0fd; border-color: var(--fb-blue); }
+    .modal { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,0.55); display: flex; align-items: center; justify-content: center; padding: 16px; }
+    .modal__box { background: var(--surface); border-radius: var(--radius); box-shadow: 0 8px 30px rgba(0,0,0,0.3); max-width: 560px; width: 100%; max-height: calc(100vh - 32px); display: flex; flex-direction: column; overflow: hidden; }
+    .modal__head { display: flex; gap: 12px; align-items: flex-start; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+    .modal__title { font-size: 0.85rem; font-weight: 700; word-break: break-word; flex: 1; }
+    .modal__close { border: none; background: none; font-size: 1.4rem; line-height: 1; cursor: pointer; color: var(--text-secondary); }
+    .modal__body { padding: 16px; overflow: auto; text-align: center; min-height: 120px; }
+    .modal__body img { max-width: 100%; max-height: 65vh; border-radius: 6px; display: block; margin: 0 auto; }
+    .modal__note { font-size: 0.75rem; color: var(--text-secondary); margin-top: 8px; }
+    .modal__foot { display: flex; flex-wrap: wrap; gap: 14px; padding: 10px 16px; border-top: 1px solid var(--border); font-size: 0.8rem; }
+    .modal__foot a { color: var(--fb-blue); text-decoration: none; cursor: pointer; }
+    .modal__foot a:hover { text-decoration: underline; }
+
     @media (max-width: 640px) {
       header { padding: 12px 16px; flex-wrap: wrap; }
       .wrap { padding: 16px; }
@@ -185,6 +203,14 @@
     <div class="tbl-wrap"><table id="engage-table"></table></div>
   </div>
 
+</div>
+
+<div class="modal hidden" id="preview-modal">
+  <div class="modal__box" role="dialog" aria-modal="true" aria-labelledby="preview-title">
+    <div class="modal__head"><div class="modal__title" id="preview-title"></div><button class="modal__close" id="preview-close" aria-label="Close">×</button></div>
+    <div class="modal__body" id="preview-body"></div>
+    <div class="modal__foot" id="preview-foot"></div>
+  </div>
 </div>
 
 <script>
@@ -378,6 +404,8 @@ function renderSection(id, keys, active) {
   const tbl = document.getElementById(id + '-table');
   tbl.innerHTML = table(id, active);
   tbl.querySelectorAll('tr[data-key]').forEach(tr => tr.addEventListener('click', () => drill(tr.dataset.key)));
+  // The chip sits inside a drill row, so stop the click from also drilling.
+  tbl.querySelectorAll('[data-preview]').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); openPreview(b.dataset.preview, b.dataset.name); }));
 
   document.querySelectorAll(`#${id}-toggle button, #${id}-kpis .kpi[data-metric]`).forEach(el =>
     el.addEventListener('click', () => {
@@ -492,7 +520,7 @@ function table(section, active) {
     const thin = section !== 'delivery' && r.impressions < MIN_IMPR_FOR_CTR;
     const sel = byAd && r.key === scope.ad_name;
     const tip = byAd ? (sel ? 'Click to go back to the whole campaign' : 'Click to chart just this ad') : 'Click to drill into this campaign\'s ad names';
-    return `<tr class="drill ${sel ? 'sel' : ''}" data-key="${esc(r.key)}" title="${esc(tip)}"><td class="name">${esc(r.name)}${byAd && r.ad_ids > 1 ? ` <span class="approx">(${r.ad_ids} ads)</span>` : ''}</td>${cols.map(([k, , f]) => {
+    return `<tr class="drill ${sel ? 'sel' : ''}" data-key="${esc(r.key)}" title="${esc(tip)}"><td class="name">${esc(r.name)}${byAd && r.ad_ids > 1 ? ` <span class="approx">(${r.ad_ids} ads)</span>` : ''}${byAd && r.top_ad_id ? `<button class="chip" data-preview="${esc(r.top_ad_id)}" data-name="${esc(r.name)}" title="Show this ad's image">preview</button>` : ''}</td>${cols.map(([k, , f]) => {
       const dim = thin && RATE_KEYS.has(k);
       const style = k === active && !dim ? shade(r[k]) : '';
       // Reach summed over several ad ids double-counts people who saw more
@@ -509,6 +537,44 @@ function table(section, active) {
   const foot = scope.ad_name ? '' : `<tfoot><tr><td>${scope.campaign_id ? 'Campaign total' : 'Account total'}</td>${cols.map(([k, , f]) => `<td class="r">${f(t[k])}</td>`).join('')}</tr></tfoot>`;
   return head + `<tbody>${body}</tbody>` + foot;
 }
+
+// ── Ad preview ───────────────────────────
+// One /api/meta-ad-image call per click, for the highest-spend ad id behind
+// the name. A stale response (user opened another ad meanwhile) is dropped.
+let previewSeq = 0;
+async function openPreview(adId, name) {
+  const seq = ++previewSeq;
+  const body = document.getElementById('preview-body'), foot = document.getElementById('preview-foot');
+  document.getElementById('preview-title').textContent = name;
+  body.innerHTML = '<span class="spinner"></span> Loading image…';
+  const adsManager = `https://adsmanager.facebook.com/adsmanager/manage/ads?act=${encodeURIComponent((data.account_id || '').replace(/^act_/, ''))}&selected_ad_ids=${encodeURIComponent(adId)}`;
+  foot.innerHTML = `<a id="preview-full">Full Meta preview ↗</a><a href="${esc(adsManager)}" target="_blank" rel="noopener">Ads Manager ↗</a>`;
+  document.getElementById('preview-full').addEventListener('click', () => openMetaPreview(adId));
+  document.getElementById('preview-modal').classList.remove('hidden');
+  try {
+    const d = await (await fetch('/api/meta-ad-image?ad_id=' + encodeURIComponent(adId))).json();
+    if (seq !== previewSeq) return;
+    if (!d.image_url) { body.innerHTML = `<div class="modal__note">${esc((d.error || 'No image available for this ad').replace(/\.?$/, '.'))} Try the full Meta preview.</div>`; return; }
+    const note = [d.is_video ? 'Video ad — showing its cover image. Use the full Meta preview to play it.' : '',
+      d.image_source === 'thumbnail-64px' ? 'Meta only returned a small thumbnail for this ad.' : ''].filter(Boolean).join(' ');
+    body.innerHTML = `<img src="${esc(d.image_url)}" alt="${esc(name)}" referrerpolicy="no-referrer">${note ? `<div class="modal__note">${esc(note)}</div>` : ''}`;
+    if (d.post_url) foot.insertAdjacentHTML('beforeend', `<a href="${esc(d.post_url)}" target="_blank" rel="noopener">Post on Facebook ↗</a>`);
+  } catch (e) {
+    if (seq === previewSeq) body.innerHTML = `<div class="modal__note">${esc(e.message)}</div>`;
+  }
+}
+async function openMetaPreview(adId) {
+  const win = window.open('', '_blank');
+  try {
+    const d = await (await fetch('/api/meta-ad-creative-preview?ad_id=' + encodeURIComponent(adId))).json();
+    if (d.preview_url && win) win.location = d.preview_url;
+    else { if (win) win.close(); alert(d.error || 'No preview available for this ad.'); }
+  } catch (e) { if (win) win.close(); alert(e.message); }
+}
+function closePreview() { previewSeq++; document.getElementById('preview-modal').classList.add('hidden'); }
+document.getElementById('preview-close').addEventListener('click', closePreview);
+document.getElementById('preview-modal').addEventListener('click', e => { if (e.target.id === 'preview-modal') closePreview(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closePreview(); });
 
 // ── Utils ────────────────────────────────
 function showStatus(msg, isError) {

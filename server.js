@@ -3882,6 +3882,65 @@ app.get('/api/meta-ad-creative-preview', requireAuth, async (req, res) => {
   }
 });
 
+// Ad id → a full-size creative image, for the in-page preview popup on
+// Facebook Metrics. `thumbnail_url` on its own is a 64×64 crop (p64x64), so it
+// is the last resort: try the creative's own image, then the image inside its
+// story spec / dynamic-creative asset feed, then — for post-based creatives,
+// whose object_story_spec is empty — the post's `full_picture`.
+app.get('/api/meta-ad-image', requireAuth, async (req, res) => {
+  const { ad_id } = req.query;
+  if (!ad_id || !/^\d+$/.test(ad_id)) return res.status(400).json({ error: 'numeric ad_id required' });
+
+  const cacheKey = endpointCacheKey('meta-ad-image', { ad_id });
+  const cached = getEndpointCache(cacheKey);
+  if (cached) return res.json({ ...cached, cached: true });
+
+  try {
+    const ad = await metaFetchWithBackoff(`${META_BASE_URL}/${ad_id}`
+      + `?fields=name,creative{id,thumbnail_url,image_url,object_story_spec,asset_feed_spec,effective_object_story_id}`
+      + `&${metaParams(req.accessToken)}`, 'ad-image', 2);
+    const creative = ad.creative || {};
+    const spec = creative.object_story_spec || {};
+    const feed = creative.asset_feed_spec || {};
+    const big = u => (u && !u.includes('p64x64') ? u : null);
+
+    let imageUrl = big(creative.image_url)
+      || big(spec.link_data?.picture)
+      || big(spec.video_data?.image_url)
+      || big(spec.photo_data?.url)
+      || big((spec.link_data?.child_attachments || [])[0]?.picture)
+      || big((feed.images || []).find(i => i.url)?.url)
+      || big((feed.videos || []).find(v => v.thumbnail_url)?.thumbnail_url)
+      || big(creative.thumbnail_url);
+    let source = imageUrl ? 'creative' : null;
+
+    const storyId = creative.effective_object_story_id || null;
+    if (!imageUrl && storyId) {
+      const post = await metaFetchWithBackoff(`${META_BASE_URL}/${storyId}?fields=full_picture&${metaParams(req.accessToken)}`, 'ad-image:post', 2).catch(() => null);
+      if (post?.full_picture) { imageUrl = post.full_picture; source = 'post'; }
+    }
+    if (!imageUrl && creative.thumbnail_url) { imageUrl = creative.thumbnail_url; source = 'thumbnail-64px'; }
+
+    const [pageId, postId] = (storyId || '').split('_');
+    const payload = {
+      ad_id,
+      ad_name: ad.name || null,
+      image_url: imageUrl || null,
+      image_source: source,
+      is_video: !!(spec.video_data || (feed.videos || []).length),
+      post_url: pageId && postId ? `https://www.facebook.com/${pageId}/posts/${postId}` : null,
+    };
+    if (!imageUrl) return res.status(404).json({ ...payload, error: 'Meta returned no image for this ad' });
+    // fbcdn image URLs are signed and expire, so cache well under a day.
+    setEndpointCache(cacheKey, payload, 30 * 60 * 1000);
+    res.json(payload);
+  } catch (err) {
+    console.error('[meta-ad-image] error:', err.message, '| ad_id:', ad_id);
+    if (err.code === 190) { clearTokenCookie(res); return res.status(401).json({ error: 'Session expired' }); }
+    res.status(500).json({ error: err.message, ad_id });
+  }
+});
+
 // ─────────────────────────────────────────────
 // META ACCOUNT INSIGHTS — blended CPM / CPC / CTR for the Meta CVR page
 // ─────────────────────────────────────────────
@@ -6995,8 +7054,11 @@ app.get('/api/meta-delivery-metrics', requireAuth, async (req, res) => {
     for (const r of rows) {
       const k = r.ad_name || '(unnamed ad)';
       let g = by.get(k);
-      if (!g) by.set(k, g = { ad_name: k, ad_ids: 0, spend: 0, reach: 0, impressions: 0, clicks: 0, inline_link_clicks: 0, actions: [], _ig: null, _pv: null });
+      if (!g) by.set(k, g = { ad_name: k, ad_ids: 0, top_ad_id: null, top_spend: -1, spend: 0, reach: 0, impressions: 0, clicks: 0, inline_link_clicks: 0, actions: [], _ig: null, _pv: null });
       g.ad_ids++;
+      // The preview shows the copy that spent most — duplicates of a name
+      // across ad sets are usually the same creative anyway.
+      if ((parseFloat(r.spend) || 0) > g.top_spend) { g.top_spend = parseFloat(r.spend) || 0; g.top_ad_id = r.ad_id; }
       for (const f of ['spend', 'reach', 'impressions', 'clicks', 'inline_link_clicks']) g[f] += parseFloat(r[f]) || 0;
       g.actions.push(...(r.actions || []));
       if (r._ig != null) g._ig = (g._ig || 0) + r._ig;
@@ -7021,7 +7083,7 @@ app.get('/api/meta-delivery-metrics', requireAuth, async (req, res) => {
       // ad rows (each one does) — or look it up if the campaign had no ads.
       campaignName = breakdown[0]?.campaign_name || null;
       rows = groupByAdName(breakdown)
-        .map(g => ({ key: g.ad_name, name: g.ad_name, ad_ids: g.ad_ids, reach_summed: g.ad_ids > 1, ...norm(g) }))
+        .map(g => ({ key: g.ad_name, name: g.ad_name, ad_ids: g.ad_ids, top_ad_id: g.top_ad_id, reach_summed: g.ad_ids > 1, ...norm(g) }))
         .sort((x, y) => y.impressions - x.impressions);
     } else {
       rows = breakdown.map(c => ({ key: c.campaign_id, name: c.campaign_name, ...norm(c) }));
