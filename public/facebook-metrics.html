@@ -102,6 +102,23 @@
     .card__sub code { background: var(--bg); padding: 1px 5px; border-radius: 4px; font-size: 0.75rem; }
     .hidden { display: none !important; }
 
+    /* Drill scope — sticky so the current campaign/ad stays in view while the
+       sections below scroll past. */
+    .scope-bar {
+      position: sticky; top: 0; z-index: 5; background: var(--surface); border-radius: var(--radius);
+      box-shadow: var(--shadow); padding: 10px 16px; font-size: 0.85rem; display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline;
+    }
+    .scope-bar .lbl { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary); }
+    .scope-bar a { color: var(--fb-blue); cursor: pointer; text-decoration: none; }
+    .scope-bar a:hover { text-decoration: underline; }
+    .scope-bar .sep { color: var(--text-secondary); }
+    .scope-bar .hint { margin-left: auto; font-size: 0.75rem; color: var(--text-secondary); }
+    tr.drill { cursor: pointer; }
+    tr.drill:hover td { background-color: #f5f8fd; }
+    tr.sel td { box-shadow: inset 0 2px 0 var(--fb-blue), inset 0 -2px 0 var(--fb-blue); background-color: #e7f0fd; }
+    tr.sel td:first-child { font-weight: 700; }
+    .approx { color: var(--text-secondary); }
+
     @media (max-width: 640px) {
       header { padding: 12px 16px; flex-wrap: wrap; }
       .wrap { padding: 16px; }
@@ -138,6 +155,8 @@
     </div>
     <div id="status" class="status hidden"></div>
   </div>
+
+  <div class="scope-bar hidden" id="scope-bar"></div>
 
   <div class="card hidden" id="delivery-card">
     <h3>Reach vs Impressions vs Frequency</h3>
@@ -203,12 +222,13 @@ Object.assign(METRICS, {
   post_engagement: { label: 'Engagements',      fmt: n => fmtN(n), axis: fmtCompact, goodWhenUp: true, bar: true },
   eng_rate:        { label: 'Eng. rate',        fmt: pct2, axis: pct2, goodWhenUp: true },
   cost_per_eng:    { label: 'Cost / eng.',      fmt: fmtD, axis: fmtD, goodWhenUp: false, lowFirst: true },
-  hook_rate:       { label: 'Hook rate',        fmt: pct2, axis: pct2, goodWhenUp: true },
-  hold_rate:       { label: 'Hold rate',        fmt: pct2, axis: pct2, goodWhenUp: true },
+  profile_visits:  { label: 'Profile visits',   fmt: n => fmtN(n), axis: fmtCompact, goodWhenUp: true, bar: true },
+  shares_saves:    { label: 'Shares & saves',   fmt: n => fmtN(n), axis: fmtCompact, goodWhenUp: true, bar: true },
+  cost_per_profile_visit: { label: 'Cost / visit', fmt: fmtD, axis: fmtD, goodWhenUp: false, lowFirst: true },
 });
 const DELIVERY = ['reach', 'impressions', 'frequency', 'spend'];
 const CLICKS   = ['link_ctr', 'ctr', 'link_clicks', 'clicks'];
-const ENGAGE   = ['follows', 'cost_per_follow', 'follows_per_1k', 'post_engagement', 'eng_rate', 'cost_per_eng', 'hook_rate', 'hold_rate'];
+const ENGAGE   = ['follows', 'cost_per_follow', 'follows_per_1k', 'post_engagement', 'eng_rate', 'cost_per_eng', 'profile_visits', 'shares_saves'];
 const SECTION_KEYS = { delivery: DELIVERY, ctr: CLICKS, engage: ENGAGE };
 
 // Campaigns under this many impressions get their CTR greyed out — a handful of
@@ -219,6 +239,8 @@ let data = null;
 let deliveryMetric = 'reach';
 let ctrMetric = 'link_ctr';
 let engageMetric = 'follows';
+// Drill scope: none = by campaign; campaign = its ad names; + ad_name = one creative.
+let scope = { campaign_id: null, campaign_name: null, ad_name: null };
 
 function delta(cur, prev, m) {
   if (!Number.isFinite(cur)) return '<span class="kpi__delta">none in range</span>';
@@ -262,12 +284,16 @@ async function load() {
   btn.disabled = true;
   showStatus('<span class="spinner"></span> Pulling Meta insights…');
   try {
-    const resp = await fetch(`/api/meta-delivery-metrics?account_id=${encodeURIComponent(account)}&since=${since}&until=${until}`);
+    const qs = new URLSearchParams({ account_id: account, since, until });
+    if (scope.campaign_id) qs.set('campaign_id', scope.campaign_id);
+    if (scope.ad_name) qs.set('ad_name', scope.ad_name);
+    const resp = await fetch(`/api/meta-delivery-metrics?${qs}`);
     const d = await resp.json();
     if (resp.status === 401) { window.location.href = '/auth/facebook?next=' + encodeURIComponent(location.pathname); return; }
     if (d.error) return showStatus(d.error, true);
-    if (!d.current) return showStatus('No delivery in this date range.', true);
+    if (!d.current) return showStatus(scope.campaign_id ? 'No delivery for this selection in this date range — use the breadcrumb to go back up.' : 'No delivery in this date range.', true);
     data = d;
+    scope.campaign_name = d.scope?.campaign_name || scope.campaign_name;
     hideStatus();
     render();
   } catch (e) {
@@ -288,14 +314,50 @@ function render() {
     + (data.ig_follow_source === 'instagram_profile_follow' ? ' (Meta\'s <code>instagram_profile_follow</code> field)'
       : ft.length ? ` (Meta rejected the <code>instagram_profile_follow</code> field, so counted from ${ft.map(t => `<code>${esc(t)}</code>`).join(', ')})`
       : ' (Meta rejected the <code>instagram_profile_follow</code> field for this account, so they show 0)')
-    + `. Engagements = Meta's post engagement. Hook rate = 3-second video views ÷ impressions; hold rate = ThruPlays ÷ 3-second views. `
-    + `Costs show "—" on days or campaigns with none of the action.`;
+    + `. Engagements = Meta's post engagement. `
+    + (data.profile_visit_source
+      ? `Profile visits = Instagram profile visits from the ads (Meta's <code>${esc(data.profile_visit_source)}</code> field; reported from July 7, 2025). `
+      : `Profile visits show "—": Meta rejected the <code>instagram_profile_visits</code> field for this account. `)
+    + `Shares &amp; saves = Meta's <code>post</code> (shares) + <code>onsite_conversion.post_save</code> actions. `
+    + `Costs show "—" on days or rows with none of the action.`;
+  renderScopeBar();
   document.getElementById('delivery-sub').textContent =
     `${data.range.since} → ${data.range.until}, compared with ${data.compare.since} → ${data.compare.until}. `
     + 'Reach is unique people, so it is deduplicated across the whole range — daily reach bars will add up to more than the total.';
   renderSection('delivery', DELIVERY, deliveryMetric);
   renderSection('ctr', CLICKS, ctrMetric);
   renderSection('engage', ENGAGE, engageMetric);
+}
+
+function renderScopeBar() {
+  const bar = document.getElementById('scope-bar');
+  bar.classList.remove('hidden');
+  const parts = [];
+  parts.push(scope.campaign_id ? `<a data-up="account">All campaigns</a>` : '<b>All campaigns</b>');
+  if (scope.campaign_id) {
+    const cn = esc(scope.campaign_name || scope.campaign_id);
+    parts.push(scope.ad_name ? `<a data-up="campaign">${cn}</a>` : `<b>${cn}</b>`);
+  }
+  if (scope.ad_name) parts.push(`<b>${esc(scope.ad_name)}</b>`);
+  const hint = scope.ad_name ? 'Click another ad name to switch, or click it again to go back to the campaign'
+    : scope.campaign_id ? 'Click an ad name in any table to chart just that ad'
+    : 'Click a campaign in any table to drill into its ad names';
+  bar.innerHTML = `<span class="lbl">Viewing</span>${parts.join('<span class="sep">›</span>')}<span class="hint">${hint}</span>`;
+  bar.querySelectorAll('a[data-up]').forEach(a => a.addEventListener('click', () => {
+    if (a.dataset.up === 'account') scope = { campaign_id: null, campaign_name: null, ad_name: null };
+    else scope.ad_name = null;
+    load();
+  }));
+}
+
+function drill(key) {
+  if (data.row_level === 'campaign') {
+    const r = data.rows.find(x => x.key === key);
+    scope = { campaign_id: key, campaign_name: r ? r.name : null, ad_name: null };
+  } else {
+    scope.ad_name = scope.ad_name === key ? null : key;
+  }
+  load();
 }
 
 function renderSection(id, keys, active) {
@@ -313,7 +375,9 @@ function renderSection(id, keys, active) {
 
   const chartEl = document.getElementById(id + '-chart');
   chartEl.innerHTML = chart(data.days, active, chartEl.clientWidth);
-  document.getElementById(id + '-table').innerHTML = table(id, active);
+  const tbl = document.getElementById(id + '-table');
+  tbl.innerHTML = table(id, active);
+  tbl.querySelectorAll('tr[data-key]').forEach(tr => tr.addEventListener('click', () => drill(tr.dataset.key)));
 
   document.querySelectorAll(`#${id}-toggle button, #${id}-kpis .kpi[data-metric]`).forEach(el =>
     el.addEventListener('click', () => {
@@ -326,10 +390,13 @@ function renderSection(id, keys, active) {
 
 // Round axis bounds out to a 1/2/2.5/5 × 10^k step so gridlines land on
 // readable values instead of 1.02, 1.05, 1.08…
-function niceScale(lo, hi, ticks = 4) {
+// `whole` keeps count axes on whole-number steps: a 2.5 step on a 0–10 axis
+// printed as "3, 5, 8" once the labels were rounded.
+function niceScale(lo, hi, ticks = 4, whole = false) {
   const raw = (hi - lo) / ticks || Math.abs(hi) / ticks || 1;
   const mag = Math.pow(10, Math.floor(Math.log10(raw)));
-  const step = [1, 2, 2.5, 5, 10].map(f => f * mag).find(s => s >= raw);
+  const step = [1, 2, 2.5, 5, 10].map(f => f * mag)
+    .filter(st => !whole || (st >= 1 && Number.isInteger(st))).find(st => st >= raw) || (whole ? Math.max(1, Math.ceil(raw)) : raw);
   return { lo: Math.floor(lo / step) * step, hi: Math.ceil(hi / step) * step, step };
 }
 
@@ -344,7 +411,7 @@ function chart(days, key, width) {
   const ok = v => Number.isFinite(v);
   const vals = days.map(d => d[key]).filter(ok);
   if (!vals.length) return `<div class="chart-note">No ${esc(m.label.toLowerCase())} in this range.</div>`;
-  const sc = niceScale(isBar ? 0 : Math.min(...vals), Math.max(...vals));
+  const sc = niceScale(isBar ? 0 : Math.min(...vals), Math.max(...vals), 4, isBar && key !== 'spend');
   let lo = isBar ? 0 : Math.max(0, sc.lo), hi = sc.hi;
   if (hi === lo) hi = lo + sc.step;
   const n = days.length;
@@ -396,10 +463,10 @@ const TABLE_COLS = {
   delivery: [['spend', 'Spend'], ['reach', 'Reach'], ['impressions', 'Impressions'], ['frequency', 'Frequency'], ['cpm', 'CPM', fmtD]],
   ctr: [['impressions', 'Impressions'], ['link_clicks', 'Link Clicks'], ['clicks', 'Clicks (all)'], ['link_ctr', 'Link CTR'], ['ctr', 'CTR (all)']],
   engage: [['spend', 'Spend'], ['fb_follows', 'FB follows', n => fmtN(n)], ['ig_follows', 'IG follows', n => fmtN(n)], ['cost_per_follow'], ['follows_per_1k'],
-           ['post_engagement'], ['eng_rate'], ['cost_per_eng'], ['hook_rate'], ['hold_rate']],
+           ['post_engagement'], ['eng_rate'], ['cost_per_eng'], ['profile_visits'], ['cost_per_profile_visit'], ['shares_saves']],
 };
 // Rate columns that get greyed out on thin campaigns.
-const RATE_KEYS = new Set(['link_ctr', 'ctr', 'cost_per_follow', 'follows_per_1k', 'eng_rate', 'cost_per_eng', 'hook_rate', 'hold_rate']);
+const RATE_KEYS = new Set(['link_ctr', 'ctr', 'cost_per_follow', 'follows_per_1k', 'eng_rate', 'cost_per_eng', 'cost_per_profile_visit']);
 
 function table(section, active) {
   const m = METRICS[active];
@@ -409,7 +476,7 @@ function table(section, active) {
   // 400-impression test with three lucky clicks tops the ranking. Campaigns
   // with no value for the metric (no follows, no video) always sort last.
   const thinRow = r => section !== 'delivery' && RATE_KEYS.has(active) && r.impressions < MIN_IMPR_FOR_CTR;
-  const rows = [...data.campaigns].sort((a, b) =>
+  const rows = [...data.rows].sort((a, b) =>
     (thinRow(a) - thinRow(b))
     || (ok(b[active]) - ok(a[active]))
     || (m.lowFirst ? a[active] - b[active] : b[active] - a[active]));
@@ -419,17 +486,27 @@ function table(section, active) {
   const max = Math.max(...vals, 0), min = Math.min(...vals, max);
   const shade = v => !ok(v) || max === min ? '' : `background:rgba(24,119,242,${(0.06 + 0.3 * (m.lowFirst ? max - v : v - min) / (max - min)).toFixed(2)})`;
 
-  const head = `<thead><tr><th>Campaign</th>${cols.map(([k, l]) => `<th class="r ${k === active ? 'on' : ''}">${l}</th>`).join('')}</tr></thead>`;
+  const byAd = data.row_level === 'ad_name';
+  const head = `<thead><tr><th>${byAd ? 'Ad name' : 'Campaign'}</th>${cols.map(([k, l]) => `<th class="r ${k === active ? 'on' : ''}">${l}</th>`).join('')}</tr></thead>`;
   const body = rows.map(r => {
     const thin = section !== 'delivery' && r.impressions < MIN_IMPR_FOR_CTR;
-    return `<tr><td class="name">${esc(r.campaign_name)}</td>${cols.map(([k, , f]) => {
+    const sel = byAd && r.key === scope.ad_name;
+    const tip = byAd ? (sel ? 'Click to go back to the whole campaign' : 'Click to chart just this ad') : 'Click to drill into this campaign\'s ad names';
+    return `<tr class="drill ${sel ? 'sel' : ''}" data-key="${esc(r.key)}" title="${esc(tip)}"><td class="name">${esc(r.name)}${byAd && r.ad_ids > 1 ? ` <span class="approx">(${r.ad_ids} ads)</span>` : ''}</td>${cols.map(([k, , f]) => {
       const dim = thin && RATE_KEYS.has(k);
       const style = k === active && !dim ? shade(r[k]) : '';
-      return `<td class="r ${dim ? 'dim' : ''}" style="${style}"${dim ? ` title="Under ${fmtN(MIN_IMPR_FOR_CTR)} impressions — too few to trust the rate"` : ''}>${f(r[k])}</td>`;
+      // Reach summed over several ad ids double-counts people who saw more
+      // than one of them, so it (and frequency built on it) is marked approximate.
+      const approx = r.reach_summed && (k === 'reach' || k === 'frequency');
+      const title = dim ? ` title="Under ${fmtN(MIN_IMPR_FOR_CTR)} impressions — too few to trust the rate"`
+        : approx ? ` title="Summed over ${r.ad_ids} ads with this name, so people who saw more than one are counted again. Click the row for deduplicated reach."` : '';
+      return `<td class="r ${dim ? 'dim' : ''}" style="${style}"${title}>${approx ? '<span class="approx">~</span>' : ''}${f(r[k])}</td>`;
     }).join('')}</tr>`;
   }).join('');
+  // With one ad selected the totals above are that ad's, not the listed rows',
+  // so the footer is left off rather than mislabelled.
   const t = data.current;
-  const foot = `<tfoot><tr><td>Account total</td>${cols.map(([k, , f]) => `<td class="r">${f(t[k])}</td>`).join('')}</tr></tfoot>`;
+  const foot = scope.ad_name ? '' : `<tfoot><tr><td>${scope.campaign_id ? 'Campaign total' : 'Account total'}</td>${cols.map(([k, , f]) => `<td class="r">${f(t[k])}</td>`).join('')}</tr></tfoot>`;
   return head + `<tbody>${body}</tbody>` + foot;
 }
 
@@ -442,6 +519,10 @@ function showStatus(msg, isError) {
 function hideStatus() { document.getElementById('status').classList.add('hidden'); }
 
 document.getElementById('btn-load').addEventListener('click', load);
+// Campaign ids don't carry across accounts, so switching account starts at the top.
+document.getElementById('account-select').addEventListener('change', () => {
+  scope = { campaign_id: null, campaign_name: null, ad_name: null };
+});
 
 // Charts are drawn at a fixed pixel width, so redraw them when the width changes.
 let resizeTimer = null;

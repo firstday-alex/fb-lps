@@ -6819,32 +6819,49 @@ app.get('/api/campaign-daily', requireAuth, async (req, res) => {
 const META_IG_FOLLOW_BASE_URL = 'https://graph.facebook.com/v26.0';
 const IG_FOLLOW_FIELD = 'instagram_profile_follow';
 
-// The field's shape isn't pinned down in public docs: accept a plain number /
+// Instagram profile visits attributed to ads are the same kind of newer
+// top-level field (`instagram_profile_visits`, also reported from 2025-07-07).
+// Like follows, it isn't in the v21.0 action list.
+const IG_PROFILE_VISIT_FIELD = 'instagram_profile_visits';
+
+// The fields' shape isn't pinned down in public docs: accept a plain number /
 // numeric string, an actions-style [{ action_type, value }] list, or { value }.
-function igFollowCount(row) {
-  const v = row[IG_FOLLOW_FIELD];
+function igFieldCount(row, field) {
+  const v = row[field];
   if (v == null) return 0;
   if (Array.isArray(v)) return v.reduce((s, a) => s + (parseFloat(a && a.value) || 0), 0);
   if (typeof v === 'object') return parseFloat(v.value) || 0;
   return parseFloat(v) || 0;
 }
+const igFollowCount = row => igFieldCount(row, IG_FOLLOW_FIELD);
 
-// Pages through an insights query, first with the IG-follow field on v26.0,
-// falling back to the app's base version without it on a #100 error.
+// Pages through an insights query, first with the IG-follow field (plus any
+// `extraFields`) on v26.0. On a #100 error it drops the extras and retries,
+// then drops the follow field too and retries on the app's base version — so
+// one unknown field can't take the others down with it.
 // `buildUrl(base, igField)` returns the first-page URL; `fetchPages(url)`
-// returns rows and may stop early (time budgets). Each row gets `_ig` set to
-// its IG follow count, or null when the field wasn't available.
-async function pullWithIgFollows(buildUrl, fetchPages) {
-  try {
-    const rows = await fetchPages(buildUrl(META_IG_FOLLOW_BASE_URL, ',' + IG_FOLLOW_FIELD));
-    for (const r of rows) r._ig = igFollowCount(r);
-    return { rows, igField: true };
-  } catch (err) {
-    if (err.code !== 100) throw err;
-    console.warn(`[ig-follows] ${IG_FOLLOW_FIELD} rejected (${err.message}); retrying without it`);
-    const rows = await fetchPages(buildUrl(META_BASE_URL, ''));
-    for (const r of rows) r._ig = null;
-    return { rows, igField: false };
+// returns rows and may stop early (time budgets). Each row gets `_ig` (IG
+// follows) and `_pv` (IG profile visits) set, or null when the field wasn't
+// available.
+async function pullWithIgFollows(buildUrl, fetchPages, extraFields = []) {
+  const attempts = [[IG_FOLLOW_FIELD, ...extraFields]];
+  if (extraFields.length) attempts.push([IG_FOLLOW_FIELD]);
+  attempts.push([]);
+  for (const fields of attempts) {
+    try {
+      const url = fields.length
+        ? buildUrl(META_IG_FOLLOW_BASE_URL, ',' + fields.join(','))
+        : buildUrl(META_BASE_URL, '');
+      const rows = await fetchPages(url);
+      for (const r of rows) {
+        r._ig = fields.includes(IG_FOLLOW_FIELD) ? igFollowCount(r) : null;
+        r._pv = fields.includes(IG_PROFILE_VISIT_FIELD) ? igFieldCount(r, IG_PROFILE_VISIT_FIELD) : null;
+      }
+      return { rows, igField: fields.includes(IG_FOLLOW_FIELD), pvField: fields.includes(IG_PROFILE_VISIT_FIELD) };
+    } catch (err) {
+      if (err.code !== 100 || !fields.length) throw err;
+      console.warn(`[ig-follows] ${fields.join(',')} rejected (${err.message}); retrying with fewer fields`);
+    }
   }
 }
 
@@ -6852,22 +6869,35 @@ async function pullWithIgFollows(buildUrl, fetchPages) {
 // FACEBOOK METRICS — reach, impressions, frequency, CTR (Meta-reported only)
 // ─────────────────────────────────────────────
 // Backs public/facebook-metrics.html. Four read-only insights pulls:
-//  • account totals for the window and the equal-length prior window,
-//  • account by day,
-//  • campaign totals for the window.
+//  • totals for the window and the equal-length prior window,
+//  • by day,
+//  • a breakdown table for the window.
 // Reach is unique people, so it does NOT add up across days or campaigns: the
 // sum of daily reach overstates the window's reach (the same person counts once
-// per day they saw an ad). The window and campaign totals therefore come from
-// their own unbroken pulls, and frequency is impressions ÷ that deduplicated
-// reach — never recomputed from the daily rows.
+// per day they saw an ad). The window totals therefore come from their own
+// unbroken pull, and frequency is impressions ÷ that deduplicated reach —
+// never recomputed from the daily rows.
+//
+// Drill-down: with no scope the breakdown is by campaign. `campaign_id` scopes
+// every pull to that campaign and breaks it down by ad NAME; adding `ad_name`
+// scopes the totals and daily series to that one creative (still within the
+// campaign) while the table keeps listing the campaign's ad names to compare.
+// Scoping uses Meta's `filtering` on an account-level pull, so the scoped
+// totals keep deduplicated reach. The ad-name rows can't: Meta has no "ad name"
+// level, so they're summed from ad ids and reach is flagged `reach_summed`
+// when more than one ad id shares the name.
 app.get('/api/meta-delivery-metrics', requireAuth, async (req, res) => {
   const { account_id, since, until } = req.query;
+  const campaign_id = req.query.campaign_id || '';
+  const ad_name = req.query.ad_name || '';
   const ymd = /^\d{4}-\d{2}-\d{2}$/;
   if (!account_id || !/^act_\d+$/.test(account_id) || !ymd.test(since || '') || !ymd.test(until || '')) {
     return res.status(400).json({ error: 'account_id (act_…), since and until (YYYY-MM-DD) are required' });
   }
+  if (campaign_id && !/^\d+$/.test(campaign_id)) return res.status(400).json({ error: 'campaign_id must be numeric' });
+  if (ad_name && !campaign_id) return res.status(400).json({ error: 'ad_name needs a campaign_id' });
 
-  const cacheKey = endpointCacheKey('meta-delivery-metrics', { account_id, since, until });
+  const cacheKey = endpointCacheKey('meta-delivery-metrics', { account_id, since, until, campaign_id, ad_name });
   const cached = getEndpointCache(cacheKey);
   if (cached) return res.json(cached);
 
@@ -6882,19 +6912,23 @@ app.get('/api/meta-delivery-metrics', requireAuth, async (req, res) => {
   // ctr = all clicks (likes, profile taps, "see more"…) ÷ impressions.
   // inline_link_click_ctr = clicks on links to the destination ÷ impressions —
   // the one that matters for site traffic, so the page leads with it.
-  const FIELDS = 'spend,reach,impressions,frequency,clicks,ctr,inline_link_clicks,inline_link_click_ctr,cpm,actions,video_thruplay_watched_actions';
-  // Follows/engagement/video use the same mapping as /api/meta-creative-platform:
+  const FIELDS = 'spend,reach,impressions,frequency,clicks,ctr,inline_link_clicks,inline_link_click_ctr,cpm,actions';
+  // Follows/engagement use the same mapping as /api/meta-creative-platform:
   // `like` action = Facebook Page follows, the instagram_profile_follow field =
-  // Instagram follows (see pullWithIgFollows), `video_view` = 3-second plays.
-  // Only if that field is unavailable do we fall back to scanning `actions` for
-  // a "follow" action_type (names surfaced in follow_action_types).
+  // Instagram follows (see pullWithIgFollows). Only if that field is
+  // unavailable do we fall back to scanning `actions` for a "follow"
+  // action_type (names surfaced in follow_action_types).
   const followTypes = new Set();
-  let igField = true;
-  const pull = async (range, extra, label) => {
+  let igField = true, pvField = true;
+  const campFilter = campaign_id ? [{ field: 'campaign.id', operator: 'EQUAL', value: campaign_id }] : [];
+  const scopeFilter = ad_name ? [...campFilter, { field: 'ad.name', operator: 'EQUAL', value: ad_name }] : campFilter;
+  const filterParam = f => f.length ? `&filtering=${encodeURIComponent(JSON.stringify(f))}` : '';
+  const pull = async (range, extra, label, filter = scopeFilter) => {
     const r = await pullWithIgFollows(
       (base, igf) => `${base}/${account_id}/insights`
         + `?fields=${FIELDS}${igf}${extra}`
         + `&time_range=${encodeURIComponent(JSON.stringify(range))}`
+        + filterParam(filter)
         + `&limit=500&${metaParams(req.accessToken)}`,
       async (url) => {
         const rows = [];
@@ -6904,8 +6938,10 @@ app.get('/api/meta-delivery-metrics', requireAuth, async (req, res) => {
           url = j.paging?.next || null;
         }
         return rows;
-      });
+      },
+      [IG_PROFILE_VISIT_FIELD]);
     if (!r.igField) igField = false;
+    if (!r.pvField) pvField = false;
     return r.rows;
   };
   const norm = r => {
@@ -6936,8 +6972,10 @@ app.get('/api/meta-delivery-metrics', requireAuth, async (req, res) => {
     const ig = r._ig != null ? r._ig
       : Object.entries(acts).filter(([t]) => t !== 'like' && /follow/i.test(t)).reduce((s, [, v]) => s + v, 0);
     const eng = acts.post_engagement || 0;
-    const v3 = acts.video_view || 0;
-    const thru = (r.video_thruplay_watched_actions || []).reduce((s, a) => s + (parseFloat(a.value) || 0), 0);
+    // `post` = shares, `onsite_conversion.post_save` = saves: the two actions
+    // that signal someone wanted to keep or pass on the creative.
+    const sharesSaves = (acts.post || 0) + (acts['onsite_conversion.post_save'] || 0);
+    const pv = r._pv != null ? r._pv : null;
     return {
       fb_follows: fb, ig_follows: ig, follows: fb + ig,
       cost_per_follow: ratio(spend, fb + ig),
@@ -6945,29 +6983,66 @@ app.get('/api/meta-delivery-metrics', requireAuth, async (req, res) => {
       post_engagement: eng,
       eng_rate: ratio(eng, impressions, 100),
       cost_per_eng: ratio(spend, eng),
-      video_3s: v3, thruplays: thru,
-      hook_rate: ratio(v3, impressions, 100),
-      hold_rate: ratio(thru, v3, 100),
+      profile_visits: pv,
+      cost_per_profile_visit: pv != null ? ratio(spend, pv) : null,
+      shares_saves: sharesSaves,
     };
+  };
+  // Sums ad-id rows that share an ad name into one raw insights row, so
+  // norm() can derive rates from the summed counts.
+  const groupByAdName = rows => {
+    const by = new Map();
+    for (const r of rows) {
+      const k = r.ad_name || '(unnamed ad)';
+      let g = by.get(k);
+      if (!g) by.set(k, g = { ad_name: k, ad_ids: 0, spend: 0, reach: 0, impressions: 0, clicks: 0, inline_link_clicks: 0, actions: [], _ig: null, _pv: null });
+      g.ad_ids++;
+      for (const f of ['spend', 'reach', 'impressions', 'clicks', 'inline_link_clicks']) g[f] += parseFloat(r[f]) || 0;
+      g.actions.push(...(r.actions || []));
+      if (r._ig != null) g._ig = (g._ig || 0) + r._ig;
+      if (r._pv != null) g._pv = (g._pv || 0) + r._pv;
+    }
+    return [...by.values()];
   };
 
   try {
-    const [cur, prevRows, daily, camps] = await Promise.all([
+    const [cur, prevRows, daily, breakdown] = await Promise.all([
       pull({ since, until }, '', 'fb-metrics:total'),
       pull(prev, '', 'fb-metrics:prev').catch(() => []),
       pull({ since, until }, '&time_increment=1', 'fb-metrics:daily'),
-      pull({ since, until }, ',campaign_id,campaign_name&level=campaign&sort=impressions_descending', 'fb-metrics:campaigns'),
+      campaign_id
+        ? pull({ since, until }, ',campaign_name,ad_id,ad_name&level=ad', 'fb-metrics:ads', campFilter)
+        : pull({ since, until }, ',campaign_id,campaign_name&level=campaign&sort=impressions_descending', 'fb-metrics:campaigns'),
     ]);
+
+    let rows, campaignName = null;
+    if (campaign_id) {
+      // The scoped total doesn't carry the campaign name, so take it from the
+      // ad rows (each one does) — or look it up if the campaign had no ads.
+      campaignName = breakdown[0]?.campaign_name || null;
+      rows = groupByAdName(breakdown)
+        .map(g => ({ key: g.ad_name, name: g.ad_name, ad_ids: g.ad_ids, reach_summed: g.ad_ids > 1, ...norm(g) }))
+        .sort((x, y) => y.impressions - x.impressions);
+    } else {
+      rows = breakdown.map(c => ({ key: c.campaign_id, name: c.campaign_name, ...norm(c) }));
+    }
+    if (campaign_id && !campaignName) {
+      const j = await metaFetchWithBackoff(`${META_BASE_URL}/${campaign_id}?fields=name&${metaParams(req.accessToken)}`, 'fb-metrics:campaign-name').catch(() => null);
+      campaignName = j?.name || null;
+    }
 
     const out = {
       account_id,
       range: { since, until },
       compare: prev,
+      scope: { campaign_id: campaign_id || null, campaign_name: campaignName, ad_name: ad_name || null },
+      row_level: campaign_id ? 'ad_name' : 'campaign',
       current: cur[0] ? norm(cur[0]) : null,
       previous: prevRows[0] ? norm(prevRows[0]) : null,
-      days: daily.map(d => ({ date: d.date_start, ...norm(d) })).sort((a, b) => a.date.localeCompare(b.date)),
-      campaigns: camps.map(c => ({ campaign_id: c.campaign_id, campaign_name: c.campaign_name, ...norm(c) })),
+      days: daily.map(d => ({ date: d.date_start, ...norm(d) })).sort((x, y) => x.date.localeCompare(y.date)),
+      rows,
       ig_follow_source: igField ? IG_FOLLOW_FIELD : 'actions',
+      profile_visit_source: pvField ? IG_PROFILE_VISIT_FIELD : null,
       follow_action_types: [...followTypes].sort(),
     };
     setEndpointCache(cacheKey, out);
