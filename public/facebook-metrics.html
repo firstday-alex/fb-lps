@@ -79,7 +79,7 @@
     .pos { color: var(--positive); }
     .neg { color: var(--negative); }
 
-    .chart-svg { width: 100%; height: 240px; display: block; }
+    .chart-svg { display: block; max-width: 100%; }
     .chart-note { font-size: 0.75rem; color: var(--text-secondary); margin: 6px 0 16px; }
 
     .tbl-wrap { overflow-x: auto; }
@@ -169,15 +169,21 @@ const fmtD = n => isFinite(n) ? '$' + fmtN(n, 2) : '—';
 // One definition per metric drives the toggle, the KPI tile, the chart and the
 // table column. `goodWhenUp` colours the vs-prior delta: rising frequency means
 // the same people are seeing the ads more often, so it reads red, not green.
+// `bar` metrics are counts, charted as bars from zero; the rest are ratios,
+// charted as a line on a fitted axis so day-to-day movement stays visible.
+const pct2 = n => fmtN(n, 2) + '%';
 const METRICS = {
-  reach:       { label: 'Reach',       fmt: n => fmtN(n),       axis: fmtCompact,             goodWhenUp: true },
-  impressions: { label: 'Impressions', fmt: n => fmtN(n),       axis: fmtCompact,             goodWhenUp: true },
-  frequency:   { label: 'Frequency',   fmt: n => fmtN(n, 2),    axis: n => n.toFixed(2),      goodWhenUp: false },
-  link_ctr:    { label: 'Link CTR',    fmt: n => fmtN(n, 2) + '%', axis: n => n.toFixed(2) + '%', goodWhenUp: true },
-  ctr:         { label: 'CTR (all)',   fmt: n => fmtN(n, 2) + '%', axis: n => n.toFixed(2) + '%', goodWhenUp: true },
+  reach:       { label: 'Reach',        fmt: n => fmtN(n), axis: fmtCompact, goodWhenUp: true,  bar: true },
+  impressions: { label: 'Impressions',  fmt: n => fmtN(n), axis: fmtCompact, goodWhenUp: true,  bar: true },
+  frequency:   { label: 'Frequency',    fmt: n => fmtN(n, 2), axis: n => n.toFixed(2), goodWhenUp: false },
+  spend:       { label: 'Spend',        fmt: fmtD, axis: n => '$' + fmtCompact(n), goodWhenUp: true, bar: true },
+  link_ctr:    { label: 'Link CTR',     fmt: pct2, axis: pct2, goodWhenUp: true },
+  ctr:         { label: 'CTR (all)',    fmt: pct2, axis: pct2, goodWhenUp: true },
+  link_clicks: { label: 'Link Clicks',  fmt: n => fmtN(n), axis: fmtCompact, goodWhenUp: true, bar: true },
+  clicks:      { label: 'Clicks (all)', fmt: n => fmtN(n), axis: fmtCompact, goodWhenUp: true, bar: true },
 };
-const DELIVERY = ['reach', 'impressions', 'frequency'];
-const CLICKS   = ['link_ctr', 'ctr'];
+const DELIVERY = ['reach', 'impressions', 'frequency', 'spend'];
+const CLICKS   = ['link_ctr', 'ctr', 'link_clicks', 'clicks'];
 
 // Campaigns under this many impressions get their CTR greyed out — a handful of
 // clicks on a few hundred impressions swings CTR by whole points.
@@ -265,17 +271,10 @@ function renderSection(id, keys, active) {
       <div class="kpi__value">${METRICS[k].fmt(cur[k])}</div>
       ${delta(cur[k], prev ? prev[k] : null, METRICS[k])}
     </div>`).join('');
-  // Context tiles: the raw counts behind each section's ratios.
-  if (id === 'ctr') {
-    kpis += `
-      <div class="kpi"><div class="kpi__label">Link Clicks</div><div class="kpi__value">${fmtN(cur.link_clicks)}</div>${delta(cur.link_clicks, prev && prev.link_clicks, { fmt: n => fmtN(n), goodWhenUp: true })}</div>
-      <div class="kpi"><div class="kpi__label">Clicks (all)</div><div class="kpi__value">${fmtN(cur.clicks)}</div>${delta(cur.clicks, prev && prev.clicks, { fmt: n => fmtN(n), goodWhenUp: true })}</div>`;
-  } else {
-    kpis += `<div class="kpi"><div class="kpi__label">Spend</div><div class="kpi__value">${fmtD(cur.spend)}</div>${delta(cur.spend, prev && prev.spend, { fmt: fmtD, goodWhenUp: true })}</div>`;
-  }
   document.getElementById(id + '-kpis').innerHTML = kpis;
 
-  document.getElementById(id + '-chart').innerHTML = chart(data.days, active, id === 'delivery');
+  const chartEl = document.getElementById(id + '-chart');
+  chartEl.innerHTML = chart(data.days, active, chartEl.clientWidth);
   document.getElementById(id + '-table').innerHTML = table(keys, active, id === 'ctr');
 
   document.querySelectorAll(`#${id}-toggle button, #${id}-kpis .kpi[data-metric]`).forEach(el =>
@@ -285,25 +284,35 @@ function renderSection(id, keys, active) {
     }));
 }
 
-// Daily chart: bars for counts (reach, impressions), a line for ratios
-// (frequency, CTR) where a zero baseline would flatten the movement.
-function chart(days, key, bars) {
+// Round axis bounds out to a 1/2/2.5/5 × 10^k step so gridlines land on
+// readable values instead of 1.02, 1.05, 1.08…
+function niceScale(lo, hi, ticks = 4) {
+  const raw = (hi - lo) / ticks || Math.abs(hi) / ticks || 1;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].map(f => f * mag).find(s => s >= raw);
+  return { lo: Math.floor(lo / step) * step, hi: Math.ceil(hi / step) * step, step };
+}
+
+// The SVG is drawn at the container's real pixel width. It used to be a fixed
+// 1000-wide viewBox with preserveAspectRatio="none", which stretched the axis
+// text and dots sideways on wide screens.
+function chart(days, key, width) {
   if (!days.length) return '<div class="chart-note">No daily rows.</div>';
   const m = METRICS[key];
-  const isBar = bars && key !== 'frequency';
-  const W = 1000, H = 240, PADL = 56, PADR = 12, PADT = 12, PADB = 28;
+  const isBar = !!m.bar;
+  const W = Math.max(280, width || 800), H = 240, PADL = 60, PADR = 12, PADT = 12, PADB = 28;
   const vals = days.map(d => d[key]);
-  let lo = isBar ? 0 : Math.min(...vals), hi = Math.max(...vals);
-  if (!isBar) { const pad = (hi - lo) * 0.15 || hi * 0.1 || 1; lo = Math.max(0, lo - pad); hi += pad; }
-  if (hi === lo) hi = lo + 1;
+  const sc = niceScale(isBar ? 0 : Math.min(...vals), Math.max(...vals));
+  let lo = isBar ? 0 : Math.max(0, sc.lo), hi = sc.hi;
+  if (hi === lo) hi = lo + sc.step;
   const n = days.length;
   const slot = (W - PADL - PADR) / n;
   const x = i => PADL + slot * (i + 0.5);
   const y = v => PADT + (1 - (v - lo) / (hi - lo)) * (H - PADT - PADB);
 
   let grid = '';
-  for (let g = 0; g <= 4; g++) {
-    const v = lo + (hi - lo) * g / 4, yy = y(v);
+  for (let v = lo; v <= hi + sc.step / 2; v += sc.step) {
+    const yy = y(v);
     grid += `<line x1="${PADL}" x2="${W - PADR}" y1="${yy.toFixed(1)}" y2="${yy.toFixed(1)}" stroke="#eceef1"/>`
       + `<text x="${PADL - 6}" y="${(yy + 3).toFixed(1)}" font-size="10" fill="#8a929c" text-anchor="end">${m.axis(v)}</text>`;
   }
@@ -315,19 +324,22 @@ function chart(days, key, bars) {
       marks += `<rect x="${(x(i) - bw / 2).toFixed(1)}" y="${top.toFixed(1)}" width="${bw.toFixed(1)}" height="${(H - PADB - top).toFixed(1)}" fill="#1877f2" opacity="0.8"><title>${d.date}: ${m.fmt(d[key])}</title></rect>`;
     });
   } else {
-    marks = `<polyline fill="none" stroke="#1877f2" stroke-width="2" points="${days.map((d, i) => `${x(i).toFixed(1)},${y(d[key]).toFixed(1)}`).join(' ')}"/>`
-      + days.map((d, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(d[key]).toFixed(1)}" r="3" fill="#1877f2"><title>${d.date}: ${m.fmt(d[key])}</title></circle>`).join('');
+    // Long ranges get no visible dots (they merge into a bead chain), but every
+    // day keeps an invisible hover target for its value.
+    const r = slot >= 10 ? 3 : 0;
+    marks = `<polyline fill="none" stroke="#1877f2" stroke-width="2" stroke-linejoin="round" points="${days.map((d, i) => `${x(i).toFixed(1)},${y(d[key]).toFixed(1)}`).join(' ')}"/>`
+      + days.map((d, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(d[key]).toFixed(1)}" r="${Math.max(r, Math.min(6, slot / 2)).toFixed(1)}" fill="#1877f2" fill-opacity="${r ? 1 : 0}"><title>${d.date}: ${m.fmt(d[key])}</title></circle>`).join('');
   }
   let ticks = '';
-  const step = Math.max(1, Math.ceil(n / 10));
+  const step = Math.max(1, Math.ceil(n / Math.max(2, Math.floor((W - PADL) / 70))));
   for (let i = 0; i < n; i += step) ticks += `<text x="${x(i).toFixed(1)}" y="${H - 8}" font-size="10" fill="#8a929c" text-anchor="middle">${days[i].date.slice(5)}</text>`;
 
   const note = key === 'reach'
     ? 'Daily reach — each bar is people reached that day. Hover a bar for its value.'
     : key === 'frequency'
       ? 'Daily frequency (impressions ÷ that day\'s reach). The headline figure divides by reach deduplicated over the whole range, so it usually runs higher than the daily points.'
-      : `Daily ${m.label}. Hover a point for its value.`;
-  return `<svg class="chart-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${grid}${marks}${ticks}</svg><div class="chart-note">${note}</div>`;
+      : `Daily ${m.label}. Hover ${m.bar ? 'a bar' : 'a point'} for its value.`;
+  return `<svg class="chart-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${grid}${marks}${ticks}</svg><div class="chart-note">${note}</div>`;
 }
 
 function table(keys, active, isCtr) {
@@ -366,6 +378,13 @@ function showStatus(msg, isError) {
 function hideStatus() { document.getElementById('status').classList.add('hidden'); }
 
 document.getElementById('btn-load').addEventListener('click', load);
+
+// Charts are drawn at a fixed pixel width, so redraw them when the width changes.
+let resizeTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { if (data) render(); }, 150);
+});
 
 document.addEventListener('DOMContentLoaded', async () => {
   // Default: the 14 days ending yesterday — long enough for frequency to mean something.

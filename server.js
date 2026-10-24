@@ -6893,6 +6893,130 @@ app.get('/api/meta-delivery-metrics', requireAuth, async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────
+// CREATIVE PLATFORM METRICS — top ads by spend, judged on Meta-side signals only
+// ─────────────────────────────────────────────
+// Backs public/creative-platform.html: follows, engagement, CTR and video hold
+// per ad NAME, with no revenue in sight. The same creative usually runs as
+// several ad ids (one per ad set), so rows are summed by name. Reach is left
+// out on purpose: it's deduplicated per ad and can't be summed across ids.
+//
+// The unfiltered ad-level pull times out on the main account (see
+// ad-preview-link.js), so this asks Meta for spend > 0 only, sorted by spend,
+// and stops after MAX_PAGES or a time budget — the top spenders always land
+// first, and `truncated` tells the page when the tail was cut.
+//
+// Follows: `like` is Facebook Page follows/likes. Instagram follows have no
+// stable public action_type name we can rely on, so any action_type containing
+// "follow" is counted as an IG follow and its exact name is returned in
+// `follow_action_types` for the page to show — nothing is assumed silently.
+app.get('/api/meta-creative-platform', requireAuth, async (req, res) => {
+  const { account_id, since, until } = req.query;
+  const campaign = String(req.query.campaign || '').trim().slice(0, 100);
+  const ymd = /^\d{4}-\d{2}-\d{2}$/;
+  if (!account_id || !/^act_\d+$/.test(account_id) || !ymd.test(since || '') || !ymd.test(until || '')) {
+    return res.status(400).json({ error: 'account_id (act_…), since and until (YYYY-MM-DD) are required' });
+  }
+
+  const cacheKey = endpointCacheKey('meta-creative-platform', { account_id, since, until, campaign });
+  const cached = getEndpointCache(cacheKey);
+  if (cached) return res.json(cached);
+
+  const MAX_PAGES = 4, PAGE = 250, TIME_BUDGET_MS = 35000;
+  const filtering = [{ field: 'spend', operator: 'GREATER_THAN', value: '0' }];
+  if (campaign) filtering.push({ field: 'campaign.name', operator: 'CONTAIN', value: campaign });
+
+  let url = `${META_BASE_URL}/${account_id}/insights`
+    + `?level=ad`
+    + `&fields=ad_id,ad_name,campaign_name,spend,impressions,clicks,inline_link_clicks,actions,video_thruplay_watched_actions`
+    + `&time_range=${encodeURIComponent(JSON.stringify({ since, until }))}`
+    + `&filtering=${encodeURIComponent(JSON.stringify(filtering))}`
+    + `&sort=spend_descending&limit=${PAGE}&${metaParams(req.accessToken)}`;
+
+  const t0 = Date.now();
+  const rows = [];
+  let pages = 0, truncated = false;
+  try {
+    while (url) {
+      const j = await metaFetchWithBackoff(url, 'creative-platform', 2);
+      rows.push(...(j.data || []));
+      pages++;
+      url = j.paging?.next || null;
+      if (url && (pages >= MAX_PAGES || Date.now() - t0 > TIME_BUDGET_MS)) { truncated = true; break; }
+    }
+  } catch (err) {
+    if (err.code === 190) {
+      clearTokenCookie(res);
+      return res.status(401).json({ error: 'Session expired. Please log in again.' });
+    }
+    console.error('[meta-creative-platform] error:', err.message);
+    // Keep whatever pages landed before a mid-pull failure; only fail outright
+    // when nothing came back at all.
+    if (!rows.length) return res.status(400).json({ error: err.message });
+    truncated = true;
+  }
+
+  const actionTypesSeen = new Set();
+  const followTypes = new Set();
+  const byName = new Map();
+  for (const r of rows) {
+    const acts = {};
+    for (const a of r.actions || []) {
+      acts[a.action_type] = (acts[a.action_type] || 0) + (parseFloat(a.value) || 0);
+      actionTypesSeen.add(a.action_type);
+      if (a.action_type !== 'like' && /follow/i.test(a.action_type)) followTypes.add(a.action_type);
+    }
+    const igFollows = Object.entries(acts)
+      .filter(([t]) => t !== 'like' && /follow/i.test(t))
+      .reduce((s, [, v]) => s + v, 0);
+    const thru = (r.video_thruplay_watched_actions || []).reduce((s, a) => s + (parseFloat(a.value) || 0), 0);
+
+    const name = String(r.ad_name || '(unnamed ad)').trim();
+    let g = byName.get(name);
+    if (!g) {
+      g = {
+        ad_name: name, ad_ids: [], top_ad_id: null, top_ad_spend: -1, campaigns: new Set(),
+        spend: 0, impressions: 0, clicks: 0, link_clicks: 0,
+        fb_follows: 0, ig_follows: 0, post_engagement: 0, page_engagement: 0,
+        reactions: 0, comments: 0, shares: 0, saves: 0, video_3s: 0, thruplays: 0,
+      };
+      byName.set(name, g);
+    }
+    const spend = parseFloat(r.spend) || 0;
+    g.ad_ids.push(r.ad_id);
+    if (spend > g.top_ad_spend) { g.top_ad_spend = spend; g.top_ad_id = r.ad_id; }
+    if (r.campaign_name) g.campaigns.add(r.campaign_name);
+    g.spend += spend;
+    g.impressions += parseFloat(r.impressions) || 0;
+    g.clicks += parseFloat(r.clicks) || 0;
+    g.link_clicks += parseFloat(r.inline_link_clicks) || 0;
+    g.fb_follows += acts.like || 0;
+    g.ig_follows += igFollows;
+    g.post_engagement += acts.post_engagement || 0;
+    g.page_engagement += acts.page_engagement || 0;
+    g.reactions += acts.post_reaction || 0;
+    g.comments += acts.comment || 0;
+    g.shares += acts.post || 0;
+    g.saves += acts['onsite_conversion.post_save'] || 0;
+    g.video_3s += acts.video_view || 0;
+    g.thruplays += thru;
+  }
+
+  const ads = [...byName.values()]
+    .map(({ top_ad_spend, campaigns, ...g }) => ({ ...g, campaigns: [...campaigns] }))
+    .sort((a, b) => b.spend - a.spend);
+
+  const out = {
+    account_id, range: { since, until }, campaign: campaign || null,
+    ad_rows: rows.length, truncated,
+    follow_action_types: [...followTypes].sort(),
+    action_types_seen: [...actionTypesSeen].sort(),
+    ads,
+  };
+  setEndpointCache(cacheKey, out);
+  res.json(out);
+});
+
 // --- Ad name parser ---
 
 // Deconstructs ad names like: "brand_campaign-type_audience_creative-desc_url:landing-page"

@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Creative Platform Metrics</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --fb-blue: #1877f2;
+      --bg: #f0f2f5;
+      --surface: #fff;
+      --text-primary: #1c1e21;
+      --text-secondary: #65676b;
+      --border: #dddfe2;
+      --positive: #1a7f37;
+      --negative: #c0392b;
+      --shadow: 0 1px 3px rgba(0,0,0,0.12);
+      --radius: 8px;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg); color: var(--text-primary); line-height: 1.5; min-height: 100vh;
+    }
+    header {
+      background: var(--fb-blue); color: white; padding: 16px 24px;
+      display: flex; align-items: center; gap: 16px;
+    }
+    header h1 { font-size: 1.2rem; font-weight: 700; }
+    header p { font-size: 0.8rem; opacity: 0.75; }
+
+    .wrap { padding: 20px 24px; display: flex; flex-direction: column; gap: 16px; }
+    /* min-width:0 lets the wide table scroll inside its card instead of the
+       flex column stretching the page to the table's width. */
+    .card { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); padding: 20px; min-width: 0; }
+    .card h3 {
+      font-size: 0.82rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--text-secondary); margin-bottom: 4px;
+    }
+    .card__sub { font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 14px; }
+
+    .controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
+    .ctrl-group { display: flex; flex-direction: column; gap: 4px; }
+    .ctrl-group label { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary); }
+    .ctrl-group select, .ctrl-group input {
+      padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px;
+      font-size: 0.85rem; font-family: inherit; background: white; color: var(--text-primary);
+    }
+    .ctrl-group select { min-width: 220px; }
+    .ctrl-group input.num { width: 90px; }
+    .btn {
+      padding: 8px 18px; border: none; border-radius: 6px; cursor: pointer;
+      font-size: 0.85rem; font-weight: 600; background: var(--fb-blue); color: white;
+    }
+    .btn:hover { background: #166fe5; }
+    .btn:disabled { opacity: 0.5; cursor: default; }
+
+    .status { font-size: 0.82rem; color: var(--text-secondary); padding: 16px 0 0; }
+    .status.error { color: var(--negative); }
+    .status.warn { color: #9a6700; }
+    .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--fb-blue); border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; margin-right: 6px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+    .kpi { background: var(--bg); border-radius: 6px; padding: 12px 14px; }
+    .kpi__label { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary); margin-bottom: 2px; }
+    .kpi__value { font-size: 1.3rem; font-weight: 700; }
+    .kpi__sub { font-size: 0.72rem; color: var(--text-secondary); }
+
+    .seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    .seg button {
+      border: none; background: white; padding: 7px 14px; font: inherit; font-size: 0.8rem;
+      font-weight: 600; color: var(--text-secondary); cursor: pointer; border-right: 1px solid var(--border);
+    }
+    .seg button:last-child { border-right: none; }
+    .seg button.on { background: var(--fb-blue); color: white; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 12px; }
+    .toolbar .lbl { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary); }
+
+    .tbl-wrap { overflow-x: auto; }
+    table { border-collapse: collapse; font-size: 0.8rem; width: 100%; }
+    th {
+      text-align: right; padding: 7px 8px; font-size: 0.66rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-secondary);
+      border-bottom: 2px solid var(--border); white-space: nowrap; cursor: pointer; user-select: none;
+      position: sticky; top: 0; background: var(--surface);
+    }
+    th.l, td.l { text-align: left; }
+    th.on { color: var(--fb-blue); }
+    th.grp { cursor: default; text-align: center; border-bottom: 1px solid var(--border); padding-bottom: 2px; }
+    td { padding: 7px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; text-align: right; }
+    td.name { white-space: normal; min-width: 260px; max-width: 380px; text-align: left; }
+    td.name .nm { font-weight: 600; word-break: break-word; }
+    td.name .meta { font-size: 0.7rem; color: var(--text-secondary); }
+    td.thin { color: #9aa0a6; }
+    .chips { display: inline-flex; gap: 6px; margin-top: 2px; }
+    .chip { font-size: 0.68rem; color: var(--fb-blue); text-decoration: none; background: none; border: none; cursor: pointer; padding: 0; font-family: inherit; }
+    .chip:hover { text-decoration: underline; }
+    .rank { color: var(--text-secondary); font-size: 0.72rem; width: 28px; }
+    tfoot td { font-weight: 700; background: var(--bg); border-top: 2px solid var(--border); }
+
+    details.foot { font-size: 0.75rem; color: var(--text-secondary); margin-top: 14px; }
+    details.foot summary { cursor: pointer; font-weight: 600; }
+    details.foot code { background: var(--bg); padding: 1px 5px; border-radius: 4px; }
+    .note { font-size: 0.75rem; color: var(--text-secondary); margin-top: 10px; }
+
+    .hidden { display: none !important; }
+
+    @media (max-width: 640px) {
+      header { padding: 12px 16px; flex-wrap: wrap; }
+      .wrap { padding: 16px; }
+      .ctrl-group select { min-width: 0; width: 100%; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Creative Platform Metrics</h1>
+    <p>Top ads by spend, judged on Meta-side signals: follows, engagement, CTR and video hold. No revenue.</p>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="card">
+    <div class="controls">
+      <div class="ctrl-group">
+        <label for="account-select">Ad Account</label>
+        <select id="account-select"><option value="">Loading…</option></select>
+      </div>
+      <div class="ctrl-group">
+        <label for="date-start">Start</label>
+        <input type="date" id="date-start">
+      </div>
+      <div class="ctrl-group">
+        <label for="date-end">End</label>
+        <input type="date" id="date-end">
+      </div>
+      <div class="ctrl-group">
+        <label for="campaign-filter">Campaign contains</label>
+        <input type="text" id="campaign-filter" placeholder="optional, e.g. Engagement">
+      </div>
+      <button class="btn" id="btn-load">Load</button>
+    </div>
+    <div id="status" class="status hidden"></div>
+  </div>
+
+  <div class="card hidden" id="summary-card">
+    <h3>All ads in range</h3>
+    <p class="card__sub" id="summary-sub"></p>
+    <div class="kpi-row" id="kpis"></div>
+  </div>
+
+  <div class="card hidden" id="table-card">
+    <h3>Top creatives by ad name</h3>
+    <p class="card__sub">One row per ad name. The same creative running in several ad sets is summed into one row. Click any column header to rank by it. Green is better than the median of the rows shown, red is worse.</p>
+    <div class="toolbar">
+      <span class="lbl">Rank by</span>
+      <div class="seg" id="rank-seg"></div>
+    </div>
+    <div class="toolbar">
+      <span class="lbl">Show</span>
+      <div class="seg" id="top-seg"></div>
+      <div class="ctrl-group" style="flex-direction:row;align-items:center;gap:6px">
+        <label for="min-spend" style="margin:0">Min spend to rank on rates $</label>
+        <input type="number" id="min-spend" class="num" min="0" step="10" value="50">
+      </div>
+    </div>
+    <div class="tbl-wrap"><table id="ads-table"></table></div>
+    <p class="note" id="table-note"></p>
+    <details class="foot" id="actions-foot"></details>
+  </div>
+
+</div>
+
+<script>
+// ── Helpers ──────────────────────────────
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmtN = (n, d = 0) => isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d }) : '—';
+const fmtD = n => isFinite(n) ? '$' + fmtN(n, 2) : '—';
+const fmtP = n => isFinite(n) ? fmtN(n, 2) + '%' : '—';
+const div = (a, b) => b > 0 ? a / b : NaN;
+
+// Derived per-row metrics. Costs are NaN (shown "—") when the denominator is
+// zero, so an ad with no follows doesn't show a $0 cost per follow.
+function derive(r) {
+  const follows = r.fb_follows + r.ig_follows;
+  return {
+    ...r,
+    follows,
+    cpm: div(r.spend, r.impressions) * 1000,
+    link_ctr: div(r.link_clicks, r.impressions) * 100,
+    ctr: div(r.clicks, r.impressions) * 100,
+    cpc: div(r.spend, r.link_clicks),
+    cost_per_follow: div(r.spend, follows),
+    follows_per_1k: div(follows, r.impressions) * 1000,
+    eng_rate: div(r.post_engagement, r.impressions) * 100,
+    cost_per_eng: div(r.spend, r.post_engagement),
+    hook_rate: div(r.video_3s, r.impressions) * 100,
+    hold_rate: div(r.thruplays, r.video_3s) * 100,
+  };
+}
+
+// Columns: key, header, group, formatter, direction (+1 higher is better,
+// -1 lower is better, 0 = volume/no judgement), and whether it's a rate that
+// needs the min-spend guard when ranking.
+const COLS = [
+  ['spend',           'Spend',        'Delivery',   fmtD, 0],
+  ['impressions',     'Impr.',        'Delivery',   n => fmtN(n), 0],
+  ['cpm',             'CPM',          'Delivery',   fmtD, -1, true],
+  ['link_ctr',        'Link CTR',     'Clicks',     fmtP, 1, true],
+  ['ctr',             'CTR (all)',    'Clicks',     fmtP, 1, true],
+  ['cpc',             'CPC (link)',   'Clicks',     fmtD, -1, true],
+  ['fb_follows',      'FB follows',   'Followers',  n => fmtN(n), 0],
+  ['ig_follows',      'IG follows',   'Followers',  n => fmtN(n), 0],
+  ['cost_per_follow', 'Cost / follow','Followers',  fmtD, -1, true],
+  ['follows_per_1k',  'Follows / 1K impr.', 'Followers', n => fmtN(n, 2), 1, true],
+  ['post_engagement', 'Engagements',  'Engagement', n => fmtN(n), 0],
+  ['eng_rate',        'Eng. rate',    'Engagement', fmtP, 1, true],
+  ['cost_per_eng',    'Cost / eng.',  'Engagement', fmtD, -1, true],
+  ['reactions',       'Reactions',    'Engagement', n => fmtN(n), 0],
+  ['comments',        'Comments',     'Engagement', n => fmtN(n), 0],
+  ['shares',          'Shares',       'Engagement', n => fmtN(n), 0],
+  ['saves',           'Saves',        'Engagement', n => fmtN(n), 0],
+  ['hook_rate',       'Hook rate',    'Video',      fmtP, 1, true],
+  ['hold_rate',       'Hold rate',    'Video',      fmtP, 1, true],
+];
+const COL = Object.fromEntries(COLS.map(c => [c[0], c]));
+const RANK_PRESETS = [
+  ['spend', 'Spend'], ['cost_per_follow', 'Cost / follow'], ['follows_per_1k', 'Follows / 1K'],
+  ['link_ctr', 'Link CTR'], ['eng_rate', 'Eng. rate'], ['cost_per_eng', 'Cost / eng.'], ['hook_rate', 'Hook rate'],
+];
+const TOP_OPTIONS = [10, 25, 50, 0]; // 0 = all
+
+let data = null, rows = [];
+let rankKey = 'spend', topN = 25;
+
+// ── Load ─────────────────────────────────
+async function checkAuth() {
+  const d = await (await fetch('/api/auth-status')).json();
+  if (!d.authenticated) {
+    window.location.href = '/auth/facebook?next=' + encodeURIComponent(location.pathname);
+    return false;
+  }
+  return true;
+}
+
+async function loadAccounts() {
+  const sel = document.getElementById('account-select');
+  const d = await (await fetch('/api/ad-accounts')).json();
+  if (d.error) { sel.innerHTML = '<option value="">Error loading accounts</option>'; return; }
+  const accounts = d.accounts || [];
+  sel.innerHTML = accounts.map(a => `<option value="${esc(a.id)}">${esc(a.name)} (${esc(a.id)})</option>`).join('');
+  // Shares the Facebook Metrics tab's remembered account.
+  let saved = null;
+  try { saved = localStorage.getItem('fbMetricsAccount'); } catch {}
+  if (saved && accounts.some(a => a.id === saved)) sel.value = saved;
+}
+
+async function load() {
+  const account = document.getElementById('account-select').value;
+  const since = document.getElementById('date-start').value;
+  const until = document.getElementById('date-end').value;
+  const campaign = document.getElementById('campaign-filter').value.trim();
+  if (!account || !since || !until) return showStatus('Pick an account and a date range.', 'error');
+  if (since > until) return showStatus('Start date is after end date.', 'error');
+  try { localStorage.setItem('fbMetricsAccount', account); } catch {}
+
+  const btn = document.getElementById('btn-load');
+  btn.disabled = true;
+  showStatus('<span class="spinner"></span> Pulling ad-level insights from Meta… this can take 20–40 seconds on big accounts.', '', true);
+  try {
+    const qs = new URLSearchParams({ account_id: account, since, until });
+    if (campaign) qs.set('campaign', campaign);
+    const resp = await fetch('/api/meta-creative-platform?' + qs);
+    const d = await resp.json();
+    if (resp.status === 401) { window.location.href = '/auth/facebook?next=' + encodeURIComponent(location.pathname); return; }
+    if (d.error) return showStatus(d.error, 'error');
+    if (!d.ads.length) return showStatus('No ads with spend in this range' + (campaign ? ` for campaigns containing "${campaign}"` : '') + '.', 'error');
+    data = d;
+    rows = d.ads.map(derive);
+    if (d.truncated) showStatus(`Showing the top ${fmtN(d.ad_rows)} ads by spend. Meta's ad-level pull was cut short, so the smallest spenders are missing. The totals below cover only these ads.`, 'warn');
+    else hideStatus();
+    render();
+  } catch (e) {
+    showStatus(e.message, 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ── Render ───────────────────────────────
+function totals(list) {
+  const t = { ad_name: 'Total', ad_ids: [] };
+  for (const k of ['spend', 'impressions', 'clicks', 'link_clicks', 'fb_follows', 'ig_follows', 'post_engagement', 'page_engagement', 'reactions', 'comments', 'shares', 'saves', 'video_3s', 'thruplays']) {
+    t[k] = list.reduce((s, r) => s + (r[k] || 0), 0);
+  }
+  return derive(t);
+}
+
+function render() {
+  document.getElementById('summary-card').classList.remove('hidden');
+  document.getElementById('table-card').classList.remove('hidden');
+  const t = totals(rows);
+  document.getElementById('summary-sub').textContent =
+    `${data.range.since} → ${data.range.until}${data.campaign ? ` · campaigns containing "${data.campaign}"` : ''} · ${fmtN(rows.length)} ad names across ${fmtN(data.ad_rows)} ads`;
+  const tile = (label, val, sub = '') => `<div class="kpi"><div class="kpi__label">${label}</div><div class="kpi__value">${val}</div>${sub ? `<div class="kpi__sub">${sub}</div>` : ''}</div>`;
+  document.getElementById('kpis').innerHTML =
+    tile('Spend', fmtD(t.spend), `${fmtD(t.cpm)} CPM`)
+    + tile('Follows', fmtN(t.follows), `${fmtN(t.fb_follows)} FB · ${fmtN(t.ig_follows)} IG`)
+    + tile('Cost / follow', fmtD(t.cost_per_follow), `${fmtN(t.follows_per_1k, 2)} per 1K impr.`)
+    + tile('Link CTR', fmtP(t.link_ctr), `${fmtP(t.ctr)} all clicks`)
+    + tile('Engagements', fmtN(t.post_engagement), `${fmtP(t.eng_rate)} of impressions`)
+    + tile('Cost / engagement', fmtD(t.cost_per_eng))
+    + tile('Hook rate', fmtP(t.hook_rate), '3-sec views ÷ impressions')
+    + tile('Hold rate', fmtP(t.hold_rate), 'ThruPlays ÷ 3-sec views');
+
+  document.getElementById('rank-seg').innerHTML = RANK_PRESETS.map(([k, l]) => `<button data-k="${k}" class="${k === rankKey ? 'on' : ''}">${l}</button>`).join('');
+  document.getElementById('top-seg').innerHTML = TOP_OPTIONS.map(n => `<button data-n="${n}" class="${n === topN ? 'on' : ''}">${n ? 'Top ' + n : 'All'}</button>`).join('');
+  document.querySelectorAll('#rank-seg button').forEach(b => b.onclick = () => { rankKey = b.dataset.k; render(); });
+  document.querySelectorAll('#top-seg button').forEach(b => b.onclick = () => { topN = +b.dataset.n; render(); });
+
+  renderTable();
+  renderFootnotes();
+}
+
+function renderTable() {
+  const minSpend = parseFloat(document.getElementById('min-spend').value) || 0;
+  const [, , , , dir, isRate] = COL[rankKey];
+  // Ranking on a rate: ads under the min spend sink to the bottom, otherwise a
+  // $4 ad with one follow wins "cost per follow". Missing values (no follows,
+  // no video) always sort last.
+  const thin = r => isRate && r.spend < minSpend;
+  const better = dir === -1 ? (a, b) => a - b : (a, b) => b - a;
+  const sorted = [...rows].sort((a, b) => {
+    if (thin(a) !== thin(b)) return thin(a) - thin(b);
+    const av = a[rankKey], bv = b[rankKey];
+    if (!isFinite(av) || !isFinite(bv)) return isFinite(bv) - isFinite(av);
+    return better(av, bv);
+  });
+  const shown = topN ? sorted.slice(0, topN) : sorted;
+
+  // Diverging shade around the median of the shown, adequately-spent rows.
+  const shadeFor = {};
+  for (const [k, , , , d] of COLS) {
+    if (!d) continue;
+    const vals = shown.filter(r => r.spend >= minSpend).map(r => r[k]).filter(isFinite).sort((a, b) => a - b);
+    if (vals.length < 3) continue;
+    const med = vals[Math.floor(vals.length / 2)], lo = vals[0], hi = vals[vals.length - 1];
+    shadeFor[k] = v => {
+      if (!isFinite(v)) return '';
+      const span = v >= med ? hi - med : med - lo;
+      if (!span) return '';
+      const strength = Math.min(1, Math.abs(v - med) / span);
+      const good = (v - med) * d > 0;
+      return `background:${good ? `rgba(26,127,55,${(0.08 + 0.27 * strength).toFixed(2)})` : `rgba(192,57,43,${(0.06 + 0.22 * strength).toFixed(2)})`}`;
+    };
+  }
+
+  // Grouped header row.
+  const groups = [];
+  for (const c of COLS) {
+    const g = groups[groups.length - 1];
+    if (g && g.name === c[2]) g.span++; else groups.push({ name: c[2], span: 1 });
+  }
+  const head = `<thead>
+    <tr><th class="grp" colspan="2"></th>${groups.map(g => `<th class="grp" colspan="${g.span}">${g.name}</th>`).join('')}</tr>
+    <tr><th class="l">#</th><th class="l">Ad name</th>${COLS.map(([k, l]) => `<th data-k="${k}" class="${k === rankKey ? 'on' : ''}">${l}${k === rankKey ? (COL[k][4] === -1 ? ' ▲' : ' ▼') : ''}</th>`).join('')}</tr>
+  </thead>`;
+
+  const acct = String(data.account_id).replace(/^act_/, '');
+  const body = shown.map((r, i) => {
+    const am = r.top_ad_id ? `https://adsmanager.facebook.com/adsmanager/manage/ads?act=${encodeURIComponent(acct)}&selected_ad_ids=${encodeURIComponent(r.ad_ids.join(','))}` : null;
+    const meta = `${r.ad_ids.length} ad${r.ad_ids.length === 1 ? '' : 's'} · ${esc(r.campaigns.slice(0, 2).join(', '))}${r.campaigns.length > 2 ? ` +${r.campaigns.length - 2}` : ''}`;
+    const isThin = r.spend < minSpend;
+    return `<tr>
+      <td class="l rank">${i + 1}</td>
+      <td class="name"><div class="nm">${esc(r.ad_name)}</div><div class="meta">${meta}</div>
+        <div class="chips">
+          ${r.top_ad_id ? `<button class="chip" data-preview="${esc(r.top_ad_id)}">preview</button>` : ''}
+          ${am ? `<a class="chip" href="${esc(am)}" target="_blank" rel="noopener">Ads Manager</a>` : ''}
+          <button class="chip" data-copy="${esc(r.ad_name)}">copy name</button>
+        </div></td>
+      ${COLS.map(([k, , , f, d, isR]) => {
+        const dim = isThin && isR;
+        const style = !dim && shadeFor[k] ? shadeFor[k](r[k]) : '';
+        return `<td class="${dim ? 'thin' : ''}" style="${style}"${dim ? ` title="Under $${fmtN(minSpend)} spend, too little to trust the rate"` : ''}>${f(r[k])}</td>`;
+      }).join('')}
+    </tr>`;
+  }).join('');
+
+  const t = totals(shown);
+  const foot = `<tfoot><tr><td></td><td class="l">${topN && rows.length > topN ? `Top ${shown.length} total` : 'Total'}</td>${COLS.map(([k, , , f]) => `<td>${f(t[k])}</td>`).join('')}</tr></tfoot>`;
+  const table = document.getElementById('ads-table');
+  table.innerHTML = head + `<tbody>${body}</tbody>` + foot;
+
+  table.querySelectorAll('th[data-k]').forEach(th => th.onclick = () => { rankKey = th.dataset.k; render(); });
+  table.querySelectorAll('[data-copy]').forEach(b => b.onclick = async () => {
+    try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = 'copied'; } catch { b.textContent = 'copy failed'; }
+    setTimeout(() => { b.textContent = 'copy name'; }, 1200);
+  });
+  table.querySelectorAll('[data-preview]').forEach(b => b.onclick = () => openPreview(b));
+
+  document.getElementById('table-note').innerHTML =
+    `Rates are greyed out and ranked last for ads under $${fmtN(minSpend)} spend. `
+    + '<b>Follows</b> = Facebook Page follows + Instagram follows attributed to the ad. '
+    + '<b>Engagements</b> = Meta\'s post engagement (reactions, comments, shares, saves, link clicks and video plays). '
+    + '<b>Hook rate</b> = 3-second video views ÷ impressions. <b>Hold rate</b> = ThruPlays ÷ 3-second views. Both are blank for image ads.';
+}
+
+function renderFootnotes() {
+  const f = document.getElementById('actions-foot');
+  const follow = data.follow_action_types.length
+    ? `Instagram follows counted from: ${data.follow_action_types.map(t => `<code>${esc(t)}</code>`).join(', ')}.`
+    : 'Meta returned no Instagram-follow action for these ads, so IG follows are 0. Either nothing was followed, or this account doesn\'t report it at ad level.';
+  f.innerHTML = `<summary>Where the follower numbers come from</summary>
+    <p style="margin-top:6px">Facebook follows come from Meta's <code>like</code> action (Page likes/follows). ${follow}</p>
+    <p style="margin-top:6px">Every action type Meta returned for these ads: ${data.action_types_seen.map(t => `<code>${esc(t)}</code>`).join(' ')}</p>`;
+}
+
+// Preview: one call per click, using the highest-spend ad id behind the name.
+async function openPreview(btn) {
+  const win = window.open('', '_blank');
+  btn.textContent = 'loading…';
+  try {
+    const d = await (await fetch('/api/meta-ad-creative-preview?ad_id=' + encodeURIComponent(btn.dataset.preview))).json();
+    if (d.preview_url && win) win.location = d.preview_url;
+    else { if (win) win.close(); alert(d.error || 'No preview available for this ad.'); }
+  } catch (e) {
+    if (win) win.close();
+    alert(e.message);
+  } finally {
+    btn.textContent = 'preview';
+  }
+}
+
+// ── Utils ────────────────────────────────
+function showStatus(msg, kind, isHtml) {
+  const el = document.getElementById('status');
+  el.innerHTML = isHtml ? msg : esc(msg);
+  el.className = 'status' + (kind ? ' ' + kind : '');
+}
+function hideStatus() { document.getElementById('status').classList.add('hidden'); }
+
+document.getElementById('btn-load').addEventListener('click', load);
+document.getElementById('campaign-filter').addEventListener('keydown', e => { if (e.key === 'Enter') load(); });
+document.getElementById('min-spend').addEventListener('input', () => { if (data) renderTable(); });
+
+document.addEventListener('DOMContentLoaded', async () => {
+  // Default: the 14 days ending yesterday.
+  const end = new Date(); end.setDate(end.getDate() - 1);
+  const start = new Date(end); start.setDate(start.getDate() - 13);
+  const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  document.getElementById('date-end').value = ymd(end);
+  document.getElementById('date-start').value = ymd(start);
+
+  if (await checkAuth()) {
+    await loadAccounts();
+    if (document.getElementById('account-select').value) load();
+  }
+});
+</script>
+<script src="/app-nav.js" defer></script>
+</body>
+</html>
