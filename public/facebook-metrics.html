@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Facebook Metrics</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --fb-blue: #1877f2;
+      --bg: #f0f2f5;
+      --surface: #fff;
+      --text-primary: #1c1e21;
+      --text-secondary: #65676b;
+      --border: #dddfe2;
+      --positive: #1a7f37;
+      --negative: #c0392b;
+      --shadow: 0 1px 3px rgba(0,0,0,0.12);
+      --radius: 8px;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg); color: var(--text-primary); line-height: 1.5; min-height: 100vh;
+    }
+    header {
+      background: var(--fb-blue); color: white; padding: 16px 24px;
+      display: flex; align-items: center; gap: 16px;
+    }
+    header h1 { font-size: 1.2rem; font-weight: 700; }
+    header p { font-size: 0.8rem; opacity: 0.75; }
+
+    .wrap { padding: 20px 24px; display: flex; flex-direction: column; gap: 16px; }
+    .card { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); padding: 20px; min-width: 0; }
+    /* min-width:0 lets .tbl-wrap scroll inside the card instead of the flex column
+       stretching the whole page to the campaign table's width on phones. */
+    .card h3 {
+      font-size: 0.82rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--text-secondary); margin-bottom: 4px;
+    }
+    .card__sub { font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 14px; }
+
+    .controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
+    .ctrl-group { display: flex; flex-direction: column; gap: 4px; }
+    .ctrl-group label { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary); }
+    .ctrl-group select, .ctrl-group input {
+      padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px;
+      font-size: 0.85rem; font-family: inherit; background: white; color: var(--text-primary);
+    }
+    .ctrl-group select { min-width: 220px; }
+    .btn {
+      padding: 8px 18px; border: none; border-radius: 6px; cursor: pointer;
+      font-size: 0.85rem; font-weight: 600; background: var(--fb-blue); color: white;
+    }
+    .btn:hover { background: #166fe5; }
+    .btn:disabled { opacity: 0.5; cursor: default; }
+
+    .status { font-size: 0.82rem; color: var(--text-secondary); padding: 16px 0 0; }
+    .status.error { color: var(--negative); }
+    .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--fb-blue); border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; margin-right: 6px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Metric toggle — one segmented control per section */
+    .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 14px; }
+    .seg button {
+      border: none; background: white; padding: 7px 16px; font: inherit; font-size: 0.82rem;
+      font-weight: 600; color: var(--text-secondary); cursor: pointer;
+    }
+    .seg button + button { border-left: 1px solid var(--border); }
+    .seg button.on { background: var(--fb-blue); color: white; }
+
+    /* KPI tiles — clickable in the toggle sections, the active one is outlined */
+    .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-bottom: 16px; }
+    .kpi { background: var(--bg); border-radius: 6px; padding: 12px 14px; border: 2px solid transparent; }
+    .kpi[data-metric] { cursor: pointer; }
+    .kpi.on { border-color: var(--fb-blue); background: #e7f0fd; }
+    .kpi__label { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary); margin-bottom: 2px; }
+    .kpi__value { font-size: 1.35rem; font-weight: 700; }
+    .kpi__delta { font-size: 0.75rem; color: var(--text-secondary); }
+    .pos { color: var(--positive); }
+    .neg { color: var(--negative); }
+
+    .chart-svg { width: 100%; height: 240px; display: block; }
+    .chart-note { font-size: 0.75rem; color: var(--text-secondary); margin: 6px 0 16px; }
+
+    .tbl-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    th {
+      text-align: left; padding: 7px 10px; font-size: 0.68rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary);
+      border-bottom: 2px solid var(--border); white-space: nowrap;
+    }
+    th.r, td.r { text-align: right; }
+    th.on { color: var(--fb-blue); }
+    td { padding: 7px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    td.name { white-space: normal; max-width: 420px; }
+    td.dim { color: #9aa0a6; }
+    tbody tr:last-child td { border-bottom: none; }
+    tfoot td { font-weight: 700; background: var(--bg); border-top: 2px solid var(--border); }
+
+    .hidden { display: none !important; }
+
+    @media (max-width: 640px) {
+      header { padding: 12px 16px; flex-wrap: wrap; }
+      .wrap { padding: 16px; }
+      .ctrl-group select { min-width: 0; width: 100%; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Facebook Metrics</h1>
+    <p>Meta-reported delivery: reach, impressions, frequency and click-through rate</p>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="card">
+    <div class="controls">
+      <div class="ctrl-group">
+        <label for="account-select">Ad Account</label>
+        <select id="account-select"><option value="">Loading…</option></select>
+      </div>
+      <div class="ctrl-group">
+        <label for="date-start">Start</label>
+        <input type="date" id="date-start">
+      </div>
+      <div class="ctrl-group">
+        <label for="date-end">End</label>
+        <input type="date" id="date-end">
+      </div>
+      <button class="btn" id="btn-load">Load</button>
+    </div>
+    <div id="status" class="status hidden"></div>
+  </div>
+
+  <div class="card hidden" id="delivery-card">
+    <h3>Reach vs Impressions vs Frequency</h3>
+    <p class="card__sub" id="delivery-sub"></p>
+    <div class="seg" id="delivery-toggle"></div>
+    <div class="kpi-row" id="delivery-kpis"></div>
+    <div id="delivery-chart"></div>
+    <div class="tbl-wrap"><table id="delivery-table"></table></div>
+  </div>
+
+  <div class="card hidden" id="ctr-card">
+    <h3>Click-Through Rate</h3>
+    <p class="card__sub">Link CTR counts only clicks through to the site. CTR (all) also counts likes, comments, profile taps and "see more" expands, so it always runs higher.</p>
+    <div class="seg" id="ctr-toggle"></div>
+    <div class="kpi-row" id="ctr-kpis"></div>
+    <div id="ctr-chart"></div>
+    <div class="tbl-wrap"><table id="ctr-table"></table></div>
+  </div>
+
+</div>
+
+<script>
+// ── Helpers ──────────────────────────────
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmtN = (n, d = 0) => isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d }) : '—';
+const fmtCompact = n => !isFinite(n) ? '—'
+  : n >= 1e6 ? (n / 1e6).toFixed(2) + 'M'
+  : n >= 1e4 ? (n / 1e3).toFixed(1) + 'K'
+  : fmtN(n);
+const fmtD = n => isFinite(n) ? '$' + fmtN(n, 2) : '—';
+
+// One definition per metric drives the toggle, the KPI tile, the chart and the
+// table column. `goodWhenUp` colours the vs-prior delta: rising frequency means
+// the same people are seeing the ads more often, so it reads red, not green.
+const METRICS = {
+  reach:       { label: 'Reach',       fmt: n => fmtN(n),       axis: fmtCompact,             goodWhenUp: true },
+  impressions: { label: 'Impressions', fmt: n => fmtN(n),       axis: fmtCompact,             goodWhenUp: true },
+  frequency:   { label: 'Frequency',   fmt: n => fmtN(n, 2),    axis: n => n.toFixed(2),      goodWhenUp: false },
+  link_ctr:    { label: 'Link CTR',    fmt: n => fmtN(n, 2) + '%', axis: n => n.toFixed(2) + '%', goodWhenUp: true },
+  ctr:         { label: 'CTR (all)',   fmt: n => fmtN(n, 2) + '%', axis: n => n.toFixed(2) + '%', goodWhenUp: true },
+};
+const DELIVERY = ['reach', 'impressions', 'frequency'];
+const CLICKS   = ['link_ctr', 'ctr'];
+
+// Campaigns under this many impressions get their CTR greyed out — a handful of
+// clicks on a few hundred impressions swings CTR by whole points.
+const MIN_IMPR_FOR_CTR = 1000;
+
+let data = null;
+let deliveryMetric = 'reach';
+let ctrMetric = 'link_ctr';
+
+function delta(cur, prev, m) {
+  if (prev == null || !isFinite(prev) || prev === 0) return '<span class="kpi__delta">no prior data</span>';
+  const pct = (cur - prev) / prev * 100;
+  const good = m.goodWhenUp ? pct > 0 : pct < 0;
+  const c = Math.abs(pct) < 0.05 ? '' : good ? 'pos' : 'neg';
+  return `<span class="kpi__delta"><span class="${c}">${pct > 0 ? '+' : ''}${pct.toFixed(1)}%</span> vs prior (${m.fmt(prev)})</span>`;
+}
+
+// ── Load ─────────────────────────────────
+async function checkAuth() {
+  const d = await (await fetch('/api/auth-status')).json();
+  if (!d.authenticated) {
+    window.location.href = '/auth/facebook?next=' + encodeURIComponent(location.pathname);
+    return false;
+  }
+  return true;
+}
+
+async function loadAccounts() {
+  const sel = document.getElementById('account-select');
+  const d = await (await fetch('/api/ad-accounts')).json();
+  if (d.error) { sel.innerHTML = '<option value="">Error loading accounts</option>'; return; }
+  const accounts = d.accounts || [];
+  sel.innerHTML = accounts.map(a => `<option value="${esc(a.id)}">${esc(a.name)} (${esc(a.id)})</option>`).join('');
+  let saved = null;
+  try { saved = localStorage.getItem('fbMetricsAccount'); } catch {}
+  if (saved && accounts.some(a => a.id === saved)) sel.value = saved;
+}
+
+async function load() {
+  const account = document.getElementById('account-select').value;
+  const since = document.getElementById('date-start').value;
+  const until = document.getElementById('date-end').value;
+  if (!account || !since || !until) return showStatus('Pick an account and a date range.', true);
+  if (since > until) return showStatus('Start date is after end date.', true);
+  try { localStorage.setItem('fbMetricsAccount', account); } catch {}
+
+  const btn = document.getElementById('btn-load');
+  btn.disabled = true;
+  showStatus('<span class="spinner"></span> Pulling Meta insights…');
+  try {
+    const resp = await fetch(`/api/meta-delivery-metrics?account_id=${encodeURIComponent(account)}&since=${since}&until=${until}`);
+    const d = await resp.json();
+    if (resp.status === 401) { window.location.href = '/auth/facebook?next=' + encodeURIComponent(location.pathname); return; }
+    if (d.error) return showStatus(d.error, true);
+    if (!d.current) return showStatus('No delivery in this date range.', true);
+    data = d;
+    hideStatus();
+    render();
+  } catch (e) {
+    showStatus(e.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ── Render ───────────────────────────────
+function render() {
+  document.getElementById('delivery-card').classList.remove('hidden');
+  document.getElementById('ctr-card').classList.remove('hidden');
+  document.getElementById('delivery-sub').textContent =
+    `${data.range.since} → ${data.range.until}, compared with ${data.compare.since} → ${data.compare.until}. `
+    + 'Reach is unique people, so it is deduplicated across the whole range — daily reach bars will add up to more than the total.';
+  renderSection('delivery', DELIVERY, deliveryMetric);
+  renderSection('ctr', CLICKS, ctrMetric);
+}
+
+function renderSection(id, keys, active) {
+  const toggle = document.getElementById(id + '-toggle');
+  toggle.innerHTML = keys.map(k => `<button data-metric="${k}" class="${k === active ? 'on' : ''}">${METRICS[k].label}</button>`).join('');
+
+  const cur = data.current, prev = data.previous;
+  let kpis = keys.map(k => `
+    <div class="kpi ${k === active ? 'on' : ''}" data-metric="${k}">
+      <div class="kpi__label">${METRICS[k].label}</div>
+      <div class="kpi__value">${METRICS[k].fmt(cur[k])}</div>
+      ${delta(cur[k], prev ? prev[k] : null, METRICS[k])}
+    </div>`).join('');
+  // Context tiles: the raw counts behind each section's ratios.
+  if (id === 'ctr') {
+    kpis += `
+      <div class="kpi"><div class="kpi__label">Link Clicks</div><div class="kpi__value">${fmtN(cur.link_clicks)}</div>${delta(cur.link_clicks, prev && prev.link_clicks, { fmt: n => fmtN(n), goodWhenUp: true })}</div>
+      <div class="kpi"><div class="kpi__label">Clicks (all)</div><div class="kpi__value">${fmtN(cur.clicks)}</div>${delta(cur.clicks, prev && prev.clicks, { fmt: n => fmtN(n), goodWhenUp: true })}</div>`;
+  } else {
+    kpis += `<div class="kpi"><div class="kpi__label">Spend</div><div class="kpi__value">${fmtD(cur.spend)}</div>${delta(cur.spend, prev && prev.spend, { fmt: fmtD, goodWhenUp: true })}</div>`;
+  }
+  document.getElementById(id + '-kpis').innerHTML = kpis;
+
+  document.getElementById(id + '-chart').innerHTML = chart(data.days, active, id === 'delivery');
+  document.getElementById(id + '-table').innerHTML = table(keys, active, id === 'ctr');
+
+  document.querySelectorAll(`#${id}-toggle button, #${id}-kpis .kpi[data-metric]`).forEach(el =>
+    el.addEventListener('click', () => {
+      if (id === 'delivery') deliveryMetric = el.dataset.metric; else ctrMetric = el.dataset.metric;
+      renderSection(id, keys, el.dataset.metric);
+    }));
+}
+
+// Daily chart: bars for counts (reach, impressions), a line for ratios
+// (frequency, CTR) where a zero baseline would flatten the movement.
+function chart(days, key, bars) {
+  if (!days.length) return '<div class="chart-note">No daily rows.</div>';
+  const m = METRICS[key];
+  const isBar = bars && key !== 'frequency';
+  const W = 1000, H = 240, PADL = 56, PADR = 12, PADT = 12, PADB = 28;
+  const vals = days.map(d => d[key]);
+  let lo = isBar ? 0 : Math.min(...vals), hi = Math.max(...vals);
+  if (!isBar) { const pad = (hi - lo) * 0.15 || hi * 0.1 || 1; lo = Math.max(0, lo - pad); hi += pad; }
+  if (hi === lo) hi = lo + 1;
+  const n = days.length;
+  const slot = (W - PADL - PADR) / n;
+  const x = i => PADL + slot * (i + 0.5);
+  const y = v => PADT + (1 - (v - lo) / (hi - lo)) * (H - PADT - PADB);
+
+  let grid = '';
+  for (let g = 0; g <= 4; g++) {
+    const v = lo + (hi - lo) * g / 4, yy = y(v);
+    grid += `<line x1="${PADL}" x2="${W - PADR}" y1="${yy.toFixed(1)}" y2="${yy.toFixed(1)}" stroke="#eceef1"/>`
+      + `<text x="${PADL - 6}" y="${(yy + 3).toFixed(1)}" font-size="10" fill="#8a929c" text-anchor="end">${m.axis(v)}</text>`;
+  }
+  let marks = '';
+  if (isBar) {
+    const bw = Math.max(1, slot * 0.7);
+    days.forEach((d, i) => {
+      const top = y(d[key]);
+      marks += `<rect x="${(x(i) - bw / 2).toFixed(1)}" y="${top.toFixed(1)}" width="${bw.toFixed(1)}" height="${(H - PADB - top).toFixed(1)}" fill="#1877f2" opacity="0.8"><title>${d.date}: ${m.fmt(d[key])}</title></rect>`;
+    });
+  } else {
+    marks = `<polyline fill="none" stroke="#1877f2" stroke-width="2" points="${days.map((d, i) => `${x(i).toFixed(1)},${y(d[key]).toFixed(1)}`).join(' ')}"/>`
+      + days.map((d, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(d[key]).toFixed(1)}" r="3" fill="#1877f2"><title>${d.date}: ${m.fmt(d[key])}</title></circle>`).join('');
+  }
+  let ticks = '';
+  const step = Math.max(1, Math.ceil(n / 10));
+  for (let i = 0; i < n; i += step) ticks += `<text x="${x(i).toFixed(1)}" y="${H - 8}" font-size="10" fill="#8a929c" text-anchor="middle">${days[i].date.slice(5)}</text>`;
+
+  const note = key === 'reach'
+    ? 'Daily reach — each bar is people reached that day. Hover a bar for its value.'
+    : key === 'frequency'
+      ? 'Daily frequency (impressions ÷ that day\'s reach). The headline figure divides by reach deduplicated over the whole range, so it usually runs higher than the daily points.'
+      : `Daily ${m.label}. Hover a point for its value.`;
+  return `<svg class="chart-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${grid}${marks}${ticks}</svg><div class="chart-note">${note}</div>`;
+}
+
+function table(keys, active, isCtr) {
+  // Under-sampled campaigns sink below the rest on CTR, else a 400-impression
+  // test with three lucky clicks tops the ranking.
+  const thinRow = r => isCtr && r.impressions < MIN_IMPR_FOR_CTR;
+  const rows = [...data.campaigns].sort((a, b) => (thinRow(a) - thinRow(b)) || (b[active] - a[active]));
+  const cols = isCtr
+    ? [['impressions', 'Impressions', n => fmtN(n)], ['link_clicks', 'Link Clicks', n => fmtN(n)], ['clicks', 'Clicks (all)', n => fmtN(n)], ['link_ctr', 'Link CTR', METRICS.link_ctr.fmt], ['ctr', 'CTR (all)', METRICS.ctr.fmt]]
+    : [['spend', 'Spend', fmtD], ['reach', 'Reach', n => fmtN(n)], ['impressions', 'Impressions', n => fmtN(n)], ['frequency', 'Frequency', METRICS.frequency.fmt], ['cpm', 'CPM', fmtD]];
+  // Heat-shade the active column so the leaders stand out when it is sorted.
+  const vals = rows.filter(r => !isCtr || r.impressions >= MIN_IMPR_FOR_CTR).map(r => r[active]);
+  const max = Math.max(...vals, 0), min = Math.min(...vals, max);
+  const shade = v => max === min ? '' : `background:rgba(24,119,242,${(0.06 + 0.3 * (v - min) / (max - min)).toFixed(2)})`;
+
+  const head = `<thead><tr><th>Campaign</th>${cols.map(([k, l]) => `<th class="r ${k === active ? 'on' : ''}">${l}</th>`).join('')}</tr></thead>`;
+  const body = rows.map(r => {
+    const thin = isCtr && r.impressions < MIN_IMPR_FOR_CTR;
+    return `<tr><td class="name">${esc(r.campaign_name)}</td>${cols.map(([k, , f]) => {
+      const dim = thin && (k === 'link_ctr' || k === 'ctr');
+      const style = k === active && !dim ? shade(r[k]) : '';
+      return `<td class="r ${dim ? 'dim' : ''}" style="${style}"${dim ? ` title="Under ${fmtN(MIN_IMPR_FOR_CTR)} impressions — too few to trust the rate"` : ''}>${f(r[k])}</td>`;
+    }).join('')}</tr>`;
+  }).join('');
+  const t = data.current;
+  const foot = `<tfoot><tr><td>Account total</td>${cols.map(([k, , f]) => `<td class="r">${f(t[k])}</td>`).join('')}</tr></tfoot>`;
+  return head + `<tbody>${body}</tbody>` + foot;
+}
+
+// ── Utils ────────────────────────────────
+function showStatus(msg, isError) {
+  const el = document.getElementById('status');
+  el.innerHTML = isError ? esc(msg) : msg;
+  el.className = 'status' + (isError ? ' error' : '');
+}
+function hideStatus() { document.getElementById('status').classList.add('hidden'); }
+
+document.getElementById('btn-load').addEventListener('click', load);
+
+document.addEventListener('DOMContentLoaded', async () => {
+  // Default: the 14 days ending yesterday — long enough for frequency to mean something.
+  const end = new Date(); end.setDate(end.getDate() - 1);
+  const start = new Date(end); start.setDate(start.getDate() - 13);
+  const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  document.getElementById('date-end').value = ymd(end);
+  document.getElementById('date-start').value = ymd(start);
+
+  if (await checkAuth()) {
+    await loadAccounts();
+    if (document.getElementById('account-select').value) load();
+  }
+});
+</script>
+<script src="/app-nav.js" defer></script>
+</body>
+</html>

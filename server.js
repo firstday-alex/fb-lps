@@ -6801,6 +6801,98 @@ app.get('/api/campaign-daily', requireAuth, async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────
+// FACEBOOK METRICS — reach, impressions, frequency, CTR (Meta-reported only)
+// ─────────────────────────────────────────────
+// Backs public/facebook-metrics.html. Four read-only insights pulls:
+//  • account totals for the window and the equal-length prior window,
+//  • account by day,
+//  • campaign totals for the window.
+// Reach is unique people, so it does NOT add up across days or campaigns: the
+// sum of daily reach overstates the window's reach (the same person counts once
+// per day they saw an ad). The window and campaign totals therefore come from
+// their own unbroken pulls, and frequency is impressions ÷ that deduplicated
+// reach — never recomputed from the daily rows.
+app.get('/api/meta-delivery-metrics', requireAuth, async (req, res) => {
+  const { account_id, since, until } = req.query;
+  const ymd = /^\d{4}-\d{2}-\d{2}$/;
+  if (!account_id || !/^act_\d+$/.test(account_id) || !ymd.test(since || '') || !ymd.test(until || '')) {
+    return res.status(400).json({ error: 'account_id (act_…), since and until (YYYY-MM-DD) are required' });
+  }
+
+  const cacheKey = endpointCacheKey('meta-delivery-metrics', { account_id, since, until });
+  const cached = getEndpointCache(cacheKey);
+  if (cached) return res.json(cached);
+
+  const prev = (() => {
+    const s = new Date(since + 'T00:00:00Z'), e = new Date(until + 'T00:00:00Z');
+    const days = Math.round((e - s) / 86400000) + 1;
+    const pe = new Date(s); pe.setUTCDate(pe.getUTCDate() - 1);
+    const ps = new Date(pe); ps.setUTCDate(ps.getUTCDate() - (days - 1));
+    return { since: ps.toISOString().slice(0, 10), until: pe.toISOString().slice(0, 10) };
+  })();
+
+  // ctr = all clicks (likes, profile taps, "see more"…) ÷ impressions.
+  // inline_link_click_ctr = clicks on links to the destination ÷ impressions —
+  // the one that matters for site traffic, so the page leads with it.
+  const FIELDS = 'spend,reach,impressions,frequency,clicks,ctr,inline_link_clicks,inline_link_click_ctr,cpm';
+  const pull = async (range, extra, label) => {
+    let url = `${META_BASE_URL}/${account_id}/insights`
+      + `?fields=${FIELDS}${extra}`
+      + `&time_range=${encodeURIComponent(JSON.stringify(range))}`
+      + `&limit=500&${metaParams(req.accessToken)}`;
+    const rows = [];
+    while (url) {
+      const j = await metaFetchWithBackoff(url, label);
+      rows.push(...(j.data || []));
+      url = j.paging?.next || null;
+    }
+    return rows;
+  };
+  const norm = r => {
+    const reach = parseFloat(r.reach) || 0;
+    const impressions = parseFloat(r.impressions) || 0;
+    const clicks = parseFloat(r.clicks) || 0;
+    const linkClicks = parseFloat(r.inline_link_clicks) || 0;
+    const spend = parseFloat(r.spend) || 0;
+    return {
+      reach, impressions, clicks, link_clicks: linkClicks, spend,
+      frequency: reach > 0 ? impressions / reach : 0,
+      ctr: impressions > 0 ? clicks / impressions * 100 : 0,
+      link_ctr: impressions > 0 ? linkClicks / impressions * 100 : 0,
+      cpm: impressions > 0 ? spend / impressions * 1000 : 0,
+    };
+  };
+
+  try {
+    const [cur, prevRows, daily, camps] = await Promise.all([
+      pull({ since, until }, '', 'fb-metrics:total'),
+      pull(prev, '', 'fb-metrics:prev').catch(() => []),
+      pull({ since, until }, '&time_increment=1', 'fb-metrics:daily'),
+      pull({ since, until }, ',campaign_id,campaign_name&level=campaign&sort=impressions_descending', 'fb-metrics:campaigns'),
+    ]);
+
+    const out = {
+      account_id,
+      range: { since, until },
+      compare: prev,
+      current: cur[0] ? norm(cur[0]) : null,
+      previous: prevRows[0] ? norm(prevRows[0]) : null,
+      days: daily.map(d => ({ date: d.date_start, ...norm(d) })).sort((a, b) => a.date.localeCompare(b.date)),
+      campaigns: camps.map(c => ({ campaign_id: c.campaign_id, campaign_name: c.campaign_name, ...norm(c) })),
+    };
+    setEndpointCache(cacheKey, out);
+    res.json(out);
+  } catch (err) {
+    if (err.code === 190) {
+      clearTokenCookie(res);
+      return res.status(401).json({ error: 'Session expired. Please log in again.' });
+    }
+    console.error('[meta-delivery-metrics] error:', err);
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // --- Ad name parser ---
 
 // Deconstructs ad names like: "brand_campaign-type_audience_creative-desc_url:landing-page"
