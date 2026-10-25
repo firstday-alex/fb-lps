@@ -6179,7 +6179,9 @@ async function runShopifyQLTable(q) {
   const json = await resp.json();
   const p = json.data?.shopifyqlQuery;
   if (p?.parseErrors?.length) throw new Error('ShopifyQL: ' + JSON.stringify(p.parseErrors));
-  if (!p?.tableData) throw new Error('No data returned');
+  // Throttling arrives as top-level GraphQL `errors` with no data; saying so
+  // beats a bare "No data returned" when several pulls go out at once.
+  if (!p?.tableData) throw new Error('No data returned' + (json.errors ? ': ' + json.errors.map(e => e.message).join('; ') : ''));
   return p.tableData;
 }
 // Accessor tolerant of array OR object rows.
@@ -6360,6 +6362,395 @@ app.get('/api/traffic-quality-series', async (req, res) => {
     res.json({ source: src || null, medium: med || null, window: { start, end }, series });
   } catch (err) {
     console.error('[traffic-quality-series] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────
+// WHAT CHANGED — one ranked list of a day's movers across every dimension
+// ─────────────────────────────────────────────
+// Every other tab answers "why did metric X move?" once you know where to look.
+// This one answers "where should I look?": it scores every channel, campaign,
+// landing page and ad for the day against what that row would normally do, and
+// ranks them by estimated transactions (and dollars) gained or lost.
+//
+// Three choices make the ranking trustworthy rather than just long:
+//
+// 1. The yardstick is EXPECTED, not "the day before". Day-over-day is mostly
+//    day-of-week. Expected sessions = the row's trailing 7-day daily average ×
+//    the site's weekday index (how this weekday compares with an average day
+//    over the last 4 weeks). Expected CVR = the row's pooled 28-day CVR. The
+//    split is deliberate: a 28-day volume average is stale for anything that
+//    is scaling — Meta at +31% "vs expected" on a day it was flat vs last week
+//    — while CVR is steadier and small rows need the longer sample. Yesterday
+//    and the same weekday last week are returned as context columns. Every
+//    window ENDS THE DAY BEFORE the subject day — same convention as the
+//    Morning Brief, so a day never sits inside its own baseline.
+//
+// 2. Every move carries a noise test. Binomial/Poisson error alone badly
+//    understates real day-to-day swings (budgets, sends, auction noise), so the
+//    extra variance is measured from the store's own last 28 days, per channel,
+//    by method of moments, and the median across channels is added on. |z| ≥ 2
+//    is "beyond normal noise". Landing pages and ads borrow the channel-level
+//    figure; their true swings are, if anything, larger, so treat a borderline
+//    z there as borderline.
+//
+// 3. Impact is split into volume and rate, and the two sum exactly to
+//    actual − expected transactions for the row:
+//      volume = (sessions − expected sessions) × baseline CVR
+//      rate   = sessions × (CVR − baseline CVR)
+//    Summed over channels that is the site's actual − expected transactions.
+//
+// Each dimension is a separate set of single-window queries joined here, not
+// COMPARE TO — that keeps every window independently ordered and capped, so a
+// row missing from one window really did have (near) zero traffic there.
+// LIMIT 5000 throughout (see the 1000-row cap); the 28-day landing-page and ad
+// pulls do reach 5000, but the rows dropped are ones with only a few sessions
+// across 28 days, and `truncatedBelow` reports that floor.
+const WC_BASE_DAYS = 28;
+const WC_VOL_DAYS = 7;
+const WC_Z = 2;               // |z| at or beyond this = beyond normal noise
+const WC_MIN_SESSIONS = 50;   // a row needs this many actual OR expected sessions to rank
+const WC_LIMIT = 5000;
+
+// ShopifyQL throttles under burst (fifteen queries go out per request), so run a
+// few at a time and retry a throttled one rather than failing the whole page.
+async function wcRunQueries(queries, concurrency = 4) {
+  const out = new Array(queries.length);
+  let next = 0;
+  const runOne = async (q) => {
+    for (let attempt = 0; ; attempt++) {
+      try { return await runShopifyQLTable(q); }
+      catch (e) {
+        if (attempt >= 2 || /ShopifyQL:/.test(e.message)) throw e;   // parse errors won't fix themselves
+        await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: concurrency }, async () => {
+    while (next < queries.length) {
+      const i = next++;
+      out[i] = await runOne(queries[i]).then(t => ({ table: t }), err => ({ error: err.message }));
+    }
+  }));
+  return out;
+}
+
+// Paid Meta is split across `paid_social` and `paid` mediums; every other tab
+// treats it as one channel, so this one does too.
+function wcChannelParts(src, med) {
+  if (src === 'facebook' && (med === 'paid_social' || med === 'paid')) return ['facebook', 'paid_social,paid'];
+  return [src, med];
+}
+
+// Sum a ShopifyQL table into key → { parts, n, conv }. conv = sessions × CVR is
+// summed (not the CVR) so rows that merge under one key weight correctly.
+// Keys join parts with NUL so a campaign name containing the separator can't
+// collide with another row.
+function wcTally(table, dimCols, partsFn = (p) => p) {
+  const map = new Map();
+  if (!table) return { map, rows: 0, floor: 0 };
+  const g = qlAccessor(table.columns);
+  const iDims = dimCols.map(c => g.idx(c));
+  const iS = g.idx('sessions'), iC = g.idx('conversion_rate');
+  let floor = Infinity;
+  for (const row of table.rows) {
+    const parts = partsFn(iDims.map(i => { const v = g.get(row, i); return v == null ? null : String(v); }));
+    const n = QL_NUM(g.get(row, iS));
+    floor = Math.min(floor, n);
+    const key = parts.map(p => p == null ? '' : p).join('\u0000');
+    const cur = map.get(key) || { parts, n: 0, conv: 0 };
+    cur.n += n; cur.conv += n * QL_NUM(g.get(row, iC));
+    map.set(key, cur);
+  }
+  return { map, rows: table.rows.length, floor: Number.isFinite(floor) ? floor : 0 };
+}
+
+const wcMean = (a) => a.length ? a.reduce((s, x) => s + x, 0) / a.length : 0;
+const wcMedian = (a) => {
+  if (!a.length) return 0;
+  const s = [...a].sort((x, y) => x - y), m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
+
+// Extra-binomial variance. Volume: Var(n) = E + cVol·E²; rate: Var(p̂) =
+// p(1−p)/n + τ²p². Each series (a channel; series[i] = { day, n, conv } over
+// WC_VOL_DAYS + WC_BASE_DAYS days) gets its own method-of-moments estimate
+// against the same expectation the scorer uses, over the last WC_BASE_DAYS
+// days; the result is the median across series with enough traffic to say
+// anything. Per-series-then-median, not one pooled trimmed mean: trimming
+// squared deviations cuts exactly the tail being measured and drove the rate
+// term to zero, while an untrimmed pool is run by the noisiest SMS channel.
+function wcCalibrate(seriesList, wdIndexByDay) {
+  const vols = [], rates = [];
+  for (const series of seriesList) {
+    const scored = series.slice(WC_VOL_DAYS);
+    const nTot = scored.reduce((s, r) => s + r.n, 0);
+    if (nTot / scored.length < 200) continue;
+    const pBar = scored.reduce((s, r) => s + r.conv, 0) / nTot;
+    const vol = [], rate = [];
+    scored.forEach((r, i) => {
+      const E = wcMean(series.slice(i, i + WC_VOL_DAYS).map(x => x.n)) * (wdIndexByDay.get(r.day) || 1);
+      if (E >= 100) vol.push(((r.n - E) ** 2 - E) / (E * E));
+      if (r.n >= 200 && pBar > 0 && pBar < 1) rate.push(((r.conv / r.n - pBar) ** 2 - pBar * (1 - pBar) / r.n) / (pBar * pBar));
+    });
+    if (vol.length >= 14) vols.push(Math.max(0, wcMean(vol)));
+    if (rate.length >= 14) rates.push(Math.max(0, wcMean(rate)));
+  }
+  return { cVol: wcMedian(vols), tau2: wcMedian(rates), seriesUsed: { volume: vols.length, rate: rates.length } };
+}
+
+// Score one row. `last7` covers WC_VOL_DAYS days (volume baseline), `base`
+// covers WC_BASE_DAYS days (CVR baseline).
+function wcScore({ now, prev, wk, last7, base }, wdIndex, cal, aov) {
+  const n1 = now?.n || 0, c1 = now?.conv || 0;
+  const nB = base?.n || 0, cB = base?.conv || 0;
+  const p1 = n1 > 0 ? c1 / n1 : null;
+  const E = (last7?.n || 0) / WC_VOL_DAYS * wdIndex;
+  const isNew = nB === 0;
+  // A row with no baseline has nothing to be off from on rate; all of it is volume.
+  const pB = nB > 0 ? cB / nB : (p1 ?? 0);
+  const volTxn = (n1 - E) * pB;
+  const rateTxn = p1 == null ? 0 : n1 * (p1 - pB);
+  const zVol = E > 0 ? (n1 - E) / Math.sqrt(E + cal.cVol * E * E) : null;
+  const rateVar = (n1 > 0 && pB > 0 && pB < 1) ? pB * (1 - pB) / n1 + cal.tau2 * pB * pB : 0;
+  const zRate = (!isNew && p1 != null && rateVar > 0) ? (p1 - pB) / Math.sqrt(rateVar) : null;
+  const nPrev = prev?.n || 0, nWk = wk?.n || 0;
+  const pct = (a, b) => b > 0 ? a / b - 1 : null;
+  return {
+    sessions: Math.round(n1), cvr: p1, txns: c1,
+    prev: { sessions: Math.round(nPrev), cvr: nPrev > 0 ? prev.conv / nPrev : null, pct: pct(n1, nPrev) },
+    lastWeek: { sessions: Math.round(nWk), cvr: nWk > 0 ? wk.conv / nWk : null, pct: pct(n1, nWk) },
+    expected: { sessions: E, cvr: nB > 0 ? pB : null, txns: E * pB, pct: pct(n1, E) },
+    impact: { txns: volTxn + rateTxn, volumeTxns: volTxn, rateTxns: rateTxn, dollars: (volTxn + rateTxn) * aov },
+    z: { volume: zVol, rate: zRate },
+    signal: {
+      volume: zVol != null && Math.abs(zVol) >= WC_Z,
+      rate: zRate != null && Math.abs(zRate) >= WC_Z,
+      isNew,
+      // Moved a lot vs yesterday but sits where this weekday normally does —
+      // the classic "Monday dip" that isn't news.
+      weekdayPattern: nPrev >= 100 && Math.abs(pct(n1, nPrev)) >= 0.2 && zVol != null && Math.abs(zVol) < WC_Z,
+    },
+  };
+}
+
+// Blended-CVR change split into rate (channels converting differently) and mix
+// (traffic shifting between channels that convert differently):
+//   Δp = Σ s1(p1 − p0) + Σ (s1 − s0)(p0 − P0)
+// The mix term is centred on the baseline blended CVR P0 — Σ(s1 − s0) = 0, so
+// the sum is unchanged, but a below-average channel gaining share now reads as
+// the drag it is (same convention as Traffic Quality's mix-shift card).
+function wcMixRate(channels, pick0) {
+  const tot1 = channels.reduce((s, c) => s + c.n1, 0);
+  const tot0 = channels.reduce((s, c) => s + pick0(c).n, 0);
+  if (!tot1 || !tot0) return null;
+  const P0 = channels.reduce((s, c) => s + pick0(c).conv, 0) / tot0;
+  const P1 = channels.reduce((s, c) => s + c.c1, 0) / tot1;
+  const items = channels.map(c => {
+    const b = pick0(c);
+    const s1 = c.n1 / tot1, s0 = b.n / tot0;
+    const p1 = c.n1 > 0 ? c.c1 / c.n1 : 0;
+    const p0 = b.n > 0 ? b.conv / b.n : p1;   // new channel: no rate change to speak of
+    return { label: c.label, rate: c.n1 > 0 ? s1 * (p1 - p0) : 0, mix: (s1 - s0) * (p0 - P0), shareNow: s1, shareBase: s0 };
+  });
+  const top = (k) => [...items].sort((a, b) => Math.abs(b[k]) - Math.abs(a[k])).slice(0, 5)
+    .map(i => ({ label: i.label, pts: i[k], shareNow: i.shareNow, shareBase: i.shareBase }));
+  const rate = items.reduce((s, i) => s + i.rate, 0), mix = items.reduce((s, i) => s + i.mix, 0);
+  return { cvrNow: P1, cvrBase: P0, delta: P1 - P0, rate, mix, topRate: top('rate'), topMix: top('mix') };
+}
+
+app.get('/api/what-changed-data', async (req, res) => {
+  if (!SHOPIFY_URL || !SHOPIFY_TOKEN) return res.status(500).json({ error: 'Shopify credentials not configured' });
+  const day = ptYesterdayDate(req.query.date);
+  const cacheKey = endpointCacheKey('what-changed', { day });
+  const cached = req.query.fresh ? null : getEndpointCache(cacheKey);
+  if (cached) return res.json(cached);
+
+  const prevDay = shiftDate(day, -1), wkDay = shiftDate(day, -7);
+  const baseStart = shiftDate(day, -WC_BASE_DAYS), baseEnd = prevDay;
+  // Series pulls reach WC_VOL_DAYS further back so every calibration day has a
+  // full trailing week behind it.
+  const seriesStart = shiftDate(baseStart, -WC_VOL_DAYS);
+  const one = (d) => `SINCE ${d} UNTIL ${d}`;
+  const windows = {
+    now: one(day), prev: one(prevDay), wk: one(wkDay),
+    last7: `SINCE ${shiftDate(day, -WC_VOL_DAYS)} UNTIL ${baseEnd}`,
+    base: `SINCE ${baseStart} UNTIL ${baseEnd}`,
+  };
+  const DIMS = {
+    campaign: { cols: ['utm_source', 'utm_campaign'] },
+    lp:       { cols: ['landing_page_path'] },
+    // utm_content carries the ad name for Meta (and creative/flow labels for
+    // other sources); null content is "no ad", not an ad, so it's excluded.
+    ad:       { cols: ['utm_source', 'utm_content'], where: 'WHERE utm_content IS NOT NULL' },
+  };
+
+  const queries = [
+    `FROM sessions SHOW sessions, conversion_rate GROUP BY day SINCE ${seriesStart} UNTIL ${day} ORDER BY day ASC`,
+    `FROM sessions SHOW sessions, conversion_rate GROUP BY utm_source, utm_medium, day SINCE ${seriesStart} UNTIL ${day} ORDER BY sessions DESC LIMIT ${WC_LIMIT}`,
+    `FROM sales SHOW average_order_value, orders, total_sales WHERE sales_channel = 'Online Store' GROUP BY day SINCE ${baseStart} UNTIL ${day} ORDER BY day ASC`,
+  ];
+  const dimSlots = {};
+  for (const [dim, spec] of Object.entries(DIMS)) {
+    dimSlots[dim] = {};
+    for (const [w, range] of Object.entries(windows)) {
+      dimSlots[dim][w] = queries.length;
+      queries.push(`FROM sessions SHOW sessions, conversion_rate ${spec.where || ''} GROUP BY ${spec.cols.join(', ')} ${range} ORDER BY sessions DESC LIMIT ${WC_LIMIT}`);
+    }
+  }
+
+  try {
+    const results = await wcRunQueries(queries);
+    const errors = results.map((r, i) => r.error ? { query: queries[i].slice(0, 120), error: r.error } : null).filter(Boolean);
+    const [siteR, chanR, aovR] = results;
+    if (siteR.error) throw new Error('Site totals query failed: ' + siteR.error);
+
+    // ── Site series, weekday index ────────────────────────────────────────
+    const sg = qlAccessor(siteR.table.columns);
+    const site = siteR.table.rows.map(r => {
+      const n = QL_NUM(sg.get(r, sg.idx('sessions')));
+      return { day: String(sg.get(r, sg.idx('day')) || '').slice(0, 10), n, conv: n * QL_NUM(sg.get(r, sg.idx('conversion_rate'))) };
+    });
+    const siteByDay = new Map(site.map(r => [r.day, r]));
+    const baseDays = Array.from({ length: WC_BASE_DAYS }, (_, i) => shiftDate(day, -WC_BASE_DAYS + i));
+    const seriesDays = Array.from({ length: WC_VOL_DAYS + WC_BASE_DAYS }, (_, i) => shiftDate(seriesStart, i));
+    const last7Days = baseDays.slice(-WC_VOL_DAYS);
+    const siteBaseMean = wcMean(baseDays.map(d => siteByDay.get(d)?.n || 0));
+    // Weekday index for each base day = mean of its 4 same-weekday days ÷ the
+    // base-window mean. The subject day shares a weekday with base days −7…−28.
+    const wdIndexByDay = new Map();
+    for (const d of baseDays) {
+      const dow = new Date(d + 'T00:00:00Z').getUTCDay();
+      const same = baseDays.filter(x => new Date(x + 'T00:00:00Z').getUTCDay() === dow);
+      wdIndexByDay.set(d, siteBaseMean > 0 ? wcMean(same.map(x => siteByDay.get(x)?.n || 0)) / siteBaseMean : 1);
+    }
+    const wdIndex = wdIndexByDay.get(wkDay) || 1;
+
+    // ── AOV (web) ────────────────────────────────────────────────────────
+    const aovByDay = new Map();
+    if (aovR.table) {
+      const ag = qlAccessor(aovR.table.columns);
+      for (const r of aovR.table.rows) aovByDay.set(String(ag.get(r, ag.idx('day')) || '').slice(0, 10), {
+        orders: QL_NUM(ag.get(r, ag.idx('orders'))), sales: QL_NUM(ag.get(r, ag.idx('total_sales'))),
+      });
+    }
+    const aovOf = (days) => {
+      const o = days.reduce((s, d) => s + (aovByDay.get(d)?.orders || 0), 0);
+      const v = days.reduce((s, d) => s + (aovByDay.get(d)?.sales || 0), 0);
+      return o > 0 ? v / o : null;
+    };
+    const baseAov = aovOf(baseDays);
+    const aov = baseAov || 0;   // dollars are valued at the 28-day web AOV, so a one-day AOV blip doesn't rescale every row
+
+    // ── Channels (from the channel × day pull) ───────────────────────────
+    const chanSeries = new Map();   // key → { label, source, medium, byDay: Map }
+    if (chanR.table) {
+      const cg = qlAccessor(chanR.table.columns);
+      for (const r of chanR.table.rows) {
+        const [src, med] = wcChannelParts(cg.get(r, cg.idx('utm_source')) ?? null, cg.get(r, cg.idx('utm_medium')) ?? null);
+        const key = `${src ?? ''}\u0000${med ?? ''}`;
+        const d = String(cg.get(r, cg.idx('day')) || '').slice(0, 10);
+        const n = QL_NUM(cg.get(r, cg.idx('sessions')));
+        const conv = n * QL_NUM(cg.get(r, cg.idx('conversion_rate')));
+        if (!chanSeries.has(key)) chanSeries.set(key, {
+          source: src, medium: med,
+          label: src == null ? '(direct / none)' : `${src} / ${med ?? '(none)'}`, byDay: new Map(),
+        });
+        const cur = chanSeries.get(key).byDay.get(d) || { day: d, n: 0, conv: 0 };
+        cur.n += n; cur.conv += conv;
+        chanSeries.get(key).byDay.set(d, cur);
+      }
+    }
+    const cal = wcCalibrate(
+      [...chanSeries.values()].map(c => seriesDays.map(d => c.byDay.get(d) || { day: d, n: 0, conv: 0 })),
+      wdIndexByDay,
+    );
+    const sum = (byDay, days) => days.reduce((a, d) => { const r = byDay.get(d); if (r) { a.n += r.n; a.conv += r.conv; } return a; }, { n: 0, conv: 0 });
+
+    const dims = {};
+    const keep = (r) => Math.max(r.sessions, r.expected.sessions, r.prev.sessions) >= WC_MIN_SESSIONS;
+    const byImpact = (a, b) => Math.abs(b.impact.txns) - Math.abs(a.impact.txns);
+
+    dims.channel = {
+      rows: [...chanSeries.values()].map(c => ({
+        label: c.label, source: c.source, medium: c.medium,
+        ...wcScore({ now: c.byDay.get(day), prev: c.byDay.get(prevDay), wk: c.byDay.get(wkDay), last7: sum(c.byDay, last7Days), base: sum(c.byDay, baseDays) }, wdIndex, cal, aov),
+      })).filter(keep).sort(byImpact),
+      truncatedBelow: chanR.table && chanR.table.rows.length >= WC_LIMIT ? 'channel × day pull hit the row cap' : null,
+    };
+
+    const labelFor = {
+      campaign: (p) => ({ label: p[1] ?? '(no campaign)', source: p[0], campaign: p[1] }),
+      lp: (p) => ({ label: p[0] ?? '(none)', lp: p[0] }),
+      ad: (p) => ({ label: p[1], source: p[0], ad: p[1] }),
+    };
+    for (const [dim, spec] of Object.entries(DIMS)) {
+      const t = {};
+      for (const w of Object.keys(windows)) t[w] = wcTally(results[dimSlots[dim][w]].table, spec.cols);
+      const failed = Object.keys(windows).filter(w => results[dimSlots[dim][w]].error);
+      if (failed.includes('now') || failed.includes('base') || failed.includes('last7')) { dims[dim] = { rows: [], error: `query failed (${failed.join(', ')})` }; continue; }
+      const keys = new Set([...t.now.map.keys(), ...t.prev.map.keys(), ...t.last7.map.keys()]);
+      const rows = [];
+      for (const k of keys) {
+        const parts = (t.now.map.get(k) || t.prev.map.get(k) || t.last7.map.get(k)).parts;
+        rows.push({ ...labelFor[dim](parts), ...wcScore({ now: t.now.map.get(k), prev: t.prev.map.get(k), wk: t.wk.map.get(k), last7: t.last7.map.get(k), base: t.base.map.get(k) }, wdIndex, cal, aov) });
+      }
+      dims[dim] = {
+        rows: rows.filter(keep).sort(byImpact),
+        // When a window hits the cap, a row absent from it had at most this many
+        // sessions there.
+        truncatedBelow: Object.fromEntries(Object.entries(t).filter(([, v]) => v.rows >= WC_LIMIT).map(([w, v]) => [w, v.floor])),
+        partialWindows: failed,
+      };
+    }
+
+    // ── Appeared / disappeared ───────────────────────────────────────────
+    const appeared = [], disappeared = [];
+    for (const dim of ['campaign', 'lp', 'ad']) {
+      for (const r of dims[dim].rows || []) {
+        // Little or no traffic all last week, real traffic today: a launch or relaunch.
+        if (r.sessions >= 100 && r.expected.sessions < 0.1 * r.sessions) appeared.push({ dim, ...r });
+        // Running yesterday, (near) silent today — a pause or a broken link, not a slow drift.
+        if (r.expected.sessions >= 100 && r.prev.sessions >= 100 && r.sessions < 0.1 * Math.min(r.expected.sessions, r.prev.sessions)) disappeared.push({ dim, ...r });
+      }
+    }
+    appeared.sort((a, b) => b.sessions - a.sessions);
+    disappeared.sort((a, b) => b.expected.txns - a.expected.txns);
+
+    const chanList = [...chanSeries.values()].map(c => ({
+      label: c.label, n1: c.byDay.get(day)?.n || 0, c1: c.byDay.get(day)?.conv || 0,
+      prev: c.byDay.get(prevDay) || { n: 0, conv: 0 }, last7: sum(c.byDay, last7Days), base: sum(c.byDay, baseDays),
+    }));
+    // "Expected" here = last week's channel mix at each channel's 28-day CVR —
+    // the same two baselines the rows are scored against.
+    const expectedBasis = (c) => ({ n: c.last7.n, conv: c.base.n > 0 ? c.last7.n * c.base.conv / c.base.n : 0 });
+    const mixRate = { vsYesterday: wcMixRate(chanList, c => c.prev), vsExpected: wcMixRate(chanList, expectedBasis) };
+
+    // ── Headline ─────────────────────────────────────────────────────────
+    // The site's expected CVR is built from the channels (last week's mix at
+    // each channel's 28-day CVR), not the site's own 28-day CVR, so the
+    // headline's actual − expected equals the sum of the channel rows exactly.
+    const siteBase = sum(siteByDay, baseDays);
+    const expBasis = chanList.map(expectedBasis);
+    const expN = expBasis.reduce((s, b) => s + b.n, 0);
+    const siteCvrBasis = expN > 0 ? { n: siteBase.n, conv: siteBase.n * expBasis.reduce((s, b) => s + b.conv, 0) / expN } : siteBase;
+    const siteCal = wcCalibrate([seriesDays.map(d => siteByDay.get(d) || { day: d, n: 0, conv: 0 })], wdIndexByDay);
+    const headline = wcScore({ now: siteByDay.get(day), prev: siteByDay.get(prevDay), wk: siteByDay.get(wkDay), last7: sum(siteByDay, last7Days), base: siteCvrBasis }, wdIndex, siteCal, aov);
+    const aovRow = (d) => aovByDay.get(d) ? { orders: aovByDay.get(d).orders, sales: aovByDay.get(d).sales, aov: aovOf([d]) } : null;
+    headline.web = { now: aovRow(day), prev: aovRow(prevDay), lastWeek: aovRow(wkDay), baseAov, expectedOrders: last7Days.reduce((s, d) => s + (aovByDay.get(d)?.orders || 0), 0) / WC_VOL_DAYS * wdIndex };
+
+    const payload = {
+      date: day,
+      windows: { prevDay, lastWeek: wkDay, volume: { start: shiftDate(day, -WC_VOL_DAYS), end: baseEnd, days: WC_VOL_DAYS }, cvr: { start: baseStart, end: baseEnd, days: WC_BASE_DAYS } },
+      weekdayIndex: wdIndex, aov: baseAov, calibration: { channel: cal, site: siteCal, z: WC_Z }, minSessions: WC_MIN_SESSIONS,
+      headline, mixRate, dims, appeared: appeared.slice(0, 25), disappeared: disappeared.slice(0, 25),
+      errors,
+    };
+    if (!errors.length) setEndpointCache(cacheKey, payload, 10 * 60 * 1000);
+    res.json(payload);
+  } catch (err) {
+    console.error('[what-changed-data] error:', err);
     res.status(500).json({ error: err.message });
   }
 });

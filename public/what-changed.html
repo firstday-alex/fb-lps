@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>What Changed</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    :root { --fb-blue:#1877f2; --positive:#0a8a44; --positive-bg:#e7f5ec; --negative:#c02b2b; --negative-bg:#fbeaea; --neutral-bg:#eef1f6; --text-secondary:#5b6472; --border:#e3e6ea; }
+    body { background:#f0f2f5; margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:#1c1e21; }
+    header { background:var(--fb-blue); color:#fff; padding:16px 24px; display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+    header > div { min-width:0; flex:1 1 260px; }
+    header h1 { font-size:1.25rem; margin:0; }
+    header p { margin:2px 0 0; font-size:0.82rem; color:rgba(255,255,255,0.85); }
+    .wrap { max-width:none; margin:0; padding:20px; }
+    .controls { display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:14px; }
+    .controls label { font-size:0.82rem; font-weight:600; color:var(--text-secondary); display:flex; gap:6px; align-items:center; }
+    .controls input[type=date] { padding:5px 8px; border:1px solid var(--border); border-radius:6px; font-size:0.85rem; }
+    .btn { background:var(--fb-blue); color:#fff; border:0; border-radius:6px; padding:7px 14px; font-weight:600; font-size:0.85rem; cursor:pointer; }
+    .hint { font-size:0.75rem; color:var(--text-secondary); }
+    .meta-line { color:var(--text-secondary); font-size:0.82rem; margin-bottom:14px; }
+    .card { background:#fff; border-radius:12px; padding:20px 22px; box-shadow:0 1px 3px rgba(0,0,0,0.08); margin-bottom:18px; }
+    .card h3 { margin:0 0 4px; font-size:1.05rem; }
+    .card__sub { color:var(--text-secondary); font-size:0.8rem; margin:0 0 12px; max-width:980px; line-height:1.45; }
+    .status { padding:36px; text-align:center; color:var(--text-secondary); }
+    .status.err { color:var(--negative); }
+    .up { color:var(--positive); } .down { color:var(--negative); } .neu { color:var(--text-secondary); }
+
+    /* headline KPIs */
+    .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px; }
+    .kpi { background:#f7f9fc; border-radius:10px; padding:14px 16px; }
+    .kpi__label { font-size:0.7rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--text-secondary); font-weight:700; }
+    .kpi__val { font-size:1.6rem; font-weight:800; margin:4px 0 8px; }
+    .kpi__cmp { display:grid; grid-template-columns:auto 1fr; gap:2px 10px; font-size:0.78rem; }
+    .kpi__cmp span:nth-child(odd) { color:var(--text-secondary); }
+    .verdict { margin-top:14px; font-size:0.9rem; line-height:1.5; max-width:980px; }
+
+    /* badges */
+    .badge { display:inline-block; font-size:0.68rem; font-weight:700; padding:2px 7px; border-radius:10px; margin:1px 3px 1px 0; white-space:nowrap; }
+    .badge.pos { background:var(--positive-bg); color:var(--positive); }
+    .badge.neg { background:var(--negative-bg); color:var(--negative); }
+    .badge.noise { background:var(--neutral-bg); color:var(--text-secondary); }
+    .badge.wd { background:#fff4dc; color:#8a5a00; }
+    .badge.new { background:#e9e4fb; color:#5a3fc0; }
+
+    /* mix vs rate */
+    .mr { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:18px; }
+    .mr h4 { margin:0 0 6px; font-size:0.9rem; }
+    .mr__eq { font-size:0.9rem; margin-bottom:10px; }
+    .mr__eq b { font-size:1.05rem; }
+    .mr table { width:100%; border-collapse:collapse; font-size:0.8rem; }
+    .mr td { padding:4px 6px; border-bottom:1px solid var(--border); }
+    .mr td:last-child { text-align:right; white-space:nowrap; }
+    .mr__h { font-size:0.7rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-secondary); font-weight:700; margin:10px 0 2px; }
+
+    /* movers table */
+    .tabs { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px; }
+    .tabs button { border:1px solid var(--border); background:#fff; border-radius:16px; padding:5px 13px; font-size:0.8rem; font-weight:600; cursor:pointer; color:var(--text-secondary); }
+    .tabs button.on { background:var(--fb-blue); border-color:var(--fb-blue); color:#fff; }
+    .tbl-wrap { overflow-x:auto; }
+    table.wc { width:100%; border-collapse:collapse; font-size:0.82rem; }
+    table.wc th, table.wc td { padding:7px 9px; text-align:right; border-bottom:1px solid var(--border); white-space:nowrap; vertical-align:top; }
+    table.wc th:first-child, table.wc td:first-child { text-align:left; }
+    table.wc td:first-child { white-space:normal; overflow-wrap:anywhere; min-width:240px; max-width:460px; line-height:1.35; }
+    table.wc th { font-size:0.66rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-secondary); font-weight:700; }
+    table.wc tr.noise td { opacity:0.55; }
+    table.wc td small { color:var(--text-secondary); display:block; }
+    table.wc a { color:var(--fb-blue); text-decoration:none; font-size:0.75rem; font-weight:600; }
+    .bar { display:inline-block; height:8px; border-radius:2px; vertical-align:middle; margin-left:6px; }
+    .tbl-foot { font-size:0.75rem; color:var(--text-secondary); margin-top:8px; }
+    .tbl-foot label { cursor:pointer; }
+
+    .two { display:grid; grid-template-columns:repeat(auto-fit,minmax(380px,1fr)); gap:18px; }
+    .method { font-size:0.78rem; color:var(--text-secondary); line-height:1.55; max-width:980px; }
+    .method code { background:var(--neutral-bg); padding:1px 5px; border-radius:4px; }
+    @media (max-width:600px) { .wrap { padding:16px; } .two, .mr { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>What Changed</h1>
+    <p>Every channel, campaign, landing page and ad, scored against what it normally does on this weekday and ranked by transactions gained or lost</p>
+  </div>
+</header>
+<div class="wrap">
+  <div class="controls">
+    <label>Day <input type="date" id="day-input"></label>
+    <button class="btn" id="btn-load">Load</button>
+    <span class="hint">Defaults to yesterday (Pacific). Expected = trailing 7-day volume × weekday pattern, 28-day CVR.</span>
+  </div>
+  <div class="meta-line" id="meta-line"></div>
+  <div id="out"><div class="status">Loading…</div></div>
+</div>
+
+<script>
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmtN = (n) => n == null ? '–' : Math.round(n).toLocaleString();
+// A row with 10 sessions last week reads as +16620% today; past 10× the number
+// says nothing more than "from almost nothing".
+const fmtPct = (p, d = 0) => p == null || !isFinite(p) ? '–' : p > 9.99 ? '>+999%' : (p >= 0 ? '+' : '') + (p * 100).toFixed(d) + '%';
+const fmtCvr = (p) => p == null ? '–' : (p * 100).toFixed(2) + '%';
+const fmtPts = (p) => p == null ? '–' : (p >= 0 ? '+' : '') + (p * 100).toFixed(2) + 'pp';
+const fmtTx = (t) => (t >= 0 ? '+' : '−') + Math.abs(t).toFixed(Math.abs(t) < 10 ? 1 : 0);
+const fmtUsd = (v) => v == null ? '–' : (v >= 0 ? '+' : '−') + '$' + Math.abs(Math.round(v)).toLocaleString();
+const cls = (v) => v == null || Math.abs(v) < 1e-9 ? 'neu' : v > 0 ? 'up' : 'down';
+const pctSpan = (p, d) => `<span class="${cls(p)}">${fmtPct(p, d)}</span>`;
+
+// Which deeper tab explains a row. Each target reads ?start&end&autoload via
+// /deep-link.js, so the link lands on the same day, already loaded.
+const GOOGLE = new Set(['google', 'youtube', 'demand-gen']);
+const OWNED = new Set(['klaviyo', 'attentive']);
+function drillLink(row, dim, day) {
+  const qs = `?start=${day}&end=${day}&autoload=1`;
+  if (dim === 'lp') return { href: '/lp-by-channel.html' + qs, label: 'Landing pages →' };
+  const src = row.source || '';
+  if (src === 'facebook') return { href: '/meta-cvr-impact.html' + qs, label: 'Meta CVR →' };
+  if (GOOGLE.has(src)) return { href: '/google-cvr-impact.html' + qs, label: 'Google CVR →' };
+  if (OWNED.has(src)) return { href: '/owned-cvr-impact.html' + qs, label: 'Email & SMS →' };
+  return { href: '/conversion-impact.html' + qs, label: 'By source →' };
+}
+
+function badges(r, z) {
+  const out = [];
+  if (r.signal.isNew) out.push('<span class="badge new" title="No CVR history in the prior 28 days">new</span>');
+  if (r.signal.volume) out.push(`<span class="badge ${r.z.volume > 0 ? 'pos' : 'neg'}" title="Sessions vs expected, z = ${r.z.volume.toFixed(1)}">volume ${r.z.volume > 0 ? '↑' : '↓'}</span>`);
+  if (r.signal.rate) out.push(`<span class="badge ${r.z.rate > 0 ? 'pos' : 'neg'}" title="CVR vs 28-day CVR, z = ${r.z.rate.toFixed(1)}">CVR ${r.z.rate > 0 ? '↑' : '↓'}</span>`);
+  if (r.signal.weekdayPattern) out.push('<span class="badge wd" title="Moved 20%+ vs yesterday, but is where this weekday normally sits">weekday pattern</span>');
+  if (!r.signal.volume && !r.signal.rate && !r.signal.isNew) out.push(`<span class="badge noise" title="Both moves are within |z| < ${z} of normal day-to-day noise">within noise</span>`);
+  return out.join('');
+}
+const isSignal = (r) => r.signal.volume || r.signal.rate || r.signal.isNew;
+
+// ── Headline ───────────────────────────────────────────────────────────────
+function renderHeadline(d) {
+  const h = d.headline, w = h.web || {};
+  const kpi = (label, val, rows) => `<div class="kpi"><div class="kpi__label">${label}</div><div class="kpi__val">${val}</div><div class="kpi__cmp">${rows.map(([k, v]) => `<span>${k}</span><span>${v}</span>`).join('')}</div></div>`;
+  const pctOf = (a, b) => (a != null && b) ? a / b - 1 : null;
+  const sessZ = h.z.volume, cvrZ = h.z.rate;
+  const noiseTag = (z) => z == null ? '' : Math.abs(z) >= d.calibration.z ? `<span class="badge ${z > 0 ? 'pos' : 'neg'}">beyond noise</span>` : '<span class="badge noise">within noise</span>';
+  const html = `<div class="kpis">
+    ${kpi('Sessions', fmtN(h.sessions), [
+      ['vs yesterday', pctSpan(h.prev.pct, 1)],
+      ['vs same day last wk', pctSpan(h.lastWeek.pct, 1)],
+      ['vs expected', `${pctSpan(h.expected.pct, 1)} <small class="neu">(${fmtN(h.expected.sessions)})</small> ${noiseTag(sessZ)}`],
+    ])}
+    ${kpi('Conversion rate', fmtCvr(h.cvr), [
+      ['vs yesterday', `<span class="${cls(h.cvr - h.prev.cvr)}">${fmtPts(h.cvr - h.prev.cvr)}</span>`],
+      ['vs same day last wk', `<span class="${cls(h.cvr - h.lastWeek.cvr)}">${fmtPts(h.cvr - h.lastWeek.cvr)}</span>`],
+      ['vs expected', `<span class="${cls(h.cvr - h.expected.cvr)}">${fmtPts(h.cvr - h.expected.cvr)}</span> <small class="neu">(${fmtCvr(h.expected.cvr)})</small> ${noiseTag(cvrZ)}`],
+    ])}
+    ${kpi('Est. transactions', fmtN(h.txns), [
+      ['vs expected', `<span class="${cls(h.impact.txns)}">${fmtTx(h.impact.txns)}</span> <small class="neu">(${fmtN(h.expected.txns)})</small>`],
+      ['from volume', `<span class="${cls(h.impact.volumeTxns)}">${fmtTx(h.impact.volumeTxns)}</span>`],
+      ['from CVR', `<span class="${cls(h.impact.rateTxns)}">${fmtTx(h.impact.rateTxns)}</span>`],
+    ])}
+    ${kpi('Web orders · AOV', w.now ? `${fmtN(w.now.orders)} · $${w.now.aov.toFixed(2)}` : '–', [
+      ['orders vs yesterday', w.now && w.prev ? pctSpan(pctOf(w.now.orders, w.prev.orders), 1) : '–'],
+      ['orders vs expected', w.now ? `${pctSpan(pctOf(w.now.orders, w.expectedOrders), 1)} <small class="neu">(${fmtN(w.expectedOrders)})</small>` : '–'],
+      ['AOV vs 28-day', w.now && w.baseAov ? pctSpan(pctOf(w.now.aov, w.baseAov), 1) : '–'],
+    ])}
+  </div>`;
+
+  // One-line read: lead with whether the day is actually unusual, so a big
+  // day-over-day number that is just the weekday pattern is called that.
+  const parts = [];
+  const big = (z) => z != null && Math.abs(z) >= d.calibration.z;
+  if (!big(sessZ) && !big(cvrZ)) parts.push(`<b>Site-wide, ${esc(d.date)} was a normal day</b> for its weekday: sessions and CVR are both within normal day-to-day noise of expected.`);
+  else parts.push(`<b>Site-wide, ${esc(d.date)} was unusual:</b> ${[big(sessZ) ? `sessions ${fmtPct(h.expected.pct, 1)} vs expected` : null, big(cvrZ) ? `CVR ${fmtPts(h.cvr - h.expected.cvr)} vs expected` : null].filter(Boolean).join(' and ')}.`);
+  if (h.prev.pct != null && Math.abs(h.prev.pct) >= 0.1 && !big(sessZ)) parts.push(`The ${fmtPct(h.prev.pct, 0)} move in sessions vs yesterday is mostly the weekday pattern.`);
+  const cnt = (k) => (d.dims[k]?.rows || []).filter(isSignal).length;
+  parts.push(`Beyond noise underneath: ${cnt('channel')} channels, ${cnt('campaign')} campaigns, ${cnt('lp')} landing pages, ${cnt('ad')} ads (ad flags run lenient; see the method note). The table below ranks them by impact.`);
+  return `<div class="card"><h3>Headline</h3><p class="card__sub">Yesterday is ${esc(d.windows.prevDay)}; same day last week is ${esc(d.windows.lastWeek)}. Expected uses ${esc(d.windows.volume.start)}–${esc(d.windows.volume.end)} volume × weekday index ${d.weekdayIndex.toFixed(2)} and ${esc(d.windows.cvr.start)}–${esc(d.windows.cvr.end)} CVR.</p>${html}<div class="verdict">${parts.join(' ')}</div></div>`;
+}
+
+// ── Mix vs rate ────────────────────────────────────────────────────────────
+function renderMixRate(d) {
+  const block = (title, m) => {
+    if (!m) return `<div><h4>${title}</h4><div class="neu">Not enough data.</div></div>`;
+    const rows = (list, k) => list.filter(i => Math.abs(i.pts) >= 0.00001).map(i => `<tr><td>${esc(i.label)} <small class="neu">share ${(i.shareBase * 100).toFixed(1)}% → ${(i.shareNow * 100).toFixed(1)}%</small></td><td class="${cls(i.pts)}">${fmtPts(i.pts)}</td></tr>`).join('');
+    return `<div><h4>${title}</h4>
+      <div class="mr__eq">CVR ${fmtCvr(m.cvrBase)} → ${fmtCvr(m.cvrNow)}: <b class="${cls(m.delta)}">${fmtPts(m.delta)}</b> = <span class="${cls(m.rate)}">${fmtPts(m.rate)}</span> rate + <span class="${cls(m.mix)}">${fmtPts(m.mix)}</span> mix</div>
+      <div class="mr__h">Rate: channels converting differently</div><table>${rows(m.topRate)}</table>
+      <div class="mr__h">Mix: traffic shifting between channels</div><table>${rows(m.topMix)}</table></div>`;
+  };
+  return `<div class="card"><h3>Why blended CVR moved: rate or mix?</h3>
+    <p class="card__sub"><b>Rate</b> is channels converting better or worse. <b>Mix</b> is traffic moving toward channels that convert above or below average; a below-average channel gaining share reads negative. The two parts add up to the total. If mix dominates, the fix is in budget or traffic, not on the site.</p>
+    <div class="mr">${block('vs yesterday', d.mixRate.vsYesterday)}${block('vs expected (last week\'s mix at 28-day CVRs)', d.mixRate.vsExpected)}</div></div>`;
+}
+
+// ── Movers ─────────────────────────────────────────────────────────────────
+const DIM_LABEL = { channel: 'Channels', campaign: 'Campaigns', lp: 'Landing pages', ad: 'Ads' };
+let state = { dim: 'campaign', showNoise: false, data: null };
+try { const s = JSON.parse(localStorage.getItem('wc:view:v1') || '{}'); if (DIM_LABEL[s.dim]) state.dim = s.dim; state.showNoise = !!s.showNoise; } catch (e) {}
+const saveView = () => { try { localStorage.setItem('wc:view:v1', JSON.stringify({ dim: state.dim, showNoise: state.showNoise })); } catch (e) {} };
+
+function rowName(r, dim) {
+  if (dim === 'channel') return esc(r.label);
+  const src = r.source ? `<small>${esc(r.source)}</small>` : '';
+  return `${esc(r.label)}${src}`;
+}
+
+function renderMovers() {
+  const d = state.data, dim = state.dim, D = d.dims[dim] || { rows: [] };
+  const all = D.rows || [];
+  const shown = (state.showNoise ? all : all.filter(isSignal)).slice(0, 40);
+  const hidden = all.length - all.filter(isSignal).length;
+  const maxImp = Math.max(1, ...shown.map(r => Math.abs(r.impact.txns)));
+  const tabs = Object.keys(DIM_LABEL).map(k => `<button data-dim="${k}" class="${k === dim ? 'on' : ''}">${DIM_LABEL[k]} <small>(${(d.dims[k]?.rows || []).filter(isSignal).length})</small></button>`).join('');
+  const body = shown.map(r => {
+    const link = drillLink(r, dim, d.date);
+    const w = Math.round(Math.abs(r.impact.txns) / maxImp * 60);
+    return `<tr class="${isSignal(r) ? '' : 'noise'}">
+      <td>${rowName(r, dim)}<div>${badges(r, d.calibration.z)}</div></td>
+      <td>${fmtN(r.sessions)}<small>exp ${fmtN(r.expected.sessions)}</small></td>
+      <td>${pctSpan(r.expected.pct)}</td>
+      <td>${pctSpan(r.prev.pct)}<small>${fmtN(r.prev.sessions)}</small></td>
+      <td>${pctSpan(r.lastWeek.pct)}<small>${fmtN(r.lastWeek.sessions)}</small></td>
+      <td>${fmtCvr(r.cvr)}<small>28d ${fmtCvr(r.expected.cvr)}</small></td>
+      <td><b class="${cls(r.impact.txns)}">${fmtTx(r.impact.txns)}</b><span class="bar" style="width:${w}px;background:${r.impact.txns >= 0 ? 'var(--positive)' : 'var(--negative)'}"></span><small>vol ${fmtTx(r.impact.volumeTxns)} · CVR ${fmtTx(r.impact.rateTxns)}</small></td>
+      <td class="${cls(r.impact.dollars)}">${fmtUsd(r.impact.dollars)}</td>
+      <td><a href="${link.href}">${link.label}</a></td>
+    </tr>`;
+  }).join('');
+  const trunc = D.truncatedBelow && typeof D.truncatedBelow === 'object' && Object.keys(D.truncatedBelow).length
+    ? ` Some windows hit the 5,000-row cap; rows missing from them had ≤ ${Math.max(...Object.values(D.truncatedBelow))} sessions there.` : '';
+  return `<div class="card" id="movers"><h3>Biggest shifts</h3>
+    <p class="card__sub">Ranked by estimated transactions vs expected: volume (sessions vs expected × 28-day CVR) plus CVR (sessions × CVR change). Dollars use the 28-day web AOV ($${(d.aov || 0).toFixed(2)}). Faded rows are within normal noise.</p>
+    <div class="tabs">${tabs}</div>
+    ${D.error ? `<div class="status err">${esc(D.error)}</div>` : `<div class="tbl-wrap"><table class="wc"><thead><tr>
+      <th>${DIM_LABEL[dim].replace(/s$/, '')}</th><th>Sessions</th><th>vs exp</th><th>vs yday</th><th>vs last wk</th><th>CVR</th><th>Impact (txns)</th><th>≈ $</th><th></th>
+    </tr></thead><tbody>${body || '<tr><td colspan="9" class="neu">Nothing beyond noise at this level.</td></tr>'}</tbody></table></div>`}
+    <div class="tbl-foot"><label><input type="checkbox" id="show-noise" ${state.showNoise ? 'checked' : ''}> Show rows within noise (${hidden} hidden)</label> · top 40 shown · rows need ≥ ${d.minSessions} actual or expected sessions.${trunc}</div>
+  </div>`;
+}
+
+// ── Appeared / disappeared ─────────────────────────────────────────────────
+function renderEntries(d) {
+  const DIM1 = { campaign: 'campaign', lp: 'landing page', ad: 'ad' };
+  const list = (rows, kind) => rows.length ? `<table class="wc"><thead><tr><th>${kind === 'new' ? 'Started getting traffic' : 'Stopped getting traffic'}</th><th>Today</th><th>${kind === 'new' ? 'Expected' : 'Yesterday'}</th><th>${kind === 'new' ? 'CVR' : 'Exp. txns lost'}</th></tr></thead><tbody>${rows.map(r => `<tr>
+      <td>${esc(r.label)}<small>${DIM1[r.dim]}${r.source ? ' · ' + esc(r.source) : ''}</small></td>
+      <td>${fmtN(r.sessions)}</td>
+      <td>${kind === 'new' ? fmtN(r.expected.sessions) : fmtN(r.prev.sessions)}</td>
+      <td>${kind === 'new' ? fmtCvr(r.cvr) : `<span class="down">${fmtN(r.expected.txns)}</span>`}</td></tr>`).join('')}</tbody></table>`
+    : `<div class="neu" style="font-size:0.85rem">None.</div>`;
+  return `<div class="card"><h3>Appeared & disappeared</h3>
+    <p class="card__sub">Many day-over-day moves are just launches and pauses. <b>Appeared</b>: 100+ sessions today, and under 10% of that expected from last week. <b>Disappeared</b>: 100+ sessions yesterday and expected, under 10% of that today, which usually means a pause, an edited UTM or a broken link.</p>
+    <div class="two"><div class="tbl-wrap">${list(d.appeared, 'new')}</div><div class="tbl-wrap">${list(d.disappeared, 'gone')}</div></div></div>`;
+}
+
+function renderMethod(d) {
+  const c = d.calibration.channel;
+  return `<div class="card"><h3>How "beyond noise" is decided</h3><div class="method">
+    A move counts as beyond noise when it is at least ${d.calibration.z} standard deviations from expected (|z| ≥ ${d.calibration.z}).
+    The standard deviation is ordinary sampling error plus the store's own extra day-to-day swing, measured per channel over the last 28 days.
+    Currently that extra swing is about <b>${Math.round(Math.sqrt(c.cVol) * 100)}%</b> on sessions and <b>${Math.round(Math.sqrt(c.tau2) * 100)}%</b> on CVR (median across ${c.seriesUsed.volume} channels).
+    Landing pages and ads use the channel figure too; their real swings are probably larger, so read a borderline flag there as borderline.
+    Numbers are Shopify sessions and Shopify-attributed CVR, which runs below Ads Manager by design. Transactions are estimated as sessions × CVR.
+  </div></div>`;
+}
+
+function render() {
+  const d = state.data;
+  document.getElementById('out').innerHTML = renderHeadline(d) + renderMovers() + renderMixRate(d) + renderEntries(d) + renderMethod(d);
+  if (d.errors?.length) document.getElementById('meta-line').textContent += ` · ${d.errors.length} quer${d.errors.length === 1 ? 'y' : 'ies'} failed; affected sections say so.`;
+}
+
+// Tabs and the noise toggle re-render only the movers card.
+document.getElementById('out').addEventListener('click', (e) => {
+  const b = e.target.closest('.tabs button');
+  if (!b) return;
+  state.dim = b.dataset.dim; saveView();
+  document.getElementById('movers').outerHTML = renderMovers();
+});
+document.getElementById('out').addEventListener('change', (e) => {
+  if (e.target.id !== 'show-noise') return;
+  state.showNoise = e.target.checked; saveView();
+  document.getElementById('movers').outerHTML = renderMovers();
+});
+
+async function load() {
+  const day = document.getElementById('day-input').value;
+  const out = document.getElementById('out');
+  out.innerHTML = '<div class="status">Loading… (about 15 Shopify queries, a few seconds)</div>';
+  document.getElementById('meta-line').textContent = '';
+  try {
+    const r = await fetch('/api/what-changed-data' + (day ? `?date=${day}` : ''));
+    const d = await r.json();
+    if (!r.ok || d.error) throw new Error(d.error || r.statusText);
+    state.data = d;
+    document.getElementById('day-input').value = d.date;
+    const dow = new Date(d.date + 'T00:00:00Z').toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' });
+    document.getElementById('meta-line').textContent = `${dow} ${d.date}`;
+    history.replaceState(null, '', `?date=${d.date}`);
+    render();
+  } catch (err) {
+    out.innerHTML = `<div class="status err">Couldn't load: ${esc(err.message)}</div>`;
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const qd = new URLSearchParams(location.search).get('date');
+  if (qd && /^\d{4}-\d{2}-\d{2}$/.test(qd)) document.getElementById('day-input').value = qd;
+  document.getElementById('btn-load').addEventListener('click', load);
+  load();
+});
+</script>
+<script src="/app-nav.js" defer></script>
+</body>
+</html>
