@@ -82,6 +82,14 @@
     .opp-svg circle { stroke:#fff; stroke-width:2px; cursor:default; }
     #opp-tip { position:fixed; z-index:9999; max-width:340px; background:#1c1e21; color:#fff; font-size:0.74rem; line-height:1.45; padding:8px 10px; border-radius:8px; pointer-events:none; display:none; overflow-wrap:anywhere; }
     .opp-flag { background:#fff4dc; border-radius:8px; padding:8px 12px; font-size:0.8rem; margin:8px 0; color:#5c3d00; }
+    /* pacing */
+    .pace-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:18px; }
+    .pace-grid h4 { margin:0 0 2px; font-size:0.9rem; }
+    .pace-stat { font-size:0.82rem; color:var(--text-secondary); margin-bottom:6px; line-height:1.45; }
+    .pace-svg { display:block; }
+    .pace-svg text { font-size:11px; fill:var(--text-secondary); }
+    .pace-legend { display:flex; gap:14px; flex-wrap:wrap; font-size:0.75rem; color:var(--text-secondary); margin-top:4px; }
+    .pace-legend i { display:inline-block; width:14px; height:3px; margin-right:5px; vertical-align:3px; }
     .method { font-size:0.78rem; color:var(--text-secondary); line-height:1.55; max-width:980px; }
     .method code { background:var(--neutral-bg); padding:1px 5px; border-radius:4px; }
     @media (max-width:600px) { .wrap { padding:16px; } .two, .mr { grid-template-columns:1fr; } }
@@ -101,6 +109,7 @@
     <span class="hint">Defaults to yesterday (Pacific). Expected = trailing 7-day volume × weekday pattern, 28-day CVR.</span>
   </div>
   <div class="meta-line" id="meta-line"></div>
+  <div id="pace"></div>
   <div id="out"><div class="status">Loading…</div></div>
   <div id="opp"></div>
   <div id="opp-tip"></div>
@@ -381,6 +390,80 @@ document.getElementById('out').addEventListener('change', (e) => {
   document.getElementById('movers').outerHTML = renderMovers();
 });
 
+// ── Today so far ────────────────────────────────────────────────────────────
+// Independent of the Day picker: it is always today, through the last full hour.
+let pace = null;
+const hourLabel = (h) => (h % 12 || 12) + (h < 12 ? 'am' : 'pm');
+function paceChart(key, W) {
+  const H = 190, L = 52, R = 10, T = 10, B = 26;
+  const hs = pace.hours, top = Math.max(...hs.map(h => Math.max(h.ref[key].max, h.today ? h.today[key] : 0))) * 1.05 || 1;
+  const X = (h) => L + h / 23 * (W - L - R), Y = (v) => T + (1 - v / top) * (H - T - B);
+  const band = hs.map(h => `${X(h.hour)},${Y(h.ref[key].max)}`).join(' ') + ' ' + [...hs].reverse().map(h => `${X(h.hour)},${Y(h.ref[key].min)}`).join(' ');
+  const mean = hs.map(h => `${X(h.hour)},${Y(h.ref[key].mean)}`).join(' ');
+  const todayPts = hs.filter(h => h.today).map(h => `${X(h.hour)},${Y(h.today[key])}`).join(' ');
+  const grid = [0, 0.5, 1].map(f => `<line x1="${L}" x2="${W - R}" y1="${Y(top / 1.05 * f)}" y2="${Y(top / 1.05 * f)}" stroke="#eef0f3"/><text x="${L - 6}" y="${Y(top / 1.05 * f) + 4}" text-anchor="end">${fmtN(top / 1.05 * f)}</text>`).join('')
+    + [0, 6, 12, 18, 23].map(h => `<text x="${X(h)}" y="${H - 8}" text-anchor="${h === 23 ? 'end' : 'middle'}">${hourLabel(h)}</text>`).join('');
+  const last = hs[pace.throughHour];
+  return `<svg class="pace-svg" data-key="${key}" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Cumulative ${key} today vs the last four same weekdays">
+    ${grid}
+    <polygon points="${band}" fill="#e6e9ee"/>
+    <polyline points="${mean}" fill="none" stroke="#8a93a0" stroke-width="2" stroke-dasharray="4 3"/>
+    <polyline points="${todayPts}" fill="none" stroke="#1877f2" stroke-width="2"/>
+    <circle cx="${X(last.hour)}" cy="${Y(last.today[key])}" r="4" fill="#1877f2" stroke="#fff" stroke-width="2"/>
+    <line class="pace-x" x1="0" x2="0" y1="${T}" y2="${H - B}" stroke="#5b6472" stroke-width="1" style="display:none"/>
+    <rect x="${L}" y="${T}" width="${W - L - R}" height="${H - T - B}" fill="transparent" data-l="${L}" data-w="${W - L - R}"/>
+  </svg>`;
+}
+function renderPace() {
+  const el = document.getElementById('pace');
+  if (!pace) return;
+  if (pace.error) { el.innerHTML = `<div class="card"><h3>Today so far</h3><div class="status err">Couldn't load: ${esc(pace.error)}</div></div>`; return; }
+  if (pace.tooEarly) { el.innerHTML = ''; return; }
+  const dow = new Date(pace.today + 'T00:00:00Z').toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' });
+  const stat = (m, noun) => {
+    const where = m.outsideBand ? `<b class="${m.outsideBand === 'above' ? 'up' : 'down'}">${m.outsideBand} the normal range</b>` : 'inside the normal range';
+    return `<b>${fmtN(m.now)}</b> vs ${fmtN(m.expected)} on a typical ${dow} (${pctSpan(m.pct, 1)}), ${where} of ${fmtN(m.min)}–${fmtN(m.max)}. On pace for <b>${fmtN(m.projected)}</b> ${noun} vs a typical ${fmtN(m.typicalDay)}.`;
+  };
+  el.innerHTML = `<div class="card"><h3>Today so far: ${dow} ${esc(pace.today)}, through ${hourLabel(pace.throughHour + 1)}</h3>
+    <p class="card__sub">Running totals vs the same hours on the last four ${dow}s (${pace.refDays.map(esc).join(', ')}). The gray band is their full range; leaving it is the signal worth a look. CVR so far ${fmtCvr(pace.cvr.now)} vs ${fmtCvr(pace.cvr.expected)}.</p>
+    <div class="pace-grid">
+      <div><h4>Sessions</h4><div class="pace-stat">${stat(pace.sessions, 'sessions')}</div><div class="pace-plot" data-key="sessions"></div></div>
+      <div><h4>Est. transactions</h4><div class="pace-stat">${stat(pace.txns, 'transactions')}</div><div class="pace-plot" data-key="txns"></div></div>
+    </div>
+    <div class="pace-legend"><span><i style="background:#1877f2"></i>Today</span><span><i style="background:#8a93a0"></i>Average of last four ${dow}s</span><span><i style="background:#e6e9ee;height:10px;vertical-align:-1px"></i>Their range</span></div></div>`;
+  drawPace();
+}
+function drawPace() {
+  document.querySelectorAll('.pace-plot').forEach(host => { host.innerHTML = paceChart(host.dataset.key, Math.max(280, host.clientWidth)); });
+}
+// Crosshair + tooltip: nearest hour to the pointer.
+document.getElementById('pace').addEventListener('mousemove', (e) => {
+  const svg = e.target.closest('.pace-svg');
+  if (!svg || !pace) { oppTip.style.display = 'none'; return; }
+  const rect = svg.querySelector('rect'), box = svg.getBoundingClientRect();
+  const L = +rect.dataset.l, w = +rect.dataset.w;
+  const h = Math.max(0, Math.min(23, Math.round((e.clientX - box.left - L) / w * 23)));
+  const x = L + h / 23 * w, line = svg.querySelector('.pace-x');
+  line.setAttribute('x1', x); line.setAttribute('x2', x); line.style.display = '';
+  const key = svg.dataset.key, row = pace.hours[h];
+  oppTip.innerHTML = `<b>Through ${hourLabel(h + 1)}</b><br>Today: ${row.today ? fmtN(row.today[key]) : '–'}<br>Typical: ${fmtN(row.ref[key].mean)} (range ${fmtN(row.ref[key].min)}–${fmtN(row.ref[key].max)})`;
+  oppTip.style.display = 'block';
+  oppTip.style.left = Math.min(e.clientX + 14, innerWidth - 350) + 'px';
+  oppTip.style.top = (e.clientY + 14) + 'px';
+});
+document.getElementById('pace').addEventListener('mouseleave', () => {
+  oppTip.style.display = 'none';
+  document.querySelectorAll('.pace-x').forEach(l => { l.style.display = 'none'; });
+});
+async function loadPace() {
+  try {
+    const r = await fetch('/api/pacing-data');
+    const d = await r.json();
+    pace = r.ok && !d.error ? d : { error: d.error || r.statusText };
+  } catch (err) { pace = { error: err.message }; }
+  renderPace();
+}
+
 // ── Opportunities (Meta paid, 28 days) ─────────────────────────────────────
 // Structural, not day-over-day, so it loads separately and never holds up the
 // movers above.
@@ -443,7 +526,7 @@ function drawOppPlot() {
   host.innerHTML = oppScatter(opp.data[opp.dim], opp.data.cvr, Math.max(280, host.clientWidth));
 }
 let _oppResize;
-addEventListener('resize', () => { clearTimeout(_oppResize); _oppResize = setTimeout(drawOppPlot, 150); });
+addEventListener('resize', () => { clearTimeout(_oppResize); _oppResize = setTimeout(() => { drawOppPlot(); if (pace && !pace.error && !pace.tooEarly) drawPace(); }, 150); });
 
 document.getElementById('opp').addEventListener('click', (e) => {
   const b = e.target.closest('#opp-tabs button');
@@ -497,7 +580,7 @@ async function loadSpend(day) {
 async function load() {
   const day = document.getElementById('day-input').value;
   const out = document.getElementById('out');
-  out.innerHTML = '<div class="status">Loading… (about 15 Shopify queries, a few seconds)</div>';
+  out.innerHTML = '<div class="status">Loading… (about 20 Shopify queries, a few seconds)</div>';
   document.getElementById('meta-line').textContent = '';
   try {
     const r = await fetch('/api/what-changed-data' + (day ? `?date=${day}` : ''));
@@ -521,6 +604,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (qd && /^\d{4}-\d{2}-\d{2}$/.test(qd)) document.getElementById('day-input').value = qd;
   document.getElementById('btn-load').addEventListener('click', load);
   load();
+  loadPace();
 });
 </script>
 <script src="/app-nav.js" defer></script>

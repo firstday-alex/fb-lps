@@ -7024,6 +7024,98 @@ app.get('/api/what-changed-spend', requireAuth, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────
+// PACING — today so far vs the last four same weekdays, hour by hour
+// ─────────────────────────────────────────────
+// What Changed reads a finished day; this catches a problem at 11am instead.
+// Today's cumulative sessions and transactions through the last COMPLETED hour
+// are set against the same hours on the previous four same weekdays: their mean
+// is the expected path, their min–max is the band of normal (four days is a
+// rough band — wide enough to be honest, narrow enough to matter). The day-end
+// projection divides today's running total by the share of a typical day that
+// had passed by this hour on those reference days.
+//
+// ShopifyQL's `hour` buckets are UTC timestamps; they're mapped to the shop's
+// local hour with Intl so DST changes (2026-11-01) land correctly.
+function localDayHour(isoUtc, tz) {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' })
+    .formatToParts(new Date(isoUtc));
+  const get = (t) => parts.find(p => p.type === t)?.value;
+  return { day: `${get('year')}-${get('month')}-${get('day')}`, hour: parseInt(get('hour'), 10) };
+}
+
+app.get('/api/pacing-data', async (req, res) => {
+  if (!SHOPIFY_URL || !SHOPIFY_TOKEN) return res.status(500).json({ error: 'Shopify credentials not configured' });
+  const tz = process.env.DAILY_REPORT_TZ || 'America/Los_Angeles';
+  const today = shiftDate(ptYesterdayDate(), 1);
+  const refDays = [7, 14, 21, 28].map(k => shiftDate(today, -k));
+  const nowLocal = localDayHour(new Date().toISOString(), tz);
+  // Through the last completed local hour; the current hour is partial.
+  const throughHour = nowLocal.hour - 1;
+  const cacheKey = endpointCacheKey('pacing', { today, throughHour });
+  const cached = getEndpointCache(cacheKey);
+  if (cached) return res.json(cached);
+  if (throughHour < 0) return res.json({ today, throughHour, tooEarly: true });
+
+  const q = (since, until) => `FROM sessions SHOW sessions, conversion_rate GROUP BY hour SINCE ${since} UNTIL ${until} ORDER BY hour ASC LIMIT ${WC_LIMIT}`;
+  try {
+    // Reference window padded a day each side: UTC hour buckets straddle local days.
+    const [todayR, refR] = await wcRunQueries([q(today, today), q(shiftDate(refDays[3], -1), shiftDate(refDays[0], 1))], 2);
+    if (todayR.error) throw new Error(todayR.error);
+    if (refR.error) throw new Error(refR.error);
+    const hourly = (table) => {
+      const g = qlAccessor(table.columns), out = new Map();
+      for (const r of table.rows) {
+        const { day, hour } = localDayHour(String(g.get(r, g.idx('hour'))), tz);
+        const n = QL_NUM(g.get(r, g.idx('sessions')));
+        const k = day + ' ' + hour, cur = out.get(k) || { n: 0, conv: 0 };
+        cur.n += n; cur.conv += n * QL_NUM(g.get(r, g.idx('conversion_rate')));
+        out.set(k, cur);
+      }
+      return out;
+    };
+    const cumulative = (map, day) => {
+      let n = 0, conv = 0;
+      return Array.from({ length: 24 }, (_, h) => { const c = map.get(day + ' ' + h); if (c) { n += c.n; conv += c.conv; } return { n, conv }; });
+    };
+    const todayCum = cumulative(hourly(todayR.table), today);
+    const refMap = hourly(refR.table);
+    const refCum = refDays.map(d => ({ day: d, cum: cumulative(refMap, d) }));
+    const hours = Array.from({ length: 24 }, (_, h) => {
+      const ref = refCum.map(r => r.cum[h]);
+      const sess = ref.map(x => x.n), tx = ref.map(x => x.conv);
+      return {
+        hour: h,
+        today: h <= throughHour ? { sessions: todayCum[h].n, txns: todayCum[h].conv } : null,
+        ref: { sessions: { mean: wcMean(sess), min: Math.min(...sess), max: Math.max(...sess) }, txns: { mean: wcMean(tx), min: Math.min(...tx), max: Math.max(...tx) } },
+      };
+    });
+    const h = hours[throughHour];
+    const share = (k) => wcMean(refCum.map(r => r.cum[23][k] > 0 ? r.cum[throughHour][k] / r.cum[23][k] : 0));
+    const fullDay = (k) => wcMean(refCum.map(r => r.cum[23][k]));
+    const metric = (k, key) => {
+      const now = h.today[key], ref = h.ref[key];
+      const s = share(k);
+      return {
+        now, expected: ref.mean, min: ref.min, max: ref.max, pct: ref.mean > 0 ? now / ref.mean - 1 : null,
+        outsideBand: now < ref.min ? 'below' : now > ref.max ? 'above' : null,
+        projected: s > 0 ? now / s : null, typicalDay: fullDay(k),
+      };
+    };
+    const payload = {
+      today, tz, throughHour, refDays,
+      sessions: metric('n', 'sessions'), txns: metric('conv', 'txns'),
+      cvr: { now: h.today.sessions > 0 ? h.today.txns / h.today.sessions : null, expected: h.ref.sessions.mean > 0 ? h.ref.txns.mean / h.ref.sessions.mean : null },
+      hours,
+    };
+    setEndpointCache(cacheKey, payload, 5 * 60 * 1000);
+    res.json(payload);
+  } catch (err) {
+    console.error('[pacing-data] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────
 // OPPORTUNITIES — where Meta paid traffic converts well or badly (28 days)
 // ─────────────────────────────────────────────
 // The structural companion to What Changed: not "what moved yesterday" but
