@@ -72,6 +72,16 @@
     .tbl-foot label { cursor:pointer; }
 
     .two { display:grid; grid-template-columns:repeat(auto-fit,minmax(380px,1fr)); gap:18px; }
+    /* opportunities — blue/orange pass the CVD validator against white; the
+       app's green/red pair does not, so it isn't used for identity here */
+    :root { --opp-scale:#1877f2; --opp-fix:#d9730d; --opp-rest:#b8bfc8; }
+    .opp-legend { display:flex; gap:16px; flex-wrap:wrap; font-size:0.78rem; color:var(--text-secondary); margin:4px 0 6px; }
+    .opp-legend i { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:5px; vertical-align:-1px; }
+    .opp-svg { display:block; }
+    .opp-svg text { font-size:11px; fill:var(--text-secondary); }
+    .opp-svg circle { stroke:#fff; stroke-width:2px; cursor:default; }
+    #opp-tip { position:fixed; z-index:9999; max-width:340px; background:#1c1e21; color:#fff; font-size:0.74rem; line-height:1.45; padding:8px 10px; border-radius:8px; pointer-events:none; display:none; overflow-wrap:anywhere; }
+    .opp-flag { background:#fff4dc; border-radius:8px; padding:8px 12px; font-size:0.8rem; margin:8px 0; color:#5c3d00; }
     .method { font-size:0.78rem; color:var(--text-secondary); line-height:1.55; max-width:980px; }
     .method code { background:var(--neutral-bg); padding:1px 5px; border-radius:4px; }
     @media (max-width:600px) { .wrap { padding:16px; } .two, .mr { grid-template-columns:1fr; } }
@@ -92,6 +102,8 @@
   </div>
   <div class="meta-line" id="meta-line"></div>
   <div id="out"><div class="status">Loading…</div></div>
+  <div id="opp"></div>
+  <div id="opp-tip"></div>
 </div>
 
 <script>
@@ -309,6 +321,103 @@ document.getElementById('out').addEventListener('change', (e) => {
   document.getElementById('movers').outerHTML = renderMovers();
 });
 
+// ── Opportunities (Meta paid, 28 days) ─────────────────────────────────────
+// Structural, not day-over-day, so it loads separately and never holds up the
+// movers above.
+let opp = { data: null, dim: 'lp' };
+try { const v = localStorage.getItem('wc:oppDim:v1'); if (v === 'lp' || v === 'ad') opp.dim = v; } catch (e) {}
+
+// Drawn at the container's real pixel width (and redrawn on resize) rather
+// than a stretched viewBox, which turned the dots into ovals.
+function oppScatter(D, P, W) {
+  const pts = D.points;
+  if (!pts.length) return '';
+  const H = 300, L = 48, R = 12, T = 12, B = 34;
+  const xs = pts.map(p => Math.log10(p.sessions)), ys = pts.map(p => p.cvrShrunk);
+  const x0 = Math.floor(Math.min(...xs) * 2) / 2, x1 = Math.ceil(Math.max(...xs) * 2) / 2;
+  const y1 = Math.max(P * 2, ...ys) * 1.05;
+  const X = (v) => L + (Math.log10(v) - x0) / (x1 - x0 || 1) * (W - L - R);
+  const Y = (v) => T + (1 - v / y1) * (H - T - B);
+  const grid = [];
+  for (let e = Math.ceil(x0); e <= x1; e++) grid.push(`<line x1="${X(10 ** e)}" x2="${X(10 ** e)}" y1="${T}" y2="${H - B}" stroke="#eef0f3"/><text x="${X(10 ** e)}" y="${H - B + 16}" text-anchor="middle">${fmtN(10 ** e)}</text>`);
+  const yStep = y1 > 0.04 ? 0.01 : 0.005;
+  for (let v = 0; v <= y1; v += yStep) grid.push(`<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="#eef0f3"/><text x="${L - 6}" y="${Y(v) + 4}" text-anchor="end">${(v * 100).toFixed(1)}%</text>`);
+  const color = (k) => k === 'scale' ? 'var(--opp-scale)' : k === 'fix' ? 'var(--opp-fix)' : 'var(--opp-rest)';
+  // Context dots first so flagged ones sit on top.
+  const order = [...pts.keys()].sort((a, b) => (pts[a].kind ? 1 : 0) - (pts[b].kind ? 1 : 0));
+  const dots = order.map(i => { const p = pts[i]; return `<circle data-i="${i}" cx="${X(p.sessions).toFixed(1)}" cy="${Y(p.cvrShrunk).toFixed(1)}" r="${p.kind ? 5 : 4}" fill="${color(p.kind)}"/>`; }).join('');
+  return `<svg class="opp-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Sessions vs CVR for each ${opp.dim === 'lp' ? 'landing page' : 'ad'}; lists below">
+    ${grid.join('')}
+    <line x1="${L}" x2="${W - R}" y1="${Y(P)}" y2="${Y(P)}" stroke="#5b6472" stroke-dasharray="4 4"/>
+    <text x="${W - R}" y="${Y(P) - 5}" text-anchor="end">Meta average ${fmtCvr(P)}</text>
+    <text x="${(L + W - R) / 2}" y="${H - 4}" text-anchor="middle">Sessions, 28 days (log scale)</text>
+    ${dots}</svg>`;
+}
+
+function renderOpp() {
+  const d = opp.data, el = document.getElementById('opp');
+  if (!d) return;
+  const D = d[opp.dim];
+  const dimName = opp.dim === 'lp' ? 'landing page' : 'ad';
+  if (D.error) { el.innerHTML = `<div class="card"><h3>Opportunities</h3><div class="status err">${esc(D.error)}</div></div>`; return; }
+  const list = (rows, kind) => rows.length ? `<table class="wc"><thead><tr><th>${kind === 'scale' ? 'Scale: converts well, little traffic' : 'Fix: lots of traffic, converts badly'}</th><th>Sessions/day</th><th>CVR</th><th>vs avg</th><th>${kind === 'scale' ? 'Per 1k sessions' : 'Txns/day at avg'}</th></tr></thead><tbody>${rows.map(r => `<tr>
+      <td>${esc(r.label)}</td><td>${fmtN(r.sessions / d.window.days)}</td>
+      <td>${fmtCvr(r.cvrShrunk)}<small>raw ${fmtCvr(r.cvr)}</small></td>
+      <td>${(r.cvrShrunk / d.cvr).toFixed(2)}×</td>
+      <td><b>${kind === 'scale' ? '+' + r.gainPer1k.toFixed(1) : '+' + r.gapPerDay.toFixed(1)}</b><small>${kind === 'scale' ? 'txns vs avg traffic' : '≈ ' + fmtUsd(r.gapPerDay * (state.data?.aov || 0)) + '/day'}</small></td></tr>`).join('')}</tbody></table>`
+    : `<div class="neu" style="font-size:0.85rem">None at these thresholds.</div>`;
+  const macro = D.unresolvedMacro && D.unresolvedMacro.sessions
+    ? `<div class="opp-flag"><b>${fmtN(D.unresolvedMacro.sessions)} sessions</b> carried a literal <code>{{ad.name}}</code>-style ad name. Some ad's URL parameters contain a Meta macro that never got filled in, so that traffic can't be tied to an ad. It's left out of the lists.</div>` : '';
+  el.innerHTML = `<div class="card"><h3>Opportunities: Meta paid, last ${d.window.days} days</h3>
+    <p class="card__sub">Which ${dimName}s deserve more or less Meta traffic, ${esc(d.window.start)} to ${esc(d.window.end)}. Meta only, because across channels a page's CVR mostly reflects who was sent to it. Each CVR is pulled toward the Meta average (${fmtCvr(d.cvr)}) in proportion to how little data it has, so a 300-session lucky streak doesn't top the list. <b>Scale</b>: 1.2× the average or better, under 5% of Meta traffic. <b>Fix</b>: 0.8× or worse with 100+ sessions a day.</p>
+    <div class="tabs" id="opp-tabs"><button data-odim="lp" class="${opp.dim === 'lp' ? 'on' : ''}">Landing pages</button><button data-odim="ad" class="${opp.dim === 'ad' ? 'on' : ''}">Ads</button></div>
+    ${macro}
+    <div class="opp-legend"><span><i style="background:var(--opp-scale)"></i>Scale candidate</span><span><i style="background:var(--opp-fix)"></i>Fix candidate</span><span><i style="background:var(--opp-rest)"></i>Other (${D.minSessions}+ sessions)</span></div>
+    <div id="opp-plot"></div>
+    <div class="two" style="margin-top:12px"><div class="tbl-wrap">${list(D.scale, 'scale')}</div><div class="tbl-wrap">${list(D.fix, 'fix')}</div></div></div>`;
+  drawOppPlot();
+}
+function drawOppPlot() {
+  const host = document.getElementById('opp-plot');
+  if (!host || !opp.data) return;
+  host.innerHTML = oppScatter(opp.data[opp.dim], opp.data.cvr, Math.max(280, host.clientWidth));
+}
+let _oppResize;
+addEventListener('resize', () => { clearTimeout(_oppResize); _oppResize = setTimeout(drawOppPlot, 150); });
+
+document.getElementById('opp').addEventListener('click', (e) => {
+  const b = e.target.closest('#opp-tabs button');
+  if (!b) return;
+  opp.dim = b.dataset.odim;
+  try { localStorage.setItem('wc:oppDim:v1', opp.dim); } catch (err) {}
+  renderOpp();
+});
+// Per-dot hover tooltip; the hit test is the circle itself (r 4–5 plus a 2px ring).
+const oppTip = document.getElementById('opp-tip');
+document.getElementById('opp').addEventListener('mousemove', (e) => {
+  const c = e.target.closest('circle[data-i]');
+  if (!c || !opp.data) { oppTip.style.display = 'none'; return; }
+  const p = opp.data[opp.dim].points[+c.dataset.i];
+  oppTip.innerHTML = `<b>${esc(p.label)}</b><br>${fmtN(p.sessions)} sessions · CVR ${fmtCvr(p.cvrShrunk)} (raw ${fmtCvr(p.cvr)})${p.kind ? '<br>' + (p.kind === 'scale' ? 'Scale candidate' : 'Fix candidate') : ''}`;
+  oppTip.style.display = 'block';
+  oppTip.style.left = Math.min(e.clientX + 14, innerWidth - 350) + 'px';
+  oppTip.style.top = (e.clientY + 14) + 'px';
+});
+document.getElementById('opp').addEventListener('mouseleave', () => { oppTip.style.display = 'none'; });
+
+async function loadOpp(day) {
+  const el = document.getElementById('opp');
+  el.innerHTML = '<div class="card"><h3>Opportunities: Meta paid, last 28 days</h3><div class="status">Loading…</div></div>';
+  try {
+    const r = await fetch('/api/opportunity-data?end=' + encodeURIComponent(day));
+    const d = await r.json();
+    if (!r.ok || d.error) throw new Error(d.error || r.statusText);
+    opp.data = d; renderOpp();
+  } catch (err) {
+    el.innerHTML = `<div class="card"><h3>Opportunities</h3><div class="status err">Couldn't load: ${esc(err.message)}</div></div>`;
+  }
+}
+
 async function load() {
   const day = document.getElementById('day-input').value;
   const out = document.getElementById('out');
@@ -324,6 +433,7 @@ async function load() {
     document.getElementById('meta-line').textContent = `${dow} ${d.date}`;
     history.replaceState(null, '', `?date=${d.date}`);
     render();
+    loadOpp(d.date);
   } catch (err) {
     out.innerHTML = `<div class="status err">Couldn't load: ${esc(err.message)}</div>`;
   }

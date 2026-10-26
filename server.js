@@ -6844,6 +6844,107 @@ app.get('/api/what-changed-data', async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────
+// OPPORTUNITIES — where Meta paid traffic converts well or badly (28 days)
+// ─────────────────────────────────────────────
+// The structural companion to What Changed: not "what moved yesterday" but
+// "which landing pages / ads deserve more or less traffic". Scoped to Meta paid
+// on purpose: across channels, a page's CVR mostly measures who was sent to it
+// (email traffic converts ~4× prospecting), so a cross-channel ranking would
+// just rediscover the channel mix.
+//
+// Raw CVR ranks small rows on luck — a 40-session ad with 3 orders "beats"
+// everything. Each row's CVR is shrunk toward the Meta average by
+// empirical-Bayes (beta-binomial, method of moments): the between-row spread of
+// true CVRs is the observed spread minus what sampling alone would produce, and
+// a row is pulled toward the mean in proportion to how little data it has.
+// Classification and value use the shrunk CVR.
+const OPP_NON_LANDING = /^\/(checkout|checkouts|orders|payment-methods|gift_cards|account|apps\/retextion)(\/|$)/i;
+
+function oppScore(table, dimCol, P, days, totalN) {
+  const g = qlAccessor(table.columns);
+  const iD = g.idx(dimCol), iS = g.idx('sessions'), iC = g.idx('conversion_rate');
+  const rows = [];
+  // A literal {{ad.name}} in utm_content means an ad's URL parameters carry a
+  // Meta macro that never got filled — the traffic is real but can't be tied to
+  // an ad, so it's reported, not ranked.
+  const unresolved = { rows: 0, sessions: 0 };
+  for (const r of table.rows) {
+    const label = g.get(r, iD);
+    if (label == null || label === '' || (dimCol === 'landing_page_path' && OPP_NON_LANDING.test(label))) continue;
+    const n = QL_NUM(g.get(r, iS));
+    if (n < 1) continue;
+    if (/{{.*}}/.test(label)) { unresolved.rows++; unresolved.sessions += n; continue; }
+    rows.push({ label: String(label), n, p: QL_NUM(g.get(r, iC)) });
+  }
+  // Between-row variance of true CVR, from rows big enough to say anything.
+  const big = rows.filter(r => r.n >= 200);
+  const varObs = big.length ? wcMean(big.map(r => (r.p - P) ** 2)) : 0;
+  const varSamp = big.length ? wcMean(big.map(r => P * (1 - P) / r.n)) : 0;
+  const varTrue = Math.max(varObs - varSamp, 1e-9);
+  // Beta prior with mean P and variance varTrue has strength k = P(1−P)/var − 1.
+  const k = Math.max(1, P * (1 - P) / varTrue - 1);
+  const MIN_N = 300;
+  const scored = rows.filter(r => r.n >= MIN_N).map(r => {
+    const ps = (r.n * r.p + k * P) / (r.n + k);
+    return {
+      label: r.label, sessions: Math.round(r.n), perDay: r.n / days, share: r.n / totalN, cvr: r.p, cvrShrunk: ps,
+      index: P > 0 ? ps / P : null,
+      // Scale: extra transactions per 1,000 sessions moved here from average Meta traffic.
+      gainPer1k: 1000 * (ps - P),
+      // Fix: transactions per day if this row converted at the Meta average.
+      gapPerDay: (P - ps) * r.n / days,
+    };
+  });
+  scored.forEach(r => {
+    r.kind = r.index >= 1.2 && r.share < 0.05 ? 'scale'
+      : r.index <= 0.8 && r.perDay >= 100 ? 'fix' : null;
+  });
+  return {
+    priorStrength: k, minSessions: MIN_N, rowsConsidered: scored.length, rowsTotal: rows.length, unresolvedMacro: unresolved,
+    scale: scored.filter(r => r.kind === 'scale').sort((a, b) => b.gainPer1k - a.gainPer1k).slice(0, 12),
+    fix: scored.filter(r => r.kind === 'fix').sort((a, b) => b.gapPerDay - a.gapPerDay).slice(0, 12),
+    // Scatter: the 300 biggest rows, plus every flagged one.
+    points: [...scored].sort((a, b) => b.sessions - a.sessions).filter((r, i) => i < 300 || r.kind)
+      .map(r => ({ label: r.label, sessions: r.sessions, cvr: r.cvr, cvrShrunk: r.cvrShrunk, kind: r.kind })),
+  };
+}
+
+app.get('/api/opportunity-data', async (req, res) => {
+  if (!SHOPIFY_URL || !SHOPIFY_TOKEN) return res.status(500).json({ error: 'Shopify credentials not configured' });
+  const end = ptYesterdayDate(req.query.end);
+  const days = Math.min(90, Math.max(7, parseInt(req.query.days, 10) || 28));
+  const start = shiftDate(end, -(days - 1));
+  const scope = utmScope(req.query.source, req.query.medium, { source: 'facebook', medium: META_PAID_MEDIUMS });
+  const cacheKey = endpointCacheKey('opportunity', { end, days, where: scope.where });
+  const cached = getEndpointCache(cacheKey);
+  if (cached) return res.json(cached);
+
+  const range = `SINCE ${start} UNTIL ${end}`;
+  const queries = [
+    `FROM sessions SHOW sessions, conversion_rate WHERE ${scope.where} ${range}`,
+    `FROM sessions SHOW sessions, conversion_rate WHERE ${scope.where} GROUP BY landing_page_path ${range} ORDER BY sessions DESC LIMIT ${WC_LIMIT}`,
+    `FROM sessions SHOW sessions, conversion_rate WHERE ${scope.where} AND utm_content IS NOT NULL GROUP BY utm_content ${range} ORDER BY sessions DESC LIMIT ${WC_LIMIT}`,
+  ];
+  try {
+    const [totR, lpR, adR] = await wcRunQueries(queries, 3);
+    if (totR.error) throw new Error(totR.error);
+    const tg = qlAccessor(totR.table.columns), t0 = totR.table.rows[0];
+    const totalN = QL_NUM(tg.get(t0, tg.idx('sessions'))), P = QL_NUM(tg.get(t0, tg.idx('conversion_rate')));
+    if (!totalN) throw new Error('No sessions in scope for this window');
+    const payload = {
+      window: { start, end, days }, scope: scope.label, sessions: totalN, cvr: P,
+      lp: lpR.error ? { error: lpR.error } : oppScore(lpR.table, 'landing_page_path', P, days, totalN),
+      ad: adR.error ? { error: adR.error } : oppScore(adR.table, 'utm_content', P, days, totalN),
+    };
+    setEndpointCache(cacheKey, payload, 30 * 60 * 1000);
+    res.json(payload);
+  } catch (err) {
+    console.error('[opportunity-data] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // --- Daily series for one UTM slice ---
 // Powers the contributors drilldowns: "is this day's number an outlier, or a
 // bounce-back?" needs the distribution of recent days, not just an average.
