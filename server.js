@@ -3374,13 +3374,19 @@ app.get('/api/meta-ad-lp-data', async (req, res) => {
     }
   }`;
 
+  // Explicit LIMIT: the real result is ~11k rows over 30 days, and the 1000-row
+  // default kept only the busiest current-period rows (see compactQLTable).
+  // No PERCENT_CHANGE — the page computes deltas itself, and the two extra
+  // columns cost ~20% of the payload.
+  const AD_LP_LIMIT = 20000;
   const mainQuery = `FROM sessions
   SHOW sessions, conversion_rate
   WHERE ${scope.where}
-  GROUP BY utm_content, landing_page_path WITH PERCENT_CHANGE
+  GROUP BY utm_content, landing_page_path
   SINCE ${start} UNTIL ${end}
   COMPARE TO previous_period
   ORDER BY sessions DESC
+  LIMIT ${AD_LP_LIMIT}
 VISUALIZE conversion_rate TYPE table`;
 
   console.log('\n[meta-ad-lp-data] Query:\n' + mainQuery);
@@ -3398,11 +3404,15 @@ VISUALIZE conversion_rate TYPE table`;
     }
     if (!payload?.tableData) throw new Error('No data returned from Shopify');
 
+    const compact = compactQLTable(payload.tableData,
+      ['utm_content', 'landing_page_path', 'sessions', 'conversion_rate', 'comparison_sessions__previous_period', 'comparison_conversion_rate__previous_period'],
+      { weight: (r) => Math.max(r.sessions || 0, r.comparison_sessions__previous_period || 0), limit: AD_LP_LIMIT });
     res.json({
       query: mainQuery,
       filter: { source, medium },
-      columns: payload.tableData.columns,
-      rows: payload.tableData.rows,
+      columns: compact.columns,
+      rows: compact.rows,
+      completeness: compact.meta,
     });
   } catch (err) {
     console.error('Meta ad-lp data error:', err);
@@ -4379,6 +4389,7 @@ app.get('/api/google-ad-lp-data', async (req, res) => {
   SINCE ${start} UNTIL ${end}
   COMPARE TO previous_period
   ORDER BY sessions DESC
+  LIMIT 5000
 VISUALIZE conversion_rate TYPE table`;
 
   console.log('\n[google-ad-lp-data] Query:\n' + mainQuery);
@@ -6196,6 +6207,39 @@ function qlAccessor(cols) {
 }
 const QL_NUM = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
 
+// For the ad × landing-page pulls, whose real row counts are far past ShopifyQL's
+// 1000-row default (Meta: ~11k over 30 days) but whose full object-shaped payload
+// would approach Vercel's 4.5MB response cap. Keeps only the columns the page
+// reads, sends rows as arrays (every consumer already accepts array rows and
+// finds columns by name), and — only if it is still too big — drops the
+// smallest rows by `weight`. The weight matters: the 1000-row default cuts by
+// current-period sessions, which silently throws away exactly the rows that
+// had traffic before and little now (paused or collapsing ads). Weighting by
+// max(current, previous) keeps the cut neutral between the two periods.
+function compactQLTable(table, keep, { weight, maxBytes = 3.5e6, limit } = {}) {
+  const lc = table.columns.map(c => (c.name || '').toLowerCase());
+  const idx = keep.map(k => lc.indexOf(k)).filter(i => i >= 0);
+  const columns = idx.map(i => table.columns[i]);
+  const numeric = idx.map(i => /^(sessions|conversion_rate|comparison_|sessions_|average_|bounce_)/.test(lc[i]));
+  let rows = table.rows.map(row => idx.map((i, j) => {
+    const v = Array.isArray(row) ? row[i] : row[table.columns[i].name];
+    if (!numeric[j] || v == null) return v;
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? Math.round(n * 1e6) / 1e6 : null;
+  }));
+  const total = rows.length;
+  let bytes = JSON.stringify(rows).length, trimmed = null;
+  if (bytes > maxBytes && weight) {
+    const w = (r) => weight(Object.fromEntries(columns.map((c, j) => [c.name.toLowerCase(), r[j]])));
+    const ranked = rows.map(r => ({ r, w: w(r), b: JSON.stringify(r).length + 1 })).sort((a, b) => b.w - a.w);
+    let used = 2; const kept = [];
+    for (const x of ranked) { if (used + x.b > maxBytes) break; used += x.b; kept.push(x.r); }
+    trimmed = { rows: total - kept.length, maxWeightDropped: ranked[kept.length]?.w ?? 0 };
+    rows = kept; bytes = used;
+  }
+  return { columns, rows, meta: { rowsFromShopify: total, rowsReturned: rows.length, hitQueryLimit: limit != null && total >= limit, trimmed } };
+}
+
 // Day-over-day traffic-mix-shift value, weighted by each channel's ACTUAL
 // conversion rate for the selected day. Holding those per-channel CVRs fixed
 // and moving only the session-share mix isolates the mix effect (Paasche-style
@@ -7088,12 +7132,17 @@ app.get('/api/diag-shopify', async (req, res) => {
   // landing_page_path. This Shopify store doesn't expose `orders` / `sales`
   // datasets — revenue / AOV / %new aren't reachable; the dashboard handles
   // null values and skips rules that need them.
+  // ~6.6k ad × LP rows for paid_social over 30 days. At the 1000-row default
+  // every ad outside the top 1000 combinations lost its Shopify sessions
+  // entirely and read as spend with no traffic.
+  const DIAG_LIMIT = 20000;
   const buildQL = (source) => `FROM sessions
   SHOW sessions, conversion_rate, sessions_that_completed_checkout, average_session_duration, bounce_rate
   WHERE utm_source = '${escapeQL(source)}' AND utm_medium = '${medium}'
   GROUP BY utm_content, landing_page_path
   SINCE ${since} UNTIL ${until}
-  ORDER BY sessions DESC`;
+  ORDER BY sessions DESC
+  LIMIT ${DIAG_LIMIT}`;
 
   const run = async (ql) => {
     const r = await fetch(endpoint, {
@@ -7118,11 +7167,14 @@ app.get('/api/diag-shopify', async (req, res) => {
 
     // Merge: union the rows under a single columns array (all queries share schema).
     const cols = tables.find(t => t && t.columns)?.columns || null;
-    const rows = tables.flatMap(t => t?.rows || []);
+    const merged = cols ? compactQLTable({ columns: cols, rows: tables.flatMap(t => t?.rows || []) },
+      ['utm_content', 'landing_page_path', 'sessions', 'conversion_rate', 'sessions_that_completed_checkout', 'average_session_duration', 'bounce_rate'],
+      { weight: (r) => r.sessions || 0 }) : null;
     res.json({
       sources, medium,
       queries,
-      sessions: cols ? { columns: cols, rows } : null,
+      sessions: merged ? { columns: merged.columns, rows: merged.rows } : null,
+      completeness: merged ? { ...merged.meta, hitQueryLimit: tables.some(t => (t?.rows?.length || 0) >= DIAG_LIMIT) } : null,
       since, until,
     });
   } catch (err) {
