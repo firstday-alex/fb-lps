@@ -90,6 +90,16 @@
     .pace-svg text { font-size:11px; fill:var(--text-secondary); }
     .pace-legend { display:flex; gap:14px; flex-wrap:wrap; font-size:0.75rem; color:var(--text-secondary); margin-top:4px; }
     .pace-legend i { display:inline-block; width:14px; height:3px; margin-right:5px; vertical-align:3px; }
+    /* event log */
+    .notes { background:#fff; border-radius:12px; padding:12px 16px; box-shadow:0 1px 3px rgba(0,0,0,0.08); margin-bottom:18px; font-size:0.84rem; }
+    .notes ul { list-style:none; margin:6px 0 0; padding:0; }
+    .notes li { padding:4px 0; display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; }
+    .notes li .when { color:var(--text-secondary); font-size:0.75rem; min-width:78px; }
+    .notes li button { border:0; background:none; color:var(--text-secondary); cursor:pointer; font-size:0.8rem; padding:0 4px; }
+    .notes form { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+    .notes input[type=text] { flex:1 1 240px; min-width:0; padding:6px 8px; border:1px solid var(--border); border-radius:6px; font:inherit; }
+    .notes select, .notes input[type=date] { padding:5px 6px; border:1px solid var(--border); border-radius:6px; font:inherit; }
+    .tag { font-size:0.68rem; font-weight:700; padding:1px 7px; border-radius:9px; background:var(--neutral-bg); color:var(--text-secondary); }
     .method { font-size:0.78rem; color:var(--text-secondary); line-height:1.55; max-width:980px; }
     .method code { background:var(--neutral-bg); padding:1px 5px; border-radius:4px; }
     @media (max-width:600px) { .wrap { padding:16px; } .two, .mr { grid-template-columns:1fr; } }
@@ -109,6 +119,7 @@
     <span class="hint">Defaults to yesterday (Pacific). Expected = trailing 7-day volume × weekday pattern, 28-day CVR.</span>
   </div>
   <div class="meta-line" id="meta-line"></div>
+  <div id="notes"></div>
   <div id="pace"></div>
   <div id="out"><div class="status">Loading…</div></div>
   <div id="opp"></div>
@@ -390,6 +401,55 @@ document.getElementById('out').addEventListener('change', (e) => {
   document.getElementById('movers').outerHTML = renderMovers();
 });
 
+// ── Event log ───────────────────────────────────────────────────────────────
+// Notes for the selected day, plus the week before it — the window the
+// "expected" figures are built from, where a promo would inflate the baseline.
+let notes = { events: [], tags: [], ephemeral: false };
+function renderNotes() {
+  const el = document.getElementById('notes'), day = state.data?.date || document.getElementById('day-input').value;
+  const today = pace?.today;
+  const on = (d) => notes.events.filter(e => e.date === d);
+  const week = notes.events.filter(e => day && e.date < day && e.date >= shiftDay(day, -7));
+  const li = (e) => `<li><span class="when">${esc(e.date)}</span><span class="tag">${esc(e.tag)}</span><span>${esc(e.text)}</span><button data-del="${esc(e.id)}" title="Delete this note" aria-label="Delete note">×</button></li>`;
+  const groups = [
+    day ? [`On ${esc(day)}`, on(day)] : null,
+    today && today !== day ? ['Today', on(today)] : null,
+    week.length ? ['In the 7 days before (the baseline window)', week] : null,
+  ].filter(Boolean);
+  el.innerHTML = `<div class="notes"><b>Notes</b> <span class="hint">Promos, site deploys, sends, ad or tracking changes: what explains a move the numbers can't. Shown here and given to the Morning Brief.</span>
+    ${notes.ephemeral ? '<div class="opp-flag">Notes storage isn\'t persistent on this deployment (no KV configured), so notes will be lost on the next deploy.</div>' : ''}
+    ${groups.map(([h, list]) => `<div style="margin-top:6px"><span class="hint">${h}</span>${list.length ? `<ul>${list.map(li).join('')}</ul>` : ' <span class="neu">none</span>'}</div>`).join('')}
+    <form id="note-form"><input type="date" name="date" value="${esc(day || '')}" required><select name="tag">${notes.tags.map(t => `<option>${esc(t)}</option>`).join('')}</select><input type="text" name="text" maxlength="280" placeholder="e.g. Sitewide 20% promo went live 9am" required><button class="btn" type="submit">Add note</button></form></div>`;
+}
+const shiftDay = (d, k) => { const x = new Date(d + 'T00:00:00Z'); x.setUTCDate(x.getUTCDate() + k); return x.toISOString().slice(0, 10); };
+async function loadNotes() {
+  const day = state.data?.date;
+  if (!day) return;
+  try {
+    const r = await fetch(`/api/events?start=${shiftDay(day, -7)}&end=${shiftDay(day, 30)}`);
+    const d = await r.json();
+    if (r.ok) notes = d;
+  } catch (e) { /* notes are optional; the page works without them */ }
+  renderNotes();
+}
+document.getElementById('notes').addEventListener('submit', async (e) => {
+  if (e.target.id !== 'note-form') return;
+  e.preventDefault();
+  const f = new FormData(e.target), btn = e.target.querySelector('button');
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/events', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date: f.get('date'), tag: f.get('tag'), text: f.get('text') }) });
+    if (!r.ok) throw new Error((await r.json()).error || r.statusText);
+    await loadNotes();
+  } catch (err) { alert('Couldn\'t save the note: ' + err.message); btn.disabled = false; }
+});
+document.getElementById('notes').addEventListener('click', async (e) => {
+  const id = e.target.dataset?.del;
+  if (!id || !confirm('Delete this note?')) return;
+  await fetch('/api/events/' + encodeURIComponent(id), { method: 'DELETE' });
+  loadNotes();
+});
+
 // ── Today so far ────────────────────────────────────────────────────────────
 // Independent of the Day picker: it is always today, through the last full hour.
 let pace = null;
@@ -594,6 +654,7 @@ async function load() {
     render();
     loadOpp(d.date);
     loadSpend(d.date);
+    loadNotes();
   } catch (err) {
     out.innerHTML = `<div class="status err">Couldn't load: ${esc(err.message)}</div>`;
   }

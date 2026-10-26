@@ -5170,6 +5170,10 @@ async function buildDailyBrief(day, mode = 'yesterday') {
     };
   }
 
+  // Operator notes for the day ride along as context for the narrative (see
+  // EVENT LOG); a storage failure must not cost the brief.
+  brief.events = (await eventsBetween(brief.date, brief.date).catch(() => [])).map(e => ({ tag: e.tag, note: e.text }));
+
   if (errors.length) brief.errors = errors;
   return brief;
 }
@@ -5200,6 +5204,8 @@ CRITICAL RULE: use ONLY numbers present in the BRIEF JSON below. Never invent, e
 CONTEXT ON THE COMPARISONS: ${brief.mode === 'today'
     ? `every curr/prev pair is TODAY SO FAR (midnight to ${brief.through}) vs YESTERDAY over the same hours. Today is incomplete: never call it a finished day, and never project a full-day total.`
     : 'every curr/prev pair is this day vs the PRIOR DAY, which is dominated by day-of-week effects.'} Where \`trailing\` is present (overall.trailing and aov.trailing, holding d7 and d30 over the 7 and 30 days BEFORE this day, excluding it), weigh it more heavily than the prior-day delta — sessionsPerDay and transactionsPerDay are per-day rates directly comparable to this single day, cvr and averageOrderValue compare directly. Call out when the two disagree, e.g. down vs yesterday but above the 7-day run-rate. If \`trailing\` is absent or null, just use the prior-day comparison and don't mention run-rates.
+
+OPERATOR NOTES: \`events\` lists notes the team logged for this day (promos, site changes, sends, ad changes). Use them to frame likely explanations, and say they are logged notes, not measured causes — e.g. "sessions +18%, in line with the logged promo launch". They add no numbers. If \`events\` is empty, don't mention notes.
 
 Write markdown with these sections:
 # Morning Brief — ${brief.mode === 'today' ? `${brief.date}, through ${brief.through}` : brief.date}
@@ -7021,6 +7027,75 @@ app.get('/api/what-changed-spend', requireAuth, async (req, res) => {
     console.error('[what-changed-spend] error:', err);
     res.status(err.status || 500).json({ error: err.message });
   }
+});
+
+// ─────────────────────────────────────────────
+// EVENT LOG — operator notes pinned to a day ("promo launched", "site deploy")
+// ─────────────────────────────────────────────
+// The numbers say WHAT moved; half the time the why is something a person
+// already knows. Notes live in the app's own storage (Vercel KV, file fallback,
+// same as the Tab Summaries context) — never in a platform — and are shown on
+// What Changed and handed to the Morning Brief narrative as context.
+//
+// One KV record holding the whole list, read-modify-write. Two people saving at
+// the same instant can drop one note; at a handful of notes a week that's an
+// acceptable trade for not needing a database.
+const EVENTS_KEY = 'event-log';
+const EVENTS_FILE = process.env.EVENTS_FILE
+  || (process.env.VERCEL ? '/tmp/event-log.json' : path.join(__dirname, 'data', 'event-log.json'));
+const EVENT_TAGS = ['promo', 'site', 'email-sms', 'ads', 'tracking', 'other'];
+const EVENTS_MAX = 1000;
+
+async function readEvents() {
+  if (kvClient) { const v = await kvClient.get(EVENTS_KEY); return Array.isArray(v?.events) ? v.events : []; }
+  try { const v = JSON.parse(await fsp.readFile(EVENTS_FILE, 'utf8')); return Array.isArray(v?.events) ? v.events : []; }
+  catch (e) { if (e.code === 'ENOENT') return []; throw e; }
+}
+async function writeEvents(events) {
+  const data = { events: events.slice(-EVENTS_MAX) };
+  if (kvClient) { await kvClient.set(EVENTS_KEY, data); return; }
+  await fsp.mkdir(path.dirname(EVENTS_FILE), { recursive: true });
+  await fsp.writeFile(EVENTS_FILE, JSON.stringify(data, null, 2), 'utf8');
+}
+async function eventsBetween(start, end) {
+  return (await readEvents()).filter(e => e.date >= start && e.date <= end).sort((a, b) => a.date.localeCompare(b.date) || a.created_at.localeCompare(b.created_at));
+}
+
+app.get('/api/events', async (req, res) => {
+  const isDay = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v || '');
+  const end = isDay(req.query.end) ? req.query.end : shiftDate(ptYesterdayDate(), 1);
+  const start = isDay(req.query.start) ? req.query.start : shiftDate(end, -30);
+  try {
+    res.json({ start, end, tags: EVENT_TAGS, events: await eventsBetween(start, end), ephemeral: !kvClient && !!process.env.VERCEL && !process.env.EVENTS_FILE });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/events', async (req, res) => {
+  const b = req.body || {};
+  const date = String(b.date || '');
+  const text = String(b.text || '').trim().slice(0, 280);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !text) return res.status(400).json({ error: 'date (YYYY-MM-DD) and text are required' });
+  const ev = {
+    id: crypto.randomBytes(6).toString('hex'), date, text,
+    tag: EVENT_TAGS.includes(b.tag) ? b.tag : 'other',
+    created_at: new Date().toISOString(),
+  };
+  try {
+    const events = await readEvents();
+    events.push(ev);
+    await writeEvents(events);
+    res.json({ ok: true, event: ev });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/events/:id', async (req, res) => {
+  try {
+    const events = await readEvents();
+    const kept = events.filter(e => e.id !== req.params.id);
+    if (kept.length === events.length) return res.status(404).json({ error: 'No such note' });
+    await writeEvents(kept);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ─────────────────────────────────────────────
