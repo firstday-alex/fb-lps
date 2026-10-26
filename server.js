@@ -6470,8 +6470,10 @@ const wcFunnelOf = (g, row) => ({
 const wcAdd = (a, b) => { a.n += b.n || 0; a.conv += b.conv || 0; a.cart += b.cart || 0; a.chk += b.chk || 0; a.done += b.done || 0; return a; };
 const wcZero = () => ({ n: 0, conv: 0, cart: 0, chk: 0, done: 0 });
 
-// ShopifyQL throttles under burst (fifteen queries go out per request), so run a
-// few at a time and retry a throttled one rather than failing the whole page.
+// ShopifyQL throttles under burst (eighteen queries go out per request), so run
+// a few at a time and retry a throttled one rather than failing the whole page.
+// "Rate limited" needs seconds, not a beat, to clear — measured locally after
+// back-to-back loads — so it gets a longer, doubling wait.
 async function wcRunQueries(queries, concurrency = 4) {
   const out = new Array(queries.length);
   let next = 0;
@@ -6479,8 +6481,10 @@ async function wcRunQueries(queries, concurrency = 4) {
     for (let attempt = 0; ; attempt++) {
       try { return await runShopifyQLTable(q); }
       catch (e) {
-        if (attempt >= 2 || /ShopifyQL:/.test(e.message)) throw e;   // parse errors won't fix themselves
-        await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
+        if (/ShopifyQL:/.test(e.message)) throw e;   // parse errors won't fix themselves
+        const limited = /rate limit|throttl/i.test(e.message);
+        if (attempt >= (limited ? 3 : 2)) throw e;
+        await new Promise(r => setTimeout(r, limited ? 2000 * 2 ** attempt : 1500 * (attempt + 1)));
       }
     }
   };
@@ -6504,7 +6508,47 @@ function wcChannelParts(src, med) {
 // summed (not the CVR) so rows that merge under one key weight correctly.
 // Keys join parts with NUL so a campaign name containing the separator can't
 // collide with another row.
-function wcTally(table, dimCols, partsFn = (p) => p) {
+// One Meta campaign reaches Shopify under several utm_campaign spellings: the
+// name, the name with "+" decoded to a space ("USA + CA" → "USA   CA"), and
+// whitespace variants of either. Keyed raw, each spelling is its own row and
+// they swing in opposite directions as traffic shifts between them. The key
+// folds those together; the label stays the busiest real spelling. (Renamed
+// campaigns and bare campaign IDs can't be folded from Shopify alone — the
+// spend join on the page uses Meta's id → name map for those.)
+const wcCampaignKey = (v) => v == null ? null : String(v).replace(/\+/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+const wcIsMacro = (v) => v != null && /\{\{.*\}\}/.test(String(v));
+
+// Bare campaign IDs in utm_campaign (≈8% of Meta sessions on 2026-10-24) can
+// only be folded into their named rows with Meta's id → name map, so this runs
+// only when the viewer is signed in to Facebook; without it the ID rows stay
+// separate, as they always were. Cached an hour: campaign names rarely change
+// and the lookup is per-ID.
+const _wcIdNameCache = new Map();
+async function wcResolveCampaignIds(ids, token) {
+  const out = new Map(), todo = [];
+  for (const id of ids) { const c = _wcIdNameCache.get(id); if (c && Date.now() < c.exp) { if (c.name) out.set(id, c.name); } else todo.push(id); }
+  for (let i = 0; i < todo.length; i += 50) {
+    const chunk = todo.slice(i, i + 50);
+    let j = await fetch(`${META_BASE_URL}/?ids=${chunk.join(',')}&fields=name&${metaParams(token)}`).then(r => r.json()).catch(() => null);
+    // ?ids= fails as a whole when any one id is inaccessible (another
+    // business's campaign, a deleted one) — fall back to one-by-one.
+    if (!j || j.error) {
+      j = {};
+      await Promise.all(chunk.map(async (id) => {
+        const one = await fetch(`${META_BASE_URL}/${id}?fields=name&${metaParams(token)}`).then(r => r.json()).catch(() => null);
+        if (one && !one.error) j[id] = one;
+      }));
+    }
+    for (const id of chunk) {
+      const name = j[id]?.name || null;
+      _wcIdNameCache.set(id, { name, exp: Date.now() + 60 * 60 * 1000 });
+      if (name) out.set(id, name);
+    }
+  }
+  return out;
+}
+
+function wcTally(table, dimCols, keyFn = (p) => p) {
   const map = new Map();
   if (!table) return { map, rows: 0, floor: 0 };
   const g = qlAccessor(table.columns);
@@ -6512,10 +6556,10 @@ function wcTally(table, dimCols, partsFn = (p) => p) {
   const iS = g.idx('sessions'), iC = g.idx('conversion_rate');
   let floor = Infinity;
   for (const row of table.rows) {
-    const parts = partsFn(iDims.map(i => { const v = g.get(row, i); return v == null ? null : String(v); }));
+    const parts = iDims.map(i => { const v = g.get(row, i); return v == null ? null : String(v); });
     const n = QL_NUM(g.get(row, iS));
     floor = Math.min(floor, n);
-    const key = parts.map(p => p == null ? '' : p).join('\u0000');
+    const key = keyFn(parts).map(p => p == null ? '' : p).join('\u0000');
     const cur = map.get(key) || { parts, ...wcZero() };
     wcAdd(cur, { n, conv: n * QL_NUM(g.get(row, iC)), ...wcFunnelOf(g, row) });
     map.set(key, cur);
@@ -6581,6 +6625,7 @@ function wcScore({ now, prev, wk, last7, base }, wdIndex, cal, aov) {
     prev: { sessions: Math.round(nPrev), cvr: nPrev > 0 ? prev.conv / nPrev : null, pct: pct(n1, nPrev) },
     lastWeek: { sessions: Math.round(nWk), cvr: nWk > 0 ? wk.conv / nWk : null, pct: pct(n1, nWk) },
     expected: { sessions: E, cvr: nB > 0 ? pB : null, txns: E * pB, pct: pct(n1, E) },
+    last7: { sessionsPerDay: (last7?.n || 0) / WC_VOL_DAYS, txnsPerDay: (last7?.conv || 0) / WC_VOL_DAYS },
     impact: { txns: volTxn + rateTxn, volumeTxns: volTxn, rateTxns: rateTxn, dollars: (volTxn + rateTxn) * aov },
     z: { volume: zVol, rate: zRate },
     signal: {
@@ -6602,16 +6647,18 @@ function wcScore({ now, prev, wk, last7, base }, wdIndex, cal, aov) {
 // so the two shares always sum to the row's rate impact.
 function wcFunnel(now, base, rateTxn, cal) {
   if (!base || !base.n || !now.n) return null;
-  const step = (num1, den1, num0, den0) => {
+  // A z on a handful of sessions is noise dressed as a flag (a 2-session row
+  // read "reached checkout +912%"), so steps need a real denominator today.
+  const step = (num1, den1, num0, den0, minDen) => {
     const r1 = den1 > 0 ? num1 / den1 : null, r0 = den0 > 0 ? num0 / den0 : null;
-    if (r1 == null || r0 == null) return { now: r1, base: r0, pct: null, z: null };
+    if (r1 == null || r0 == null || den1 < minDen) return { now: r1, base: r0, pct: r1 != null && r0 > 0 ? r1 / r0 - 1 : null, z: null };
     const v = (r0 > 0 && r0 < 1) ? r0 * (1 - r0) / den1 + cal.tau2 * r0 * r0 : 0;
     return { now: r1, base: r0, pct: r0 > 0 ? r1 / r0 - 1 : null, z: v > 0 ? (r1 - r0) / Math.sqrt(v) : null };
   };
   const out = {
-    atc: step(now.cart, now.n, base.cart, base.n),
-    reach: step(now.chk, now.n, base.chk, base.n),
-    complete: step(now.done, now.chk, base.done, base.chk),
+    atc: step(now.cart, now.n, base.cart, base.n, 100),
+    reach: step(now.chk, now.n, base.chk, base.n, 100),
+    complete: step(now.done, now.chk, base.done, base.chk, 30),
   };
   const lr = (s) => (s.now > 0 && s.base > 0) ? Math.log(s.now / s.base) : null;
   const a = lr(out.reach), b = lr(out.complete);
@@ -6650,12 +6697,14 @@ function wcMixRate(channels, pick0) {
 app.get('/api/what-changed-data', async (req, res) => {
   if (!SHOPIFY_URL || !SHOPIFY_TOKEN) return res.status(500).json({ error: 'Shopify credentials not configured' });
   const day = ptYesterdayDate(req.query.date);
-  const cacheKey = endpointCacheKey('what-changed', { day });
+  const cacheKey = endpointCacheKey('what-changed', { day, fb: !!getTokenFromCookie(req) });
   const cached = req.query.fresh ? null : getEndpointCache(cacheKey);
   if (cached) return res.json(cached);
 
   const prevDay = shiftDate(day, -1), wkDay = shiftDate(day, -7);
   const baseStart = shiftDate(day, -WC_BASE_DAYS), baseEnd = prevDay;
+  let idNames = new Map();
+  const fbToken = getTokenFromCookie(req);
   // Series pulls reach WC_VOL_DAYS further back so every calibration day has a
   // full trailing week behind it.
   const seriesStart = shiftDate(baseStart, -WC_VOL_DAYS);
@@ -6666,7 +6715,7 @@ app.get('/api/what-changed-data', async (req, res) => {
     base: `SINCE ${baseStart} UNTIL ${baseEnd}`,
   };
   const DIMS = {
-    campaign: { cols: ['utm_source', 'utm_campaign'] },
+    campaign: { cols: ['utm_source', 'utm_campaign'], key: (p) => [p[0], wcCampaignKey(idNames.get(p[1]) ?? p[1])] },
     lp:       { cols: ['landing_page_path'] },
     // utm_content carries the ad name for Meta (and creative/flow labels for
     // other sources); null content is "no ad", not an ad, so it's excluded.
@@ -6689,6 +6738,19 @@ app.get('/api/what-changed-data', async (req, res) => {
 
   try {
     const results = await wcRunQueries(queries);
+    if (fbToken) {
+      const ids = new Set();
+      for (const w of Object.keys(windows)) {
+        const t = results[dimSlots.campaign[w]].table;
+        if (!t) continue;
+        const g = qlAccessor(t.columns);
+        for (const r of t.rows) {
+          const v = String(g.get(r, g.idx('utm_campaign')) ?? '');
+          if (g.get(r, g.idx('utm_source')) === 'facebook' && /^\d{12,}$/.test(v)) ids.add(v);
+        }
+      }
+      idNames = await wcResolveCampaignIds([...ids], fbToken).catch(() => new Map());
+    }
     const errors = results.map((r, i) => r.error ? { query: queries[i].slice(0, 120), error: r.error } : null).filter(Boolean);
     const [siteR, chanR, aovR] = results;
     if (siteR.error) throw new Error('Site totals query failed: ' + siteR.error);
@@ -6768,13 +6830,17 @@ app.get('/api/what-changed-data', async (req, res) => {
     };
 
     const labelFor = {
-      campaign: (p) => ({ label: p[1] ?? '(no campaign)', source: p[0], campaign: p[1] }),
+      campaign: (p) => ({
+        label: idNames.get(p[1]) ?? p[1] ?? '(no campaign)', source: p[0], campaign: p[1],
+        campaignKey: wcCampaignKey(idNames.get(p[1]) ?? p[1]),
+        ...(wcIsMacro(p[1]) ? { macro: true } : {}),
+      }),
       lp: (p) => ({ label: p[0] ?? '(none)', lp: p[0] }),
-      ad: (p) => ({ label: p[1], source: p[0], ad: p[1] }),
+      ad: (p) => ({ label: p[1], source: p[0], ad: p[1], ...(wcIsMacro(p[1]) ? { macro: true } : {}) }),
     };
     for (const [dim, spec] of Object.entries(DIMS)) {
       const t = {};
-      for (const w of Object.keys(windows)) t[w] = wcTally(results[dimSlots[dim][w]].table, spec.cols);
+      for (const w of Object.keys(windows)) t[w] = wcTally(results[dimSlots[dim][w]].table, spec.cols, spec.key);
       const failed = Object.keys(windows).filter(w => results[dimSlots[dim][w]].error);
       if (failed.includes('now') || failed.includes('base') || failed.includes('last7')) { dims[dim] = { rows: [], error: `query failed (${failed.join(', ')})` }; continue; }
       const keys = new Set([...t.now.map.keys(), ...t.prev.map.keys(), ...t.last7.map.keys()]);
@@ -6791,6 +6857,32 @@ app.get('/api/what-changed-data', async (req, res) => {
         partialWindows: failed,
       };
     }
+
+    // ── Tracking hygiene (Meta) ──────────────────────────────────────────
+    // Sessions whose campaign or ad UTM arrived as a bare ID or an unfilled
+    // {{macro}} instead of a name. Small shares are normal; a jump means a UTM
+    // template changed, and those rows will look like launches and pauses.
+    const tracking = (() => {
+      const camp = results[dimSlots.campaign.now].table, ad = results[dimSlots.ad.now].table;
+      const out = { campaignById: 0, campaignMacro: 0, adMacro: 0, metaSessions: 0 };
+      if (camp) {
+        const g = qlAccessor(camp.columns);
+        for (const r of camp.rows) {
+          if (g.get(r, g.idx('utm_source')) !== 'facebook') continue;
+          const v = g.get(r, g.idx('utm_campaign')), n = QL_NUM(g.get(r, g.idx('sessions')));
+          out.metaSessions += n;
+          if (/^\d{12,}$/.test(String(v ?? ''))) out.campaignById += n;
+          else if (wcIsMacro(v)) out.campaignMacro += n;
+        }
+      }
+      if (ad) {
+        const g = qlAccessor(ad.columns);
+        for (const r of ad.rows) if (g.get(r, g.idx('utm_source')) === 'facebook' && wcIsMacro(g.get(r, g.idx('utm_content')))) out.adMacro += QL_NUM(g.get(r, g.idx('sessions')));
+      }
+      out.idsResolved = idNames.size;
+      out.facebookConnected = !!fbToken;
+      return out;
+    })();
 
     // ── Appeared / disappeared ───────────────────────────────────────────
     const appeared = [], disappeared = [];
@@ -6833,7 +6925,7 @@ app.get('/api/what-changed-data', async (req, res) => {
       date: day,
       windows: { prevDay, lastWeek: wkDay, volume: { start: shiftDate(day, -WC_VOL_DAYS), end: baseEnd, days: WC_VOL_DAYS }, cvr: { start: baseStart, end: baseEnd, days: WC_BASE_DAYS } },
       weekdayIndex: wdIndex, aov: baseAov, calibration: { channel: cal, site: siteCal, z: WC_Z }, minSessions: WC_MIN_SESSIONS,
-      headline, mixRate, dims, appeared: appeared.slice(0, 25), disappeared: disappeared.slice(0, 25),
+      headline, mixRate, dims, appeared: appeared.slice(0, 25), disappeared: disappeared.slice(0, 25), tracking,
       errors,
     };
     if (!errors.length) setEndpointCache(cacheKey, payload, 10 * 60 * 1000);
@@ -6841,6 +6933,93 @@ app.get('/api/what-changed-data', async (req, res) => {
   } catch (err) {
     console.error('[what-changed-data] error:', err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────
+// WHAT CHANGED — Meta spend for the same day, joined on campaign
+// ─────────────────────────────────────────────
+// Separate from /api/what-changed-data because it needs the Facebook login and
+// every Shopify number on the page must keep working without one. The page
+// merges this into the campaign rows and the headline when it is available.
+//
+// One insights pull — level=campaign, time_increment=1 over the subject day and
+// the 7 before it — gives today, yesterday, same weekday last week and the
+// trailing-7 average, the same windows the Shopify side uses.
+function wcSpendWindows(insightRows, day) {
+  const prevDay = shiftDate(day, -1), wkDay = shiftDate(day, -7);
+  const last7 = new Set(Array.from({ length: WC_VOL_DAYS }, (_, i) => shiftDate(day, -WC_VOL_DAYS + i)));
+  const byCampaign = new Map();
+  const total = { now: 0, prev: 0, wk: 0, last7: 0 };
+  for (const r of insightRows) {
+    const d = r.date_start, spend = parseFloat(r.spend) || 0;
+    if (!byCampaign.has(r.campaign_id)) byCampaign.set(r.campaign_id, { id: r.campaign_id, name: r.campaign_name, now: 0, prev: 0, wk: 0, last7: 0 });
+    const c = byCampaign.get(r.campaign_id);
+    for (const [k, hit] of [['now', d === day], ['prev', d === prevDay], ['wk', d === wkDay], ['last7', last7.has(d)]]) {
+      if (hit) { c[k] += spend; total[k] += spend; }
+    }
+  }
+  const avg = (o) => ({ ...o, last7Avg: o.last7 / WC_VOL_DAYS });
+  return {
+    total: avg(total),
+    campaigns: [...byCampaign.values()].filter(c => c.now || c.prev || c.last7).map(avg).sort((a, b) => b.now - a.now),
+  };
+}
+
+// Which ad accounts count: the login sees several (DTC, Teens, Womens, Daily
+// Flex… plus other businesses'), and Shopify's facebook traffic comes from more
+// than one of them, so "the highest-spend account" under-counts. An account is
+// included when at least one of its campaigns matches a facebook utm_campaign
+// Shopify saw in the window (by id or by folded name) — that keeps other
+// businesses' accounts out without a hard-coded list.
+app.get('/api/what-changed-spend', requireAuth, async (req, res) => {
+  const day = ptYesterdayDate(req.query.date);
+  const since = shiftDate(day, -WC_VOL_DAYS);
+  const cacheKey = endpointCacheKey('what-changed-spend', { day });
+  const cached = getEndpointCache(cacheKey);
+  if (cached) return res.json(cached);
+  try {
+    const accResp = await metaFetchWithBackoff(`${META_BASE_URL}/me/adaccounts?fields=id,name&limit=100&${metaParams(req.accessToken)}`, 'what-changed-spend:accounts');
+    const accounts = (accResp.data || []).slice(0, 25);
+    const timeRange = encodeURIComponent(JSON.stringify({ since, until: day }));
+    const perAccount = await Promise.all(accounts.map(async (a) => {
+      const rows = [];
+      let url = `${META_BASE_URL}/${a.id}/insights?level=campaign&fields=campaign_id,campaign_name,spend&time_increment=1&limit=500&time_range=${timeRange}&${metaParams(req.accessToken)}`;
+      try {
+        for (let page = 0; url && page < 20; page++) {
+          const j = await metaFetchWithBackoff(url, 'what-changed-spend:' + a.id);
+          rows.push(...(j.data || []));
+          url = j.paging?.next || null;
+        }
+      } catch (e) { return { account: a, rows: [], error: e.message }; }
+      return { account: a, rows };
+    }));
+
+    const shop = await runShopifyQLTable(`FROM sessions SHOW sessions WHERE utm_source = 'facebook' GROUP BY utm_campaign SINCE ${since} UNTIL ${day} ORDER BY sessions DESC LIMIT ${WC_LIMIT}`);
+    const sg = qlAccessor(shop.columns);
+    const shopKeys = new Set(shop.rows.map(r => String(sg.get(r, sg.idx('utm_campaign')) ?? '')).flatMap(v => [v, wcCampaignKey(v)]));
+    const matches = (r) => shopKeys.has(String(r.campaign_id)) || shopKeys.has(wcCampaignKey(r.campaign_name));
+
+    const included = perAccount.filter(x => x.rows.some(r => (parseFloat(r.spend) || 0) > 0 && matches(r)));
+    const rows = included.flatMap(x => x.rows);
+    const w = wcSpendWindows(rows, day);
+    // The page joins campaign rows by folded name. Meta campaigns with spend
+    // that no Shopify row carries (renamed since their ads went out, or traffic
+    // tagged by a different spelling) are listed rather than silently dropped.
+    for (const c of w.campaigns) { c.key = wcCampaignKey(c.name); c.matched = shopKeys.has(String(c.id)) || shopKeys.has(c.key); }
+    const payload = {
+      date: day,
+      accounts: included.map(x => ({ id: x.account.id, name: x.account.name })),
+      accountsSkipped: perAccount.filter(x => !included.includes(x)).map(x => ({ id: x.account.id, name: x.account.name, error: x.error || null })),
+      ...w,
+      unmatched: w.campaigns.filter(c => !c.matched && c.now > 0),
+    };
+    setEndpointCache(cacheKey, payload, 10 * 60 * 1000);
+    res.json(payload);
+  } catch (err) {
+    if (err.code === 190) { clearTokenCookie(res); return res.status(401).json({ error: 'Session expired. Please log in again.' }); }
+    console.error('[what-changed-spend] error:', err);
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
@@ -6937,7 +7116,8 @@ app.get('/api/opportunity-data', async (req, res) => {
       lp: lpR.error ? { error: lpR.error } : oppScore(lpR.table, 'landing_page_path', P, days, totalN),
       ad: adR.error ? { error: adR.error } : oppScore(adR.table, 'utm_content', P, days, totalN),
     };
-    setEndpointCache(cacheKey, payload, 30 * 60 * 1000);
+    // A partial failure (one pull throttled) must not stick for half an hour.
+    if (!payload.lp.error && !payload.ad.error) setEndpointCache(cacheKey, payload, 30 * 60 * 1000);
     res.json(payload);
   } catch (err) {
     console.error('[opportunity-data] error:', err);

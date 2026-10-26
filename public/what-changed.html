@@ -144,7 +144,7 @@ function stepLine(f, z) {
   const lead = chained.sort((a, b) => Math.abs(f[b].txns) - Math.abs(f[a].txns))[0];
   const flagged = ['atc', 'reach', 'complete'].filter(k => f[k].z != null && Math.abs(f[k].z) >= z);
   const bits = [];
-  if (lead && Math.abs(f[lead].txns) >= 1) bits.push(`mostly ${STEP_LABEL[lead]} (${fmtPct(f[lead].pct)})`);
+  if (lead && Math.abs(f[lead].txns) >= 1 && f[lead].z != null) bits.push(`mostly ${STEP_LABEL[lead]} (${fmtPct(f[lead].pct)})`);
   for (const k of flagged) if (k !== lead) bits.push(`${STEP_LABEL[k]} ${fmtPct(f[k].pct)}`);
   return bits.length ? `<small class="step" title="Which funnel step moved CVR">${bits.join(' · ')}</small>` : '';
 }
@@ -187,6 +187,7 @@ function renderHeadline(d) {
       const st = h.funnel[k];
       return [STEP_LABEL[k], `${fmtCvr(st.now)} ${pctSpan(st.pct)}${st.txns != null ? ` <small class="${cls(st.txns)}">${fmtTx(st.txns)} tx</small>` : ''} ${noiseTag(st.z)}`];
     })) : ''}
+    ${spendTile(d)}
     ${kpi('Web orders · AOV', w.now ? `${fmtN(w.now.orders)} · $${w.now.aov.toFixed(2)}` : '–', [
       ['orders vs yesterday', w.now && w.prev ? pctSpan(pctOf(w.now.orders, w.prev.orders), 1) : '–'],
       ['orders vs expected', w.now ? `${pctSpan(pctOf(w.now.orders, w.expectedOrders), 1)} <small class="neu">(${fmtN(w.expectedOrders)})</small>` : '–'],
@@ -216,6 +217,40 @@ function renderHeadline(d) {
   return `<div class="card"><h3>Headline</h3><p class="card__sub">Yesterday is ${esc(d.windows.prevDay)}; same day last week is ${esc(d.windows.lastWeek)}. Expected uses ${esc(d.windows.volume.start)}–${esc(d.windows.volume.end)} volume × weekday index ${d.weekdayIndex.toFixed(2)} and ${esc(d.windows.cvr.start)}–${esc(d.windows.cvr.end)} CVR.</p>${html}<div class="verdict">${parts.join(' ')}</div></div>`;
 }
 
+// ── Meta spend (needs the Facebook login; every other number doesn't) ─────
+// Cost per Shopify transaction is shown for Meta as a whole only. Per campaign
+// it would be wrong: renamed campaigns reach Shopify under their old name, so a
+// campaign's spend and its sessions can sit on different rows.
+function metaChannel(d) { return (d.dims.channel?.rows || []).find(r => r.source === 'facebook' && r.medium === 'paid_social,paid'); }
+function spendTile(d) {
+  const sp = state.spend;
+  if (sp === 'auth') return `<div class="kpi"><div class="kpi__label">Meta spend</div><div class="kpi__cmp" style="display:block;margin-top:8px">Connect Facebook (top of the page) to add spend and cost per Shopify transaction.</div></div>`;
+  if (sp === 'loading') return `<div class="kpi"><div class="kpi__label">Meta spend</div><div class="kpi__cmp" style="display:block;margin-top:8px">Loading…</div></div>`;
+  if (!sp || sp.error) return sp?.error ? `<div class="kpi"><div class="kpi__label">Meta spend</div><div class="kpi__cmp" style="display:block;margin-top:8px" class="down">Couldn't load: ${esc(sp.error)}</div></div>` : '';
+  const t = sp.total, m = metaChannel(d);
+  const cpt = m && m.txns > 0 ? t.now / m.txns : null;
+  const cpt7 = m && m.last7?.txnsPerDay > 0 ? t.last7Avg / m.last7.txnsPerDay : null;
+  const pctOf = (a, b) => (a != null && b) ? a / b - 1 : null;
+  const usd = (v) => v == null ? '–' : '$' + Math.round(v).toLocaleString();
+  // Cost going UP is bad, so its colour is inverted.
+  const costSpan = (p) => `<span class="${cls(p == null ? null : -p)}">${fmtPct(p, 1)}</span>`;
+  return `<div class="kpi" title="Accounts: ${esc(sp.accounts.map(a => a.name).join(', '))}"><div class="kpi__label">Meta spend</div><div class="kpi__val">${usd(t.now)}</div><div class="kpi__cmp">
+    <span>vs yesterday</span><span>${pctSpan(pctOf(t.now, t.prev), 1)}</span>
+    <span>vs 7-day avg</span><span>${pctSpan(pctOf(t.now, t.last7Avg), 1)} <small class="neu">(${usd(t.last7Avg)})</small></span>
+    <span>per Shopify txn</span><span>${usd(cpt)} ${costSpan(pctOf(cpt, cpt7))} <small class="neu">vs 7d ${usd(cpt7)}</small></span>
+  </div></div>`;
+}
+function spendByKey() {
+  const sp = state.spend, map = new Map();
+  if (!sp || typeof sp !== 'object' || sp.error) return map;
+  for (const c of sp.campaigns) {
+    const cur = map.get(c.key) || { now: 0, prev: 0, last7Avg: 0 };
+    cur.now += c.now; cur.prev += c.prev; cur.last7Avg += c.last7Avg;
+    map.set(c.key, cur);
+  }
+  return map;
+}
+
 // ── Mix vs rate ────────────────────────────────────────────────────────────
 function renderMixRate(d) {
   const block = (title, m) => {
@@ -233,7 +268,7 @@ function renderMixRate(d) {
 
 // ── Movers ─────────────────────────────────────────────────────────────────
 const DIM_LABEL = { channel: 'Channels', campaign: 'Campaigns', lp: 'Landing pages', ad: 'Ads' };
-let state = { dim: 'campaign', showNoise: false, data: null };
+let state = { dim: 'campaign', showNoise: false, data: null, spend: null };
 try { const s = JSON.parse(localStorage.getItem('wc:view:v1') || '{}'); if (DIM_LABEL[s.dim]) state.dim = s.dim; state.showNoise = !!s.showNoise; } catch (e) {}
 const saveView = () => { try { localStorage.setItem('wc:view:v1', JSON.stringify({ dim: state.dim, showNoise: state.showNoise })); } catch (e) {} };
 
@@ -249,6 +284,14 @@ function renderMovers() {
   const shown = (state.showNoise ? all : all.filter(isSignal)).slice(0, 40);
   const hidden = all.length - all.filter(isSignal).length;
   const maxImp = Math.max(1, ...shown.map(r => Math.abs(r.impact.txns)));
+  const spendMap = dim === 'campaign' ? spendByKey() : null;
+  const showSpend = spendMap && spendMap.size > 0;
+  const spendCell = (r) => {
+    const c = r.source === 'facebook' && spendMap.get(r.campaignKey);
+    if (!c) return '<td class="neu">–</td>';
+    const pctOf = (a, b) => b ? a / b - 1 : null;
+    return `<td>$${Math.round(c.now).toLocaleString()}<small>yday ${fmtPct(pctOf(c.now, c.prev))} · 7d ${fmtPct(pctOf(c.now, c.last7Avg))}</small></td>`;
+  };
   const tabs = Object.keys(DIM_LABEL).map(k => `<button data-dim="${k}" class="${k === dim ? 'on' : ''}">${DIM_LABEL[k]} <small>(${(d.dims[k]?.rows || []).filter(isSignal).length})</small></button>`).join('');
   const body = shown.map(r => {
     const link = drillLink(r, dim, d.date);
@@ -262,6 +305,7 @@ function renderMovers() {
       <td>${fmtCvr(r.cvr)}<small>28d ${fmtCvr(r.expected.cvr)}</small>${stepLine(r.funnel, d.calibration.z)}</td>
       <td><b class="${cls(r.impact.txns)}">${fmtTx(r.impact.txns)}</b><span class="bar" style="width:${w}px;background:${r.impact.txns >= 0 ? 'var(--positive)' : 'var(--negative)'}"></span><small>vol ${fmtTx(r.impact.volumeTxns)} · CVR ${fmtTx(r.impact.rateTxns)}</small></td>
       <td class="${cls(r.impact.dollars)}">${fmtUsd(r.impact.dollars)}</td>
+      ${showSpend ? spendCell(r) : ''}
       <td><a href="${link.href}">${link.label}</a></td>
     </tr>`;
   }).join('');
@@ -271,8 +315,9 @@ function renderMovers() {
     <p class="card__sub">Ranked by estimated transactions vs expected: volume (sessions vs expected × 28-day CVR) plus CVR (sessions × CVR change). Dollars use the 28-day web AOV ($${(d.aov || 0).toFixed(2)}). Faded rows are within normal noise.</p>
     <div class="tabs">${tabs}</div>
     ${D.error ? `<div class="status err">${esc(D.error)}</div>` : `<div class="tbl-wrap"><table class="wc"><thead><tr>
-      <th>${DIM_LABEL[dim].replace(/s$/, '')}</th><th>Sessions</th><th>vs exp</th><th>vs yday</th><th>vs last wk</th><th>CVR</th><th>Impact (txns)</th><th>≈ $</th><th></th>
+      <th>${DIM_LABEL[dim].replace(/s$/, '')}</th><th>Sessions</th><th>vs exp</th><th>vs yday</th><th>vs last wk</th><th>CVR</th><th>Impact (txns)</th><th>≈ $</th>${showSpend ? '<th title="Meta spend, joined on campaign name">Meta spend</th>' : ''}<th></th>
     </tr></thead><tbody>${body || '<tr><td colspan="9" class="neu">Nothing beyond noise at this level.</td></tr>'}</tbody></table></div>`}
+    ${showSpend && state.spend.unmatched?.length ? `<div class="opp-flag">${fmtUsd(state.spend.unmatched.reduce((a, c) => a + c.now, 0)).replace('+', '')} of today's Meta spend is on campaigns no Shopify row carries under their current name or ID, usually because the campaign was renamed after its ads went out: ${state.spend.unmatched.slice(0, 4).map(c => `<b>${esc(c.name)}</b> ($${Math.round(c.now).toLocaleString()})`).join(', ')}.</div>` : ''}
     <div class="tbl-foot"><label><input type="checkbox" id="show-noise" ${state.showNoise ? 'checked' : ''}> Show rows within noise (${hidden} hidden)</label> · top 40 shown · rows need ≥ ${d.minSessions} actual or expected sessions.${trunc}</div>
   </div>`;
 }
@@ -418,6 +463,22 @@ async function loadOpp(day) {
   }
 }
 
+async function loadSpend(day) {
+  // Ask first, so a signed-out viewer gets the prompt rather than a 401.
+  try {
+    const st = await fetch('/api/auth-status').then(r => r.json());
+    if (!st.authenticated) { state.spend = 'auth'; render(); return; }
+  } catch (e) { /* fall through and let the spend call decide */ }
+  state.spend = 'loading'; render();
+  try {
+    const r = await fetch('/api/what-changed-spend?date=' + encodeURIComponent(day));
+    if (r.status === 401) { state.spend = 'auth'; render(); return; }
+    const sp = await r.json();
+    state.spend = r.ok ? sp : { error: sp.error || r.statusText };
+  } catch (err) { state.spend = { error: err.message }; }
+  if (state.data?.date === day) render();
+}
+
 async function load() {
   const day = document.getElementById('day-input').value;
   const out = document.getElementById('out');
@@ -434,6 +495,7 @@ async function load() {
     history.replaceState(null, '', `?date=${d.date}`);
     render();
     loadOpp(d.date);
+    loadSpend(d.date);
   } catch (err) {
     out.innerHTML = `<div class="status err">Couldn't load: ${esc(err.message)}</div>`;
   }
