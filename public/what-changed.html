@@ -333,7 +333,22 @@ function renderEntries(d) {
     : `<div class="neu" style="font-size:0.85rem">None.</div>`;
   return `<div class="card"><h3>Appeared & disappeared</h3>
     <p class="card__sub">Many day-over-day moves are just launches and pauses. <b>Appeared</b>: 100+ sessions today, and under 10% of that expected from last week. <b>Disappeared</b>: 100+ sessions yesterday and expected, under 10% of that today, which usually means a pause, an edited UTM or a broken link.</p>
+    ${trackingNote(d)}
     <div class="two"><div class="tbl-wrap">${list(d.appeared, 'new')}</div><div class="tbl-wrap">${list(d.disappeared, 'gone')}</div></div></div>`;
+}
+
+// Meta UTM hygiene. ID- and macro-tagged traffic is real but lands on rows of
+// its own, so when its share jumps, the launches and pauses above may just be a
+// UTM template changing.
+function trackingNote(d) {
+  const t = d.tracking;
+  if (!t || !t.metaSessions) return '';
+  const share = (n) => (n / t.metaSessions * 100).toFixed(1) + '%';
+  const bits = [];
+  if (t.campaignById) bits.push(`<b>${fmtN(t.campaignById)}</b> (${share(t.campaignById)}) carried a campaign ID instead of a name${t.facebookConnected ? (t.idsResolved ? ', folded into the named rows using Meta' : '') : '; connect Facebook to fold those into the named rows'}`);
+  if (t.campaignMacro) bits.push(`<b>${fmtN(t.campaignMacro)}</b> an unfilled <code>{{campaign.name}}</code>`);
+  if (t.adMacro) bits.push(`<b>${fmtN(t.adMacro)}</b> an unfilled ad-name macro`);
+  return bits.length ? `<div class="opp-flag">Meta UTM tracking on ${esc(d.date)}: of ${fmtN(t.metaSessions)} Meta sessions, ${bits.join('; ')}.</div>` : '';
 }
 
 function renderMethod(d) {
