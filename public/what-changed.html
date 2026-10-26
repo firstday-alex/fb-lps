@@ -233,7 +233,7 @@ function renderHeadline(d) {
     }
   }
   const cnt = (k) => (d.dims[k]?.rows || []).filter(isSignal).length;
-  parts.push(`Beyond noise underneath: ${cnt('channel')} channels, ${cnt('campaign')} campaigns, ${cnt('lp')} landing pages, ${cnt('ad')} ads (ad flags run lenient; see the method note). The table below ranks them by impact.`);
+  parts.push(`Beyond noise underneath: ${cnt('channel')} channels, ${cnt('campaign')} campaigns, ${cnt('lp')} landing pages, ${cnt('ad')} ads . The table below ranks them by impact.`);
   return `<div class="card"><h3>Headline</h3><p class="card__sub">Yesterday is ${esc(d.windows.prevDay)}; same day last week is ${esc(d.windows.lastWeek)}. Expected uses ${esc(d.windows.volume.start)}–${esc(d.windows.volume.end)} volume × weekday index ${d.weekdayIndex.toFixed(2)} and ${esc(d.windows.cvr.start)}–${esc(d.windows.cvr.end)} CVR.</p>${html}<div class="verdict">${parts.join(' ')}</div></div>`;
 }
 
@@ -377,7 +377,8 @@ function renderMethod(d) {
     A move counts as beyond noise when it is at least ${d.calibration.z} standard deviations from expected (|z| ≥ ${d.calibration.z}).
     The standard deviation is ordinary sampling error plus the store's own extra day-to-day swing, measured per channel over the last 28 days.
     Currently that extra swing is about <b>${Math.round(Math.sqrt(c.cVol) * 100)}%</b> on sessions and <b>${Math.round(Math.sqrt(c.tau2) * 100)}%</b> on CVR (median across ${c.seriesUsed.volume} channels).
-    Landing pages and ads use the channel figure too; their real swings are probably larger, so read a borderline flag there as borderline.
+    Campaigns, landing pages and ads start from the channel figure, then each level is checked against itself: on any one day most of its rows aren't really shifting, so when that level's z-scores spread wider than they should, all of them are scaled down by that much.
+    Today's scaling: ${['campaign', 'lp', 'ad'].map(k => { const ns = d.dims[k]?.nullScale; return ns ? `${DIM_LABEL[k].toLowerCase()} ÷${ns.volume.toFixed(1)} on sessions, ÷${ns.rate.toFixed(1)} on CVR` : null; }).filter(Boolean).join('; ')}.
     Numbers are Shopify sessions and Shopify-attributed CVR, which runs below Ads Manager by design. Transactions are estimated as sessions × CVR.
   </div></div>`;
 }

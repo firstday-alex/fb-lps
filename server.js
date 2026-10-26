@@ -6675,6 +6675,32 @@ function wcFunnel(now, base, rateTxn, cal) {
   return out;
 }
 
+// Empirical null (Efron). Landing pages and ads borrow the channel-level noise
+// calibration, but a single ad swings far more than a channel does — on
+// 2026-10-24 that flagged 109 of 168 ads "beyond noise". On any one day most
+// rows at a level are NOT genuinely shifting, so the spread of that level's own
+// z-scores (robust: 1.4826 × MAD) says how much the noise is understated. If it
+// is wider than 1, divide that level's z-scores by it; never sharpen, and skip
+// levels with too few rows to estimate a spread.
+function wcEmpiricalNull(rows, minRows = 20) {
+  const scaleOf = (k) => {
+    const zs = rows.map(r => r.z[k]).filter(z => z != null && isFinite(z));
+    if (zs.length < minRows) return 1;
+    const med = wcMedian(zs);
+    return Math.max(1, 1.4826 * wcMedian(zs.map(z => Math.abs(z - med))));
+  };
+  const scale = { volume: scaleOf('volume'), rate: scaleOf('rate') };
+  for (const r of rows) {
+    if (r.z.volume != null) r.z.volume /= scale.volume;
+    if (r.z.rate != null) r.z.rate /= scale.rate;
+    r.signal.volume = r.z.volume != null && Math.abs(r.z.volume) >= WC_Z;
+    r.signal.rate = r.z.rate != null && Math.abs(r.z.rate) >= WC_Z;
+    if (r.signal.weekdayPattern && r.signal.volume) r.signal.weekdayPattern = false;
+    else if (!r.signal.weekdayPattern && r.prev.sessions >= 100 && r.prev.pct != null && Math.abs(r.prev.pct) >= 0.2 && r.z.volume != null && !r.signal.volume) r.signal.weekdayPattern = true;
+  }
+  return scale;
+}
+
 // Blended-CVR change split into rate (channels converting differently) and mix
 // (traffic shifting between channels that convert differently):
 //   Δp = Σ s1(p1 − p0) + Σ (s1 − s0)(p0 − P0)
@@ -6855,8 +6881,11 @@ app.get('/api/what-changed-data', async (req, res) => {
         const parts = (t.now.map.get(k) || t.prev.map.get(k) || t.last7.map.get(k)).parts;
         rows.push({ ...labelFor[dim](parts), ...wcScore({ now: t.now.map.get(k), prev: t.prev.map.get(k), wk: t.wk.map.get(k), last7: t.last7.map.get(k), base: t.base.map.get(k) }, wdIndex, cal, aov) });
       }
+      const kept = rows.filter(keep).sort(byImpact);
+      const nullScale = wcEmpiricalNull(kept);
       dims[dim] = {
-        rows: rows.filter(keep).sort(byImpact),
+        rows: kept,
+        nullScale,
         // When a window hits the cap, a row absent from it had at most this many
         // sessions there.
         truncatedBelow: Object.fromEntries(Object.entries(t).filter(([, v]) => v.rows >= WC_LIMIT).map(([w, v]) => [w, v.floor])),
