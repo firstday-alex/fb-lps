@@ -65,6 +65,7 @@
     table.wc th { font-size:0.66rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-secondary); font-weight:700; }
     table.wc tr.noise td { opacity:0.55; }
     table.wc td small { color:var(--text-secondary); display:block; }
+    table.wc td small.step { white-space:normal; max-width:190px; margin-left:auto; color:#1c1e21; }
     table.wc a { color:var(--fb-blue); text-decoration:none; font-size:0.75rem; font-weight:600; }
     .bar { display:inline-block; height:8px; border-radius:2px; vertical-align:middle; margin-left:6px; }
     .tbl-foot { font-size:0.75rem; color:var(--text-secondary); margin-top:8px; }
@@ -120,6 +121,22 @@ function drillLink(row, dim, day) {
   return { href: '/conversion-impact.html' + qs, label: 'By source →' };
 }
 
+// Funnel steps. reach × complete = CVR exactly; add-to-cart rides alongside
+// (sessions can check out without a cart add), so it never gets txns.
+const STEP_LABEL = { atc: 'add-to-cart rate', reach: 'reached checkout', complete: 'checkout completion' };
+function stepLine(f, z) {
+  // Name the chained step carrying most of the CVR impact, and any step that
+  // moved beyond noise on its own.
+  if (!f) return '';
+  const chained = ['reach', 'complete'].filter(k => f[k].txns != null);
+  const lead = chained.sort((a, b) => Math.abs(f[b].txns) - Math.abs(f[a].txns))[0];
+  const flagged = ['atc', 'reach', 'complete'].filter(k => f[k].z != null && Math.abs(f[k].z) >= z);
+  const bits = [];
+  if (lead && Math.abs(f[lead].txns) >= 1) bits.push(`mostly ${STEP_LABEL[lead]} (${fmtPct(f[lead].pct)})`);
+  for (const k of flagged) if (k !== lead) bits.push(`${STEP_LABEL[k]} ${fmtPct(f[k].pct)}`);
+  return bits.length ? `<small class="step" title="Which funnel step moved CVR">${bits.join(' · ')}</small>` : '';
+}
+
 function badges(r, z) {
   const out = [];
   if (r.signal.isNew) out.push('<span class="badge new" title="No CVR history in the prior 28 days">new</span>');
@@ -154,6 +171,10 @@ function renderHeadline(d) {
       ['from volume', `<span class="${cls(h.impact.volumeTxns)}">${fmtTx(h.impact.volumeTxns)}</span>`],
       ['from CVR', `<span class="${cls(h.impact.rateTxns)}">${fmtTx(h.impact.rateTxns)}</span>`],
     ])}
+    ${h.funnel ? kpi('Funnel steps vs 28-day', `<span style="font-size:1rem">where CVR moved</span>`, ['atc', 'reach', 'complete'].map(k => {
+      const st = h.funnel[k];
+      return [STEP_LABEL[k], `${fmtCvr(st.now)} ${pctSpan(st.pct)}${st.txns != null ? ` <small class="${cls(st.txns)}">${fmtTx(st.txns)} tx</small>` : ''} ${noiseTag(st.z)}`];
+    })) : ''}
     ${kpi('Web orders · AOV', w.now ? `${fmtN(w.now.orders)} · $${w.now.aov.toFixed(2)}` : '–', [
       ['orders vs yesterday', w.now && w.prev ? pctSpan(pctOf(w.now.orders, w.prev.orders), 1) : '–'],
       ['orders vs expected', w.now ? `${pctSpan(pctOf(w.now.orders, w.expectedOrders), 1)} <small class="neu">(${fmtN(w.expectedOrders)})</small>` : '–'],
@@ -168,6 +189,16 @@ function renderHeadline(d) {
   if (!big(sessZ) && !big(cvrZ)) parts.push(`<b>Site-wide, ${esc(d.date)} was a normal day</b> for its weekday: sessions and CVR are both within normal day-to-day noise of expected.`);
   else parts.push(`<b>Site-wide, ${esc(d.date)} was unusual:</b> ${[big(sessZ) ? `sessions ${fmtPct(h.expected.pct, 1)} vs expected` : null, big(cvrZ) ? `CVR ${fmtPts(h.cvr - h.expected.cvr)} vs expected` : null].filter(Boolean).join(' and ')}.`);
   if (h.prev.pct != null && Math.abs(h.prev.pct) >= 0.1 && !big(sessZ)) parts.push(`The ${fmtPct(h.prev.pct, 0)} move in sessions vs yesterday is mostly the weekday pattern.`);
+  // A step that broke site-wide, and in most big channels at once, is a site
+  // or checkout problem, not a marketing one — say so first.
+  if (h.funnel) {
+    const broke = ['atc', 'reach', 'complete'].filter(k => h.funnel[k].z != null && h.funnel[k].z <= -d.calibration.z);
+    for (const k of broke) {
+      const chans = (d.dims.channel?.rows || []).filter(r => r.sessions >= 500 && r.funnel);
+      const down = chans.filter(r => r.funnel[k].pct != null && r.funnel[k].pct < 0).length;
+      parts.push(`<b class="down">${STEP_LABEL[k][0].toUpperCase() + STEP_LABEL[k].slice(1)} is down beyond noise site-wide (${fmtPct(h.funnel[k].pct, 1)})</b>${chans.length ? `, and down in ${down} of ${chans.length} channels with 500+ sessions` : ''}${down >= Math.max(2, chans.length - 1) && k === 'complete' ? ', which points at checkout or payments rather than traffic' : ''}.`);
+    }
+  }
   const cnt = (k) => (d.dims[k]?.rows || []).filter(isSignal).length;
   parts.push(`Beyond noise underneath: ${cnt('channel')} channels, ${cnt('campaign')} campaigns, ${cnt('lp')} landing pages, ${cnt('ad')} ads (ad flags run lenient; see the method note). The table below ranks them by impact.`);
   return `<div class="card"><h3>Headline</h3><p class="card__sub">Yesterday is ${esc(d.windows.prevDay)}; same day last week is ${esc(d.windows.lastWeek)}. Expected uses ${esc(d.windows.volume.start)}–${esc(d.windows.volume.end)} volume × weekday index ${d.weekdayIndex.toFixed(2)} and ${esc(d.windows.cvr.start)}–${esc(d.windows.cvr.end)} CVR.</p>${html}<div class="verdict">${parts.join(' ')}</div></div>`;
@@ -216,7 +247,7 @@ function renderMovers() {
       <td>${pctSpan(r.expected.pct)}</td>
       <td>${pctSpan(r.prev.pct)}<small>${fmtN(r.prev.sessions)}</small></td>
       <td>${pctSpan(r.lastWeek.pct)}<small>${fmtN(r.lastWeek.sessions)}</small></td>
-      <td>${fmtCvr(r.cvr)}<small>28d ${fmtCvr(r.expected.cvr)}</small></td>
+      <td>${fmtCvr(r.cvr)}<small>28d ${fmtCvr(r.expected.cvr)}</small>${stepLine(r.funnel, d.calibration.z)}</td>
       <td><b class="${cls(r.impact.txns)}">${fmtTx(r.impact.txns)}</b><span class="bar" style="width:${w}px;background:${r.impact.txns >= 0 ? 'var(--positive)' : 'var(--negative)'}"></span><small>vol ${fmtTx(r.impact.volumeTxns)} · CVR ${fmtTx(r.impact.rateTxns)}</small></td>
       <td class="${cls(r.impact.dollars)}">${fmtUsd(r.impact.dollars)}</td>
       <td><a href="${link.href}">${link.label}</a></td>

@@ -6456,6 +6456,19 @@ const WC_VOL_DAYS = 7;
 const WC_Z = 2;               // |z| at or beyond this = beyond normal noise
 const WC_MIN_SESSIONS = 50;   // a row needs this many actual OR expected sessions to rank
 const WC_LIMIT = 5000;
+// Funnel counts carried on every pull. CVR = completed ÷ sessions exactly, and
+// splits into reached-checkout ÷ sessions × completed ÷ reached. Cart adds are
+// NOT a link in that chain — sessions reach checkout without one (buy-now, Shop
+// Pay: direct traffic showed 579 checkouts on 523 carts) — so add-to-cart rate
+// is reported alongside as a leading signal, not as a step.
+const WC_FUNNEL = 'sessions_with_cart_additions, sessions_that_reached_checkout, sessions_that_completed_checkout';
+const wcFunnelOf = (g, row) => ({
+  cart: QL_NUM(g.get(row, g.idx('sessions_with_cart_additions'))),
+  chk: QL_NUM(g.get(row, g.idx('sessions_that_reached_checkout'))),
+  done: QL_NUM(g.get(row, g.idx('sessions_that_completed_checkout'))),
+});
+const wcAdd = (a, b) => { a.n += b.n || 0; a.conv += b.conv || 0; a.cart += b.cart || 0; a.chk += b.chk || 0; a.done += b.done || 0; return a; };
+const wcZero = () => ({ n: 0, conv: 0, cart: 0, chk: 0, done: 0 });
 
 // ShopifyQL throttles under burst (fifteen queries go out per request), so run a
 // few at a time and retry a throttled one rather than failing the whole page.
@@ -6503,8 +6516,8 @@ function wcTally(table, dimCols, partsFn = (p) => p) {
     const n = QL_NUM(g.get(row, iS));
     floor = Math.min(floor, n);
     const key = parts.map(p => p == null ? '' : p).join('\u0000');
-    const cur = map.get(key) || { parts, n: 0, conv: 0 };
-    cur.n += n; cur.conv += n * QL_NUM(g.get(row, iC));
+    const cur = map.get(key) || { parts, ...wcZero() };
+    wcAdd(cur, { n, conv: n * QL_NUM(g.get(row, iC)), ...wcFunnelOf(g, row) });
     map.set(key, cur);
   }
   return { map, rows: table.rows.length, floor: Number.isFinite(floor) ? floor : 0 };
@@ -6561,7 +6574,9 @@ function wcScore({ now, prev, wk, last7, base }, wdIndex, cal, aov) {
   const zRate = (!isNew && p1 != null && rateVar > 0) ? (p1 - pB) / Math.sqrt(rateVar) : null;
   const nPrev = prev?.n || 0, nWk = wk?.n || 0;
   const pct = (a, b) => b > 0 ? a / b - 1 : null;
+  const funnel = isNew ? null : wcFunnel(now || wcZero(), base, rateTxn, cal);
   return {
+    funnel,
     sessions: Math.round(n1), cvr: p1, txns: c1,
     prev: { sessions: Math.round(nPrev), cvr: nPrev > 0 ? prev.conv / nPrev : null, pct: pct(n1, nPrev) },
     lastWeek: { sessions: Math.round(nWk), cvr: nWk > 0 ? wk.conv / nWk : null, pct: pct(n1, nWk) },
@@ -6577,6 +6592,34 @@ function wcScore({ now, prev, wk, last7, base }, wdIndex, cal, aov) {
       weekdayPattern: nPrev >= 100 && Math.abs(pct(n1, nPrev)) >= 0.2 && zVol != null && Math.abs(zVol) < WC_Z,
     },
   };
+}
+
+// Where in the funnel a CVR change happened. Each step is scored like CVR is
+// (binomial + the calibrated extra swing — the CVR τ² stands in for each step's,
+// which isn't separately measured) and the row's CVR-driven transactions are
+// split between the two chained steps by log ratio:
+//   ln(CVR₁/CVR₀) = ln(reach₁/reach₀) + ln(complete₁/complete₀)
+// so the two shares always sum to the row's rate impact.
+function wcFunnel(now, base, rateTxn, cal) {
+  if (!base || !base.n || !now.n) return null;
+  const step = (num1, den1, num0, den0) => {
+    const r1 = den1 > 0 ? num1 / den1 : null, r0 = den0 > 0 ? num0 / den0 : null;
+    if (r1 == null || r0 == null) return { now: r1, base: r0, pct: null, z: null };
+    const v = (r0 > 0 && r0 < 1) ? r0 * (1 - r0) / den1 + cal.tau2 * r0 * r0 : 0;
+    return { now: r1, base: r0, pct: r0 > 0 ? r1 / r0 - 1 : null, z: v > 0 ? (r1 - r0) / Math.sqrt(v) : null };
+  };
+  const out = {
+    atc: step(now.cart, now.n, base.cart, base.n),
+    reach: step(now.chk, now.n, base.chk, base.n),
+    complete: step(now.done, now.chk, base.done, base.chk),
+  };
+  const lr = (s) => (s.now > 0 && s.base > 0) ? Math.log(s.now / s.base) : null;
+  const a = lr(out.reach), b = lr(out.complete);
+  if (a != null && b != null && Math.abs(a + b) > 1e-9) {
+    out.reach.txns = rateTxn * a / (a + b);
+    out.complete.txns = rateTxn * b / (a + b);
+  }
+  return out;
 }
 
 // Blended-CVR change split into rate (channels converting differently) and mix
@@ -6631,8 +6674,8 @@ app.get('/api/what-changed-data', async (req, res) => {
   };
 
   const queries = [
-    `FROM sessions SHOW sessions, conversion_rate GROUP BY day SINCE ${seriesStart} UNTIL ${day} ORDER BY day ASC`,
-    `FROM sessions SHOW sessions, conversion_rate GROUP BY utm_source, utm_medium, day SINCE ${seriesStart} UNTIL ${day} ORDER BY sessions DESC LIMIT ${WC_LIMIT}`,
+    `FROM sessions SHOW sessions, conversion_rate, ${WC_FUNNEL} GROUP BY day SINCE ${seriesStart} UNTIL ${day} ORDER BY day ASC`,
+    `FROM sessions SHOW sessions, conversion_rate, ${WC_FUNNEL} GROUP BY utm_source, utm_medium, day SINCE ${seriesStart} UNTIL ${day} ORDER BY sessions DESC LIMIT ${WC_LIMIT}`,
     `FROM sales SHOW average_order_value, orders, total_sales WHERE sales_channel = 'Online Store' GROUP BY day SINCE ${baseStart} UNTIL ${day} ORDER BY day ASC`,
   ];
   const dimSlots = {};
@@ -6640,7 +6683,7 @@ app.get('/api/what-changed-data', async (req, res) => {
     dimSlots[dim] = {};
     for (const [w, range] of Object.entries(windows)) {
       dimSlots[dim][w] = queries.length;
-      queries.push(`FROM sessions SHOW sessions, conversion_rate ${spec.where || ''} GROUP BY ${spec.cols.join(', ')} ${range} ORDER BY sessions DESC LIMIT ${WC_LIMIT}`);
+      queries.push(`FROM sessions SHOW sessions, conversion_rate, ${WC_FUNNEL} ${spec.where || ''} GROUP BY ${spec.cols.join(', ')} ${range} ORDER BY sessions DESC LIMIT ${WC_LIMIT}`);
     }
   }
 
@@ -6654,7 +6697,7 @@ app.get('/api/what-changed-data', async (req, res) => {
     const sg = qlAccessor(siteR.table.columns);
     const site = siteR.table.rows.map(r => {
       const n = QL_NUM(sg.get(r, sg.idx('sessions')));
-      return { day: String(sg.get(r, sg.idx('day')) || '').slice(0, 10), n, conv: n * QL_NUM(sg.get(r, sg.idx('conversion_rate'))) };
+      return { day: String(sg.get(r, sg.idx('day')) || '').slice(0, 10), n, conv: n * QL_NUM(sg.get(r, sg.idx('conversion_rate'))), ...wcFunnelOf(sg, r) };
     });
     const siteByDay = new Map(site.map(r => [r.day, r]));
     const baseDays = Array.from({ length: WC_BASE_DAYS }, (_, i) => shiftDate(day, -WC_BASE_DAYS + i));
@@ -6701,8 +6744,8 @@ app.get('/api/what-changed-data', async (req, res) => {
           source: src, medium: med,
           label: src == null ? '(direct / none)' : `${src} / ${med ?? '(none)'}`, byDay: new Map(),
         });
-        const cur = chanSeries.get(key).byDay.get(d) || { day: d, n: 0, conv: 0 };
-        cur.n += n; cur.conv += conv;
+        const cur = chanSeries.get(key).byDay.get(d) || { day: d, ...wcZero() };
+        wcAdd(cur, { n, conv, ...wcFunnelOf(cg, r) });
         chanSeries.get(key).byDay.set(d, cur);
       }
     }
@@ -6710,7 +6753,7 @@ app.get('/api/what-changed-data', async (req, res) => {
       [...chanSeries.values()].map(c => seriesDays.map(d => c.byDay.get(d) || { day: d, n: 0, conv: 0 })),
       wdIndexByDay,
     );
-    const sum = (byDay, days) => days.reduce((a, d) => { const r = byDay.get(d); if (r) { a.n += r.n; a.conv += r.conv; } return a; }, { n: 0, conv: 0 });
+    const sum = (byDay, days) => days.reduce((a, d) => { const r = byDay.get(d); return r ? wcAdd(a, r) : a; }, wcZero());
 
     const dims = {};
     const keep = (r) => Math.max(r.sessions, r.expected.sessions, r.prev.sessions) >= WC_MIN_SESSIONS;
@@ -6778,7 +6821,9 @@ app.get('/api/what-changed-data', async (req, res) => {
     const siteBase = sum(siteByDay, baseDays);
     const expBasis = chanList.map(expectedBasis);
     const expN = expBasis.reduce((s, b) => s + b.n, 0);
-    const siteCvrBasis = expN > 0 ? { n: siteBase.n, conv: siteBase.n * expBasis.reduce((s, b) => s + b.conv, 0) / expN } : siteBase;
+    // Funnel steps keep the site's own 28-day rates — the channel-mix basis is
+    // only defined for CVR.
+    const siteCvrBasis = expN > 0 ? { ...siteBase, conv: siteBase.n * expBasis.reduce((s, b) => s + b.conv, 0) / expN } : siteBase;
     const siteCal = wcCalibrate([seriesDays.map(d => siteByDay.get(d) || { day: d, n: 0, conv: 0 })], wdIndexByDay);
     const headline = wcScore({ now: siteByDay.get(day), prev: siteByDay.get(prevDay), wk: siteByDay.get(wkDay), last7: sum(siteByDay, last7Days), base: siteCvrBasis }, wdIndex, siteCal, aov);
     const aovRow = (d) => aovByDay.get(d) ? { orders: aovByDay.get(d).orders, sales: aovByDay.get(d).sales, aov: aovOf([d]) } : null;
