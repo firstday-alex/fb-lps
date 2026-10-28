@@ -7007,6 +7007,34 @@ function wcSpendWindows(insightRows, day) {
 // included when at least one of its campaigns matches a facebook utm_campaign
 // Shopify saw in the window (by id or by folded name) — that keeps other
 // businesses' accounts out without a hard-coded list.
+// Shared with the Daily Sweep's Meta check, which needs the same account set
+// with delivery fields on top of spend.
+async function metaShopifyCampaignDays(token, since, day, fields = 'campaign_id,campaign_name,spend', label = 'what-changed-spend') {
+  const accResp = await metaFetchWithBackoff(`${META_BASE_URL}/me/adaccounts?fields=id,name&limit=100&${metaParams(token)}`, label + ':accounts');
+  const accounts = (accResp.data || []).slice(0, 25);
+  const timeRange = encodeURIComponent(JSON.stringify({ since, until: day }));
+  const perAccount = await Promise.all(accounts.map(async (a) => {
+    const rows = [];
+    let url = `${META_BASE_URL}/${a.id}/insights?level=campaign&fields=${fields}&time_increment=1&limit=500&time_range=${timeRange}&${metaParams(token)}`;
+    try {
+      for (let page = 0; url && page < 20; page++) {
+        const j = await metaFetchWithBackoff(url, label + ':' + a.id);
+        rows.push(...(j.data || []));
+        url = j.paging?.next || null;
+      }
+    } catch (e) { return { account: a, rows: [], error: e.message }; }
+    return { account: a, rows };
+  }));
+
+  const shop = await runShopifyQLTable(`FROM sessions SHOW sessions WHERE utm_source = 'facebook' GROUP BY utm_campaign SINCE ${since} UNTIL ${day} ORDER BY sessions DESC LIMIT ${WC_LIMIT}`);
+  const sg = qlAccessor(shop.columns);
+  const shopKeys = new Set(shop.rows.map(r => String(sg.get(r, sg.idx('utm_campaign')) ?? '')).flatMap(v => [v, wcCampaignKey(v)]));
+  const matches = (r) => shopKeys.has(String(r.campaign_id)) || shopKeys.has(wcCampaignKey(r.campaign_name));
+
+  const included = perAccount.filter(x => x.rows.some(r => (parseFloat(r.spend) || 0) > 0 && matches(r)));
+  return { perAccount, included, shopKeys, rows: included.flatMap(x => x.rows) };
+}
+
 app.get('/api/what-changed-spend', requireAuth, async (req, res) => {
   const day = ptYesterdayDate(req.query.date);
   const since = shiftDate(day, -WC_VOL_DAYS);
@@ -7014,29 +7042,7 @@ app.get('/api/what-changed-spend', requireAuth, async (req, res) => {
   const cached = getEndpointCache(cacheKey);
   if (cached) return res.json(cached);
   try {
-    const accResp = await metaFetchWithBackoff(`${META_BASE_URL}/me/adaccounts?fields=id,name&limit=100&${metaParams(req.accessToken)}`, 'what-changed-spend:accounts');
-    const accounts = (accResp.data || []).slice(0, 25);
-    const timeRange = encodeURIComponent(JSON.stringify({ since, until: day }));
-    const perAccount = await Promise.all(accounts.map(async (a) => {
-      const rows = [];
-      let url = `${META_BASE_URL}/${a.id}/insights?level=campaign&fields=campaign_id,campaign_name,spend&time_increment=1&limit=500&time_range=${timeRange}&${metaParams(req.accessToken)}`;
-      try {
-        for (let page = 0; url && page < 20; page++) {
-          const j = await metaFetchWithBackoff(url, 'what-changed-spend:' + a.id);
-          rows.push(...(j.data || []));
-          url = j.paging?.next || null;
-        }
-      } catch (e) { return { account: a, rows: [], error: e.message }; }
-      return { account: a, rows };
-    }));
-
-    const shop = await runShopifyQLTable(`FROM sessions SHOW sessions WHERE utm_source = 'facebook' GROUP BY utm_campaign SINCE ${since} UNTIL ${day} ORDER BY sessions DESC LIMIT ${WC_LIMIT}`);
-    const sg = qlAccessor(shop.columns);
-    const shopKeys = new Set(shop.rows.map(r => String(sg.get(r, sg.idx('utm_campaign')) ?? '')).flatMap(v => [v, wcCampaignKey(v)]));
-    const matches = (r) => shopKeys.has(String(r.campaign_id)) || shopKeys.has(wcCampaignKey(r.campaign_name));
-
-    const included = perAccount.filter(x => x.rows.some(r => (parseFloat(r.spend) || 0) > 0 && matches(r)));
-    const rows = included.flatMap(x => x.rows);
+    const { perAccount, included, shopKeys, rows } = await metaShopifyCampaignDays(req.accessToken, since, day);
     const w = wcSpendWindows(rows, day);
     // The page joins campaign rows by folded name. Meta campaigns with spend
     // that no Shopify row carries (renamed since their ads went out, or traffic
@@ -7317,6 +7323,551 @@ app.get('/api/opportunity-data', async (req, res) => {
     res.json(payload);
   } catch (err) {
     console.error('[opportunity-data] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────
+// DAILY SWEEP — one kickoff that checks every report, yesterday vs the day prior
+// ─────────────────────────────────────────────
+// Each check calls the report's own endpoint (the tab-analysis pattern), so a
+// number the sweep flags is the number the tab shows. The page runs the checks
+// one request each rather than one request for everything: product mix and
+// net AOV page through every order and take ~10s a day each, and all of it
+// together sits too close to Vercel's 60s cap.
+//
+// A day against the day before is mostly weekday pattern (Monday vs Sunday is
+// +20% sessions on a normal week), so every flag also carries the same weekday
+// last week. "Unusual" = beyond noise vs the day prior AND vs last week in the
+// same direction; "weekday" = beyond noise vs the day prior only. The page
+// leads with the first and folds the second away.
+//
+// Noise: counts and rates use What Changed's measured extra variance (passed
+// in by the page from the traffic check), and each list of rows is then put
+// through the same empirical null. Means without a usable variance (session
+// duration, CPM) use a relative threshold instead and say so (`test`).
+const SWEEP_CHECKS = {
+  traffic:  { label: 'Traffic & CVR',            tabs: 'What Changed · CVR by Traffic Source · CVR · Meta / Google / Email & SMS · Landing Pages by Channel' },
+  funnel:   { label: 'Funnel steps',             tabs: 'Funnel Drop-Off' },
+  aov:      { label: 'Order value',              tabs: 'AOV by Traffic Source' },
+  products: { label: 'Product mix',              tabs: 'Product Mix & Units' },
+  orders:   { label: 'Orders, discounts & renewals', tabs: 'Net AOV (on AOV by Traffic Source)' },
+  meta:     { label: 'Meta delivery',            tabs: 'Campaign Performance · Facebook Metrics', needsFacebook: true },
+};
+const SW_Z = 2;
+const SW_KEEP = 15;   // flagged rows kept per list, by impact
+// Beyond noise isn't the same as worth reading: an ad going 22 → 68 sessions
+// clears z = 2. A flag with a dollar estimate must clear this too.
+const SW_MIN_USD = 250;
+// Fallback when the page didn't pass What Changed's calibration (e.g. a check
+// run on its own). Roughly the channel-level values measured on 2026-10-24/26.
+const SW_DEFAULT_CAL = { cVol: 0.07, tau2: 0.008 };
+
+const swCountZ = (n1, n0, c) => {
+  if (n1 == null || n0 == null) return null;
+  const v = n1 + n0 + c * (n1 * n1 + n0 * n0);
+  return v > 0 ? (n1 - n0) / Math.sqrt(v) : null;
+};
+const swRateZ = (x1, n1, x0, n0, tau2) => {
+  if (!(n1 > 0 && n0 > 0)) return null;
+  const p = (x1 + x0) / (n1 + n0);
+  const v = p * (1 - p) * (1 / n1 + 1 / n0) + 2 * tau2 * p * p;
+  return v > 0 ? (x1 / n1 - x0 / n0) / Math.sqrt(v) : null;
+};
+const swMeanZ = (m1, se1, m0, se0) => {
+  if (m1 == null || m0 == null) return null;
+  const v = se1 * se1 + se0 * se0;
+  return v > 0 ? (m1 - m0) / Math.sqrt(v) : null;
+};
+// A relative change on the same footing as a z: the threshold maps to SW_Z.
+// Clamped: from a near-zero base (a campaign switching on) it would be in the
+// thousands, which reads as precision it doesn't have.
+const swThreshZ = (a, b, rel) => (a == null || !b) ? null : Math.max(-20, Math.min(20, ((a - b) / Math.abs(b)) / rel * SW_Z));
+const swVerdict = (z, zWk) => {
+  if (z == null || Math.abs(z) < SW_Z) return null;
+  if (zWk == null) return 'dod';
+  return Math.abs(zWk) >= SW_Z && Math.sign(zWk) === Math.sign(z) ? 'unusual' : 'weekday';
+};
+
+// Per-list empirical null, as in wcEmpiricalNull: with ≥20 rows, a list whose
+// z's are mostly wider than N(0,1) is telling us the noise model is too tight
+// for it, so every z in it is shrunk by the robust spread. Applied to the DoD
+// and last-week z's alike.
+function swApplyNull(items, minRows = 20) {
+  const zs = items.map(i => i.z).filter(z => z != null && isFinite(z));
+  if (zs.length < minRows) return 1;
+  const med = wcMedian(zs);
+  const scale = Math.max(1, 1.4826 * wcMedian(zs.map(z => Math.abs(z - med))));
+  for (const i of items) { if (i.z != null) i.z /= scale; if (i.zWk != null) i.zWk /= scale; }
+  return scale;
+}
+
+// Scored candidates → kept findings: verdict set, nulls applied, the biggest
+// SW_KEEP by impact (or |z| where a metric has no impact).
+function swFlag(items, { nullScale = true } = {}) {
+  const scale = nullScale ? swApplyNull(items) : 1;
+  const out = [];
+  for (const i of items) {
+    i.verdict = swVerdict(i.z, i.zWk);
+    if (!i.verdict) continue;
+    if (i.impact?.usd != null && Math.abs(i.impact.usd) < SW_MIN_USD) continue;
+    if (scale > 1) i.nullScale = Math.round(scale * 100) / 100;
+    out.push(i);
+  }
+  const weight = (i) => i.impact?.usd != null ? Math.abs(i.impact.usd) : Math.abs(i.z) * 0.001;
+  return out.sort((a, b) => weight(b) - weight(a)).slice(0, SW_KEEP);
+}
+
+const swPct = (a, b) => (a == null || !b) ? null : (a - b) / Math.abs(b);
+
+async function sweepTraffic(ctx) {
+  const wc = await ctx.get('/api/what-changed-data', { date: ctx.day });
+  const chanCal = wc.calibration.channel, siteCal = wc.calibration.site;
+  const aov = wc.aov;
+  const findings = [];
+
+  // One row → a sessions candidate and a CVR candidate. Impact is the exact
+  // split of the transaction change vs the day prior:
+  //   volume (n1 − n0)·p0  +  rate n1·(p1 − p0)
+  const score = (r, cal, level, item) => {
+    const n1 = r.sessions, p1 = r.cvr, n0 = r.prev?.sessions, p0 = r.prev?.cvr;
+    const nw = r.lastWeek?.sessions, pw = r.lastWeek?.cvr;
+    if (n0 == null || Math.max(n1, n0) < WC_MIN_SESSIONS) return [];
+    const tag = n0 < 0.1 * n1 ? 'new' : n1 < 0.1 * n0 ? 'gone' : null;
+    // The split is exact when the prior day had enough sessions to have a
+    // CVR; a row that just arrived is valued at its own CVR instead, or a
+    // launch would always read as $0.
+    const pv = n0 >= 100 ? (p0 || 0) : (p1 || 0);
+    const volTx = (n1 - n0) * pv, rateTx = n1 * ((p1 || 0) - (p0 || 0));
+    if (Math.abs(n1 - n0) < 100 && !(Math.min(n1, n0) >= 100)) return [];
+    const out = [{
+      level, item, metric: 'Sessions', unit: 'count', now: n1, prev: n0, wk: nw ?? null, tag,
+      z: swCountZ(n1, n0, cal.cVol), zWk: nw != null ? swCountZ(n1, nw, cal.cVol) : null,
+      impact: { txns: volTx, usd: volTx * aov },
+    }];
+    if (Math.min(n1, n0) >= 100 && (n1 * p1 + n0 * p0) >= 10) {
+      out.push({
+        level, item, metric: 'CVR', unit: 'pct', now: p1, prev: p0, wk: pw ?? null,
+        z: swRateZ(n1 * p1, n1, n0 * p0, n0, cal.tau2),
+        zWk: (nw >= 100 && pw != null) ? swRateZ(n1 * p1, n1, nw * pw, nw, cal.tau2) : null,
+        impact: { txns: rateTx, usd: rateTx * aov },
+        detail: `${Math.round(n1 * p1)} vs ${Math.round(n0 * p0)} transactions`,
+      });
+    }
+    return out;
+  };
+
+  const site = score(wc.headline, siteCal, 'Site', 'All traffic');
+  findings.push(...swFlag(site, { nullScale: false }));
+  const levels = { channel: 'Channel', campaign: 'Campaign', lp: 'Landing page', ad: 'Ad' };
+  for (const [dim, level] of Object.entries(levels)) {
+    const rows = wc.dims[dim]?.rows || [];
+    const cands = rows.flatMap(r => score(r, chanCal, level, r.label));
+    // Sessions and CVR z's have different spreads; null each separately.
+    findings.push(...swFlag(cands.filter(c => c.metric === 'Sessions')), ...swFlag(cands.filter(c => c.metric === 'CVR')));
+  }
+
+  const web = wc.headline.web || {};
+  return {
+    findings,
+    context: {
+      sessions: { now: wc.headline.sessions, prev: wc.headline.prev?.sessions, wk: wc.headline.lastWeek?.sessions },
+      cvr: { now: wc.headline.cvr, prev: wc.headline.prev?.cvr, wk: wc.headline.lastWeek?.cvr },
+      webOrders: { now: web.now?.orders, prev: web.prev?.orders, wk: web.lastWeek?.orders },
+      mixVsYesterday: wc.mixRate?.vsYesterday ? { delta: wc.mixRate.vsYesterday.delta, rate: wc.mixRate.vsYesterday.rate, mix: wc.mixRate.vsYesterday.mix } : null,
+      aov,
+    },
+    // Handed to every other check so they share one noise model.
+    calibration: { cVol: chanCal.cVol, tau2: chanCal.tau2 },
+    href: `/what-changed.html?date=${ctx.day}`,
+    errors: wc.errors?.length ? wc.errors : undefined,
+  };
+}
+
+async function sweepFunnel(ctx) {
+  const [cur, wk] = await Promise.all([
+    ctx.get('/api/funnel-breakdown-data', { start: ctx.day, end: ctx.day }),
+    ctx.get('/api/funnel-breakdown-data', { start: ctx.day, end: ctx.day, compare_start: ctx.wkDay, compare_end: ctx.wkDay }),
+  ]);
+  const wkBySource = new Map((wk.sources || []).map(s => [s.source, s.previous]));
+  const rows = [{ source: 'All traffic', level: 'Site', current: cur.totals.current, previous: cur.totals.previous, wk: wk.totals.previous }]
+    .concat((cur.sources || []).map(s => ({ source: s.source, level: 'Source', current: s.current, previous: s.previous, wk: wkBySource.get(s.source) })));
+
+  // Each step as successes / trials, so it can be tested as a rate. Checkout
+  // reach and completion multiply to CVR, so their transaction effects are
+  // exact; add-to-cart is not in that chain (buy-now and Shop Pay skip the
+  // cart) and bounce is not a conversion step, so they carry no impact.
+  const STEPS = [
+    { metric: 'Add-to-cart rate', x: f => f.atc, n: f => f.sessions },
+    { metric: 'Reached checkout', x: f => f.checkout, n: f => f.sessions, impact: (c, p) => c.sessions * (c.checkout / c.sessions - p.checkout / p.sessions) * (p.checkout ? p.purchase / p.checkout : 0) },
+    { metric: 'Checkout completion', x: f => f.purchase, n: f => f.checkout, impact: (c, p) => c.checkout * (c.purchase / c.checkout - p.purchase / p.checkout) },
+    { metric: 'Bounce rate', x: f => f.bounce * f.sessions, n: f => f.sessions },
+  ];
+  const aov = ctx.cal.aov || null;
+  const byMetric = new Map();
+  const sessionsZ = [];
+  for (const r of rows) {
+    const c = r.current, p = r.previous, w = r.wk;
+    if (!c || !p || Math.min(c.sessions, p.sessions) < 500) continue;
+    for (const st of STEPS) {
+      const n1 = st.n(c), n0 = st.n(p), x1 = st.x(c), x0 = st.x(p);
+      if (!(n1 >= 30 && n0 >= 30)) continue;
+      const tx = st.impact ? st.impact(c, p) : null;
+      const item = {
+        level: r.level, item: r.source, metric: st.metric, unit: 'pct', now: x1 / n1, prev: x0 / n0,
+        wk: w && st.n(w) > 0 ? st.x(w) / st.n(w) : null,
+        z: swRateZ(x1, n1, x0, n0, ctx.cal.tau2),
+        zWk: w && st.n(w) >= 30 ? swRateZ(x1, n1, st.x(w), st.n(w), ctx.cal.tau2) : null,
+        impact: tx != null ? { txns: tx, usd: aov ? tx * aov : null } : null,
+      };
+      if (!byMetric.has(st.metric)) byMetric.set(st.metric, []);
+      byMetric.get(st.metric).push(item);
+    }
+    // Duration is a mean with no variance in the response — a 15% move is
+    // the bar. On 2026-10-26 the site went 127s → 92s, which this catches.
+    sessionsZ.push({
+      level: r.level, item: r.source, metric: 'Avg session duration', unit: 'sec', now: c.duration, prev: p.duration, wk: w?.duration ?? null,
+      z: swThreshZ(c.duration, p.duration, 0.15), zWk: w ? swThreshZ(c.duration, w.duration, 0.15) : null, test: 'threshold ±15%',
+    });
+  }
+  const findings = [];
+  for (const items of byMetric.values()) findings.push(...swFlag(items));
+  findings.push(...swFlag(sessionsZ, { nullScale: false }));
+  return { findings, href: `/funnel-breakdown.html?start=${ctx.day}&end=${ctx.day}&autoload=1` };
+}
+
+async function sweepAov(ctx) {
+  const [cur, wk] = await Promise.all([
+    ctx.get('/api/aov-impact-data', { start: ctx.day, end: ctx.day }),
+    ctx.get('/api/aov-impact-data', { start: ctx.day, end: ctx.day, compare_start: ctx.wkDay, compare_end: ctx.wkDay }),
+  ]);
+  // Rows come per source × landing page with revenue and Σrevenue², which is
+  // all a mean's standard error needs.
+  const roll = (rows) => {
+    const m = new Map([['All traffic', { orders: 0, revenue: 0, sq: 0 }]]);
+    for (const r of rows || []) {
+      for (const k of ['All traffic', r.utm_source || '(direct / none)']) {
+        if (!m.has(k)) m.set(k, { orders: 0, revenue: 0, sq: 0 });
+        const a = m.get(k); a.orders += r.orders; a.revenue += r.revenue; a.sq += r.revenue_sq;
+      }
+    }
+    for (const a of m.values()) {
+      a.aov = a.orders ? a.revenue / a.orders : null;
+      const v = a.orders > 1 ? (a.sq - a.revenue * a.revenue / a.orders) / (a.orders - 1) : null;
+      a.se = v != null && v > 0 ? Math.sqrt(v / a.orders) : null;
+    }
+    return m;
+  };
+  const now = roll(cur.current.rows), prev = roll(cur.previous.rows), lw = roll(wk.previous.rows);
+  const items = [];
+  for (const [k, a] of now) {
+    const b = prev.get(k), w = lw.get(k);
+    if (!b || Math.min(a.orders, b.orders) < 50 || a.se == null || b.se == null) continue;
+    const imp = a.orders * (a.aov - b.aov);
+    items.push({
+      level: k === 'All traffic' ? 'Site' : 'Source', item: k, metric: 'AOV', unit: 'usd', now: a.aov, prev: b.aov, wk: w?.aov ?? null,
+      z: swMeanZ(a.aov, a.se, b.aov, b.se),
+      zWk: w && w.orders >= 50 && w.se != null ? swMeanZ(a.aov, a.se, w.aov, w.se) : null,
+      impact: { usd: imp }, detail: `${a.orders} vs ${b.orders} orders`,
+    });
+  }
+  return {
+    findings: swFlag(items),
+    notes: (cur.current.truncated || cur.previous.truncated) ? ['Order scan was truncated; AOV covers the orders read.'] : undefined,
+    href: `/aov-impact.html?start=${ctx.day}&end=${ctx.day}&autoload=1`,
+  };
+}
+
+async function sweepProducts(ctx) {
+  const [cur, wk] = await Promise.all([
+    ctx.get('/api/product-mix-data', { start: ctx.day, end: ctx.day }),
+    ctx.get('/api/product-mix-data', { start: ctx.day, end: ctx.day, compare_start: ctx.wkDay, compare_end: ctx.wkDay }),
+  ]);
+  const N1 = cur.current.order_count, N0 = cur.previous.order_count, NW = wk.previous.order_count;
+  // Attach rate (share of orders carrying the product), not units: units all
+  // rise on a busy day, and attach rate is what says the mix moved.
+  const findings = [];
+  for (const [lvl, level] of [['type', 'Product type'], ['product', 'Product']]) {
+    const prevBy = new Map((cur.previous.levels?.[lvl] || []).map(x => [x.key, x]));
+    const wkBy = new Map((wk.previous.levels?.[lvl] || []).map(x => [x.key, x]));
+    const keys = new Set([...(cur.current.levels?.[lvl] || []).map(x => x.key), ...prevBy.keys()]);
+    const curBy = new Map((cur.current.levels?.[lvl] || []).map(x => [x.key, x]));
+    const items = [];
+    for (const k of keys) {
+      const a = curBy.get(k) || { orders_with: 0, revenue: 0, units: 0 }, b = prevBy.get(k) || { orders_with: 0, revenue: 0, units: 0 }, w = wkBy.get(k);
+      if (Math.max(a.orders_with, b.orders_with) < 20) continue;
+      const revPer = b.orders_with ? b.revenue / b.orders_with : (a.orders_with ? a.revenue / a.orders_with : 0);
+      const usd = (a.orders_with / N1 - b.orders_with / N0) * N1 * revPer;
+      items.push({
+        level, item: k, metric: 'Attach rate', unit: 'pct', now: a.orders_with / N1, prev: b.orders_with / N0, wk: w ? w.orders_with / NW : null,
+        z: swRateZ(a.orders_with, N1, b.orders_with, N0, ctx.cal.tau2),
+        zWk: w ? swRateZ(a.orders_with, N1, w.orders_with, NW, ctx.cal.tau2) : null,
+        impact: { usd }, detail: `${a.units} vs ${b.units} units`,
+      });
+    }
+    findings.push(...swFlag(items));
+  }
+  return { findings, context: { orders: { now: N1, prev: N0, wk: NW } }, href: `/product-mix.html?start=${ctx.day}&end=${ctx.day}&autoload=1` };
+}
+
+async function sweepOrders(ctx) {
+  const [cur, prev, lw] = await Promise.all([ctx.day, ctx.prevDay, ctx.wkDay].map(d => ctx.get('/api/net-aov-data', { start: d, end: d })));
+  // Parts: C = first-purchase / non-renewal orders with paid merch, R =
+  // subscription renewals, C0/R0 = the $0-merch versions of each.
+  const T = (j, p) => j.parts?.[p]?.totals || {};
+  // Net AOV's spread from the response's $1 histogram of net per order.
+  const histStats = (h) => {
+    let n = 0, s = 0, sq = 0;
+    for (const [k, c] of Object.entries(h || {})) { const x = +k + 0.5; n += c; s += c * x; sq += c * x * x; }
+    if (n < 2) return null;
+    const m = s / n;
+    return { n, mean: m, se: Math.sqrt(Math.max(0, (sq - n * m * m) / (n - 1)) / n) };
+  };
+  const cal = ctx.cal;
+  const items = [];
+  const count = (metric, f, detail) => {
+    const a = f(cur), b = f(prev), w = f(lw);
+    if (Math.max(a, b) < 30) return;
+    items.push({ level: 'Orders', item: metric, metric: 'Orders', unit: 'count', now: a, prev: b, wk: w, z: swCountZ(a, b, cal.cVol), zWk: swCountZ(a, w, cal.cVol), detail });
+  };
+  count('Subscription renewals', j => T(j, 'R').orders || 0, 'Renewals arrive without a session; a drop here is billing, not traffic.');
+  count('First-purchase orders', j => T(j, 'C').orders || 0);
+  count('$0 orders', j => (T(j, 'C0').orders || 0) + (T(j, 'R0').orders || 0), 'Replacements, seeding and samples.');
+
+  const C = (j) => T(j, 'C');
+  const rate = (metric, x, n, note) => {
+    const a = C(cur), b = C(prev), w = C(lw);
+    if (!(n(a) >= 100 && n(b) >= 100)) return;
+    items.push({
+      level: 'First purchase', item: metric, metric, unit: 'pct', now: x(a) / n(a), prev: x(b) / n(b), wk: n(w) ? x(w) / n(w) : null,
+      z: swRateZ(x(a), n(a), x(b), n(b), cal.tau2), zWk: n(w) >= 100 ? swRateZ(x(a), n(a), x(w), n(w), cal.tau2) : null,
+      detail: note,
+    });
+  };
+  rate('Gift attach', t => t.gift_orders || 0, t => t.orders || 0);
+  rate('Protection attach', t => t.prot_orders || 0, t => t.orders || 0);
+
+  const h1 = histStats(cur.parts?.C?.hist_net), h0 = histStats(prev.parts?.C?.hist_net), hw = histStats(lw.parts?.C?.hist_net);
+  if (h1 && h0 && h1.n >= 100 && h0.n >= 100) {
+    const a = C(cur), b = C(prev), w = C(lw);
+    const naov = (t) => t.orders ? t.net / t.orders : null;
+    items.push({
+      level: 'First purchase', item: 'Net AOV', metric: 'Net AOV', unit: 'usd', now: naov(a), prev: naov(b), wk: naov(w),
+      z: swMeanZ(h1.mean, h1.se, h0.mean, h0.se), zWk: hw && hw.n >= 100 ? swMeanZ(h1.mean, h1.se, hw.mean, hw.se) : null,
+      impact: { usd: a.orders * (naov(a) - naov(b)) }, detail: 'Merch net of every discount, per first-purchase order.',
+    });
+    // Discount depth: share of list price given away. Its noise is the AOV's,
+    // so a 3-point move is the bar rather than a fresh variance model.
+    const depth = (t) => t.list ? 1 - t.net / t.list : null;
+    const dz = (x, y) => (x == null || y == null) ? null : (x - y) / 0.03 * SW_Z;
+    items.push({
+      level: 'First purchase', item: 'Discount depth', metric: 'Discount depth', unit: 'pct', now: depth(a), prev: depth(b), wk: depth(w),
+      z: dz(depth(a), depth(b)), zWk: dz(depth(a), depth(w)), test: 'threshold ±3 pts',
+      impact: { usd: -(depth(a) - depth(b)) * a.list }, detail: '1 − net ÷ list price.',
+    });
+  }
+  return {
+    findings: swFlag(items, { nullScale: false }),
+    notes: [cur, prev, lw].some(j => j.truncated) ? ['An order scan was truncated; counts cover the orders read.'] : undefined,
+    href: `/aov-impact.html?start=${ctx.day}&end=${ctx.day}&autoload=1`,
+  };
+}
+
+async function sweepMeta(ctx) {
+  if (!ctx.fbToken) return { skipped: 'Sign in with Facebook to include Meta delivery (spend, CPM, CTR by campaign).' };
+  const { rows, included } = await metaShopifyCampaignDays(ctx.fbToken, ctx.wkDay, ctx.day,
+    'campaign_id,campaign_name,spend,impressions,inline_link_clicks', 'daily-sweep');
+  const by = new Map();
+  const add = (key, name, d, r) => {
+    if (!by.has(key)) by.set(key, { name, days: {} });
+    const x = by.get(key).days[d] || (by.get(key).days[d] = { spend: 0, impr: 0, clicks: 0 });
+    x.spend += parseFloat(r.spend) || 0; x.impr += +r.impressions || 0; x.clicks += +r.inline_link_clicks || 0;
+  };
+  for (const r of rows) {
+    if (![ctx.day, ctx.prevDay, ctx.wkDay].includes(r.date_start)) continue;
+    add(r.campaign_id, r.campaign_name, r.date_start, r);
+    add('__total', 'All matched accounts', r.date_start, r);
+  }
+  const items = [];
+  const Z0 = { spend: 0, impr: 0, clicks: 0 };
+  for (const [id, c] of by) {
+    const a = c.days[ctx.day] || Z0, b = c.days[ctx.prevDay] || Z0, w = c.days[ctx.wkDay] || null;
+    const level = id === '__total' ? 'Meta' : 'Campaign';
+    // Spend is a decision, not a sample: no noise model, just a size bar —
+    // 30% and $500, or a campaign switching on/off.
+    if (Math.abs(a.spend - b.spend) >= 500) {
+      const tag = b.spend < 50 && a.spend >= 500 ? 'new' : a.spend < 50 && b.spend >= 500 ? 'gone' : null;
+      items.push({
+        level, item: c.name, metric: 'Spend', unit: 'usd', now: a.spend, prev: b.spend, wk: w?.spend ?? null, tag,
+        z: swThreshZ(a.spend, b.spend || 1, 0.30), zWk: w ? swThreshZ(a.spend, w.spend || 1, 0.30) : null, test: 'threshold ±30% and $500',
+      });
+    }
+    if (Math.min(a.spend, b.spend) >= 500 && a.impr && b.impr) {
+      const cpm = (x) => x.impr ? x.spend / x.impr * 1000 : null;
+      items.push({
+        level, item: c.name, metric: 'CPM', unit: 'usd', now: cpm(a), prev: cpm(b), wk: w ? cpm(w) : null,
+        z: swThreshZ(cpm(a), cpm(b), 0.20), zWk: w?.impr ? swThreshZ(cpm(a), cpm(w), 0.20) : null, test: 'threshold ±20%',
+      });
+    }
+    if (Math.min(a.clicks, b.clicks) >= 200) {
+      const ctr = (x) => x.impr ? x.clicks / x.impr : null;
+      items.push({
+        level, item: c.name, metric: 'Link CTR', unit: 'pct', now: ctr(a), prev: ctr(b), wk: w ? ctr(w) : null,
+        z: swThreshZ(ctr(a), ctr(b), 0.20), zWk: w?.impr ? swThreshZ(ctr(a), ctr(w), 0.20) : null, test: 'threshold ±20%',
+      });
+    }
+  }
+  const t = by.get('__total')?.days || {};
+  return {
+    findings: swFlag(items, { nullScale: false }).map(f => ({ ...f, impact: f.metric === 'Spend' ? { usd: f.now - f.prev } : null })),
+    context: { spend: { now: t[ctx.day]?.spend ?? 0, prev: t[ctx.prevDay]?.spend ?? 0, wk: t[ctx.wkDay]?.spend ?? 0 }, accounts: included.map(x => x.account.name) },
+    href: `/campaign-analysis.html`,
+  };
+}
+
+const SWEEP_RUNNERS = { traffic: sweepTraffic, funnel: sweepFunnel, aov: sweepAov, products: sweepProducts, orders: sweepOrders, meta: sweepMeta };
+
+// Results persist per day and check, so a run is there for whoever opens the
+// page next, and re-running one check doesn't throw away the others. KV keys
+// expire after 45 days; the local file keeps the newest 200 entries.
+const SWEEP_TTL_S = 45 * 86400;
+const SWEEP_FILE = process.env.SWEEP_FILE
+  || (process.env.VERCEL ? '/tmp/daily-sweep.json' : path.join(__dirname, 'data', 'daily-sweep.json'));
+async function sweepRead(keys) {
+  if (kvClient) return Object.fromEntries(await Promise.all(keys.map(async k => [k, await kvClient.get('daily-sweep:' + k)])));
+  let all = {};
+  try { all = JSON.parse(await fsp.readFile(SWEEP_FILE, 'utf8')); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+  return Object.fromEntries(keys.map(k => [k, all[k] || null]));
+}
+async function sweepWrite(key, value) {
+  if (kvClient) { await kvClient.set('daily-sweep:' + key, value, { ex: SWEEP_TTL_S }); return; }
+  let all = {};
+  try { all = JSON.parse(await fsp.readFile(SWEEP_FILE, 'utf8')); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+  delete all[key]; all[key] = value;
+  const keys = Object.keys(all);
+  for (const k of keys.slice(0, Math.max(0, keys.length - 200))) delete all[k];
+  await fsp.mkdir(path.dirname(SWEEP_FILE), { recursive: true });
+  await fsp.writeFile(SWEEP_FILE, JSON.stringify(all), 'utf8');
+}
+
+app.get('/api/daily-sweep', async (req, res) => {
+  const day = ptYesterdayDate(req.query.date);
+  try {
+    const names = Object.keys(SWEEP_CHECKS);
+    const stored = await sweepRead([...names.map(n => `${day}:${n}`), `${day}:summary`]);
+    res.json({
+      date: day, prevDay: shiftDate(day, -1), lastWeek: shiftDate(day, -7),
+      checks: Object.fromEntries(names.map(n => [n, { ...SWEEP_CHECKS[n], result: stored[`${day}:${n}`] }])),
+      summary: stored[`${day}:summary`],
+      events: await eventsBetween(day, day).catch(() => []),
+      narrator: !!process.env.ANTHROPIC_API_KEY,
+      facebookConnected: !!getTokenFromCookie(req),
+      ephemeral: !kvClient && !!process.env.VERCEL && !process.env.SWEEP_FILE,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/daily-sweep/check/:name', async (req, res) => {
+  const name = req.params.name;
+  if (!SWEEP_RUNNERS[name]) return res.status(400).json({ error: `Unknown check '${name}'. Known: ${Object.keys(SWEEP_RUNNERS).join(', ')}` });
+  const day = ptYesterdayDate(req.query.date);
+  const proto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+  const base = `${proto}://${req.get('host')}`;
+  // Same-origin calls on the caller's behalf: forward their gate cookie (or a
+  // cron bearer) so the report endpoints let them through.
+  const headers = {};
+  if (req.headers.cookie) headers.cookie = req.headers.cookie;
+  if (req.headers.authorization) headers.authorization = req.headers.authorization;
+  const num = (v, d) => { const n = parseFloat(v); return Number.isFinite(n) && n >= 0 ? n : d; };
+  const ctx = {
+    day, prevDay: shiftDate(day, -1), wkDay: shiftDate(day, -7),
+    cal: { cVol: num(req.query.cvol, SW_DEFAULT_CAL.cVol), tau2: num(req.query.tau2, SW_DEFAULT_CAL.tau2), aov: num(req.query.aov, null) },
+    fbToken: getTokenFromCookie(req),
+    get: async (p, params) => {
+      const r = await fetch(`${base}${p}?${new URLSearchParams(params)}`, { headers, signal: AbortSignal.timeout(55000) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(`${p}: ${j.error || r.status}`);
+      return j;
+    },
+  };
+  const t0 = Date.now();
+  try {
+    const out = await SWEEP_RUNNERS[name](ctx);
+    const result = { ...out, date: day, ranAt: new Date().toISOString(), ms: Date.now() - t0, calibrationUsed: name === 'traffic' ? undefined : ctx.cal };
+    // A skipped check (no Facebook login) isn't stored, so it can't overwrite
+    // a real result someone else produced while signed in.
+    if (!out.skipped) await sweepWrite(`${day}:${name}`, result).catch(e => console.warn('[daily-sweep] store failed:', e.message));
+    res.json(result);
+  } catch (err) {
+    if (err.code === 190) return res.json({ skipped: 'Facebook session expired — sign in again to include Meta.', date: day });
+    console.error(`[daily-sweep:${name}] error:`, err);
+    res.status(500).json({ error: err.message, date: day, ms: Date.now() - t0 });
+  }
+});
+
+// Optional write-up of a finished sweep. Same contract as the Morning Brief:
+// the model sees only the stored findings and may cite only their numbers.
+app.post('/api/daily-sweep/narrate', async (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(400).json({ error: 'ANTHROPIC_API_KEY is not set on this deployment.' });
+  const day = ptYesterdayDate(req.query.date);
+  try {
+    const names = Object.keys(SWEEP_CHECKS);
+    const stored = await sweepRead(names.map(n => `${day}:${n}`));
+    const r4 = (v) => v == null ? null : Math.round(v * 10000) / 10000;
+    const checks = {};
+    for (const n of names) {
+      const r = stored[`${day}:${n}`];
+      if (!r) continue;
+      checks[SWEEP_CHECKS[n].label] = {
+        tab: SWEEP_CHECKS[n].tabs, context: r.context || null, notes: r.notes || null,
+        findings: (r.findings || []).map(f => ({
+          level: f.level, item: f.item, metric: f.metric, unit: f.unit, now: r4(f.now), prev: r4(f.prev), last_week: r4(f.wk),
+          z: f.z != null ? Math.round(f.z * 10) / 10 : null, verdict: f.verdict, tag: f.tag || undefined,
+          impact_usd: f.impact?.usd != null ? Math.round(f.impact.usd) : undefined, test: f.test, detail: f.detail,
+        })),
+      };
+    }
+    if (!Object.keys(checks).length) return res.status(400).json({ error: 'No sweep results stored for this day — run the sweep first.' });
+    const events = (await eventsBetween(day, day).catch(() => [])).map(e => ({ tag: e.tag, note: e.text }));
+    const model = process.env.DAILY_REPORT_MODEL || 'claude-opus-4-8';
+    const prompt = `You write the day-over-day sweep read for Firstday's growth operators: ${day} vs ${shiftDate(day, -1)}, with ${shiftDate(day, -7)} (same weekday last week) as the check on weekday pattern.
+
+CRITICAL RULE: use ONLY numbers present in the SWEEP JSON. Never invent, estimate or extrapolate, and do not do new arithmetic beyond simple percentage changes between a now/prev pair you cite. Do not assert causes.
+
+HOW TO READ IT:
+- unit "pct" values are fractions (0.0137 = 1.37%); "usd" is dollars; "count" is a count; "sec" is seconds.
+- verdict "unusual" = beyond noise vs the day prior AND vs the same weekday last week in the same direction. "weekday" = beyond noise vs the day prior only — most likely the normal weekday pattern; mention these only briefly, if at all. "dod" = no last-week comparison was available.
+- z is the move in noise units after the noise model; test, when present, means a size threshold was used instead of a noise model.
+- impact_usd is an estimate of the dollar effect of that single move; where it is absent, don't make one up.
+- tag "new"/"gone" = the row had (almost) no traffic or spend on one of the two days.
+- context holds headline numbers for that check. notes are data caveats — repeat them if relevant.
+${events.length ? `- OPERATOR NOTES for the day (logged by the team; frame explanations with them, but say they are logged notes, not measured causes): ${JSON.stringify(events)}` : ''}
+
+Write GitHub-flavored markdown, no title:
+- **Headline** — 2-3 sentences: what genuinely changed yesterday, with figures.
+- **Unusual moves** — up to 6 bullets, biggest impact first, each: what moved (name the row and the report), prev → now, vs last week, and the impact if given.
+- **Probably weekday pattern** — one line listing the biggest weekday-verdict moves, or skip it.
+- **Check next** — 2-4 bullets naming the dashboard tab (from each check's "tab") and the row to open.
+Keep bullets to 1-2 lines. Output ONLY the markdown.
+
+SWEEP:
+${JSON.stringify(checks)}`;
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({ model, max_tokens: 2000, messages: [{ role: 'user', content: prompt }] }),
+    });
+    const dj = await resp.json();
+    if (!resp.ok) throw new Error(`Claude API ${resp.status}: ${JSON.stringify(dj).slice(0, 300)}`);
+    if (dj.stop_reason === 'refusal') throw new Error('Claude refused to write the summary');
+    const text = (dj.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+    if (!text) throw new Error('Empty summary from Claude');
+    const summary = { markdown: text, model, generatedAt: new Date().toISOString(), checks: Object.keys(checks) };
+    await sweepWrite(`${day}:summary`, summary);
+    res.json(summary);
+  } catch (err) {
+    console.error('[daily-sweep/narrate] error:', err);
     res.status(500).json({ error: err.message });
   }
 });

@@ -21,6 +21,7 @@
       label: 'Daily',
       items: [
         { href: '/what-changed.html',       name: 'What Changed',             desc: 'Every channel, campaign, landing page and ad vs its normal for the weekday, ranked by impact' },
+        { href: '/daily-sweep.html',        name: 'Daily Sweep',              desc: 'Runs every report for yesterday vs the day prior and lists the moves beyond normal noise' },
         { href: '/daily-report.html',       name: 'Morning Brief',           desc: 'Run on demand for yesterday or today so far, grounded in Shopify session data' },
         { href: '/all-tabs-analysis.html',  name: 'Tab Summaries',            desc: 'Run an automated summary of any dashboard for a date range' },
       ],

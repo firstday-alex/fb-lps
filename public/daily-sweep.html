@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Daily Sweep</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    :root { --fb-blue:#1877f2; --positive:#0a8a44; --positive-bg:#e7f5ec; --negative:#c02b2b; --negative-bg:#fbeaea; --neutral-bg:#eef1f6; --text-secondary:#5b6472; --border:#e3e6ea; }
+    body { background:#f0f2f5; margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:#1c1e21; }
+    header { background:var(--fb-blue); color:#fff; padding:16px 24px; display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+    header > div { min-width:0; flex:1 1 260px; }
+    header h1 { font-size:1.25rem; margin:0; }
+    header p { margin:2px 0 0; font-size:0.82rem; color:rgba(255,255,255,0.85); }
+    .wrap { padding:20px; }
+    .controls { display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:14px; }
+    .controls label { font-size:0.82rem; font-weight:600; color:var(--text-secondary); display:flex; gap:6px; align-items:center; }
+    .controls input[type=date] { padding:5px 8px; border:1px solid var(--border); border-radius:6px; font-size:0.85rem; }
+    .btn { background:var(--fb-blue); color:#fff; border:0; border-radius:6px; padding:7px 14px; font-weight:600; font-size:0.85rem; cursor:pointer; }
+    .btn:disabled { opacity:0.55; cursor:progress; }
+    .btn.ghost { background:#fff; color:var(--fb-blue); border:1px solid var(--border); }
+    .hint { font-size:0.75rem; color:var(--text-secondary); }
+    .card { background:#fff; border-radius:12px; padding:18px 22px; box-shadow:0 1px 3px rgba(0,0,0,0.08); margin-bottom:18px; }
+    .card h3 { margin:0 0 4px; font-size:1.05rem; }
+    .card__sub { color:var(--text-secondary); font-size:0.8rem; margin:0 0 12px; max-width:980px; line-height:1.45; }
+    .up { color:var(--positive); } .down { color:var(--negative); } .neu { color:var(--text-secondary); }
+
+    /* check status list */
+    .checks { list-style:none; margin:0; padding:0; display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:8px 18px; }
+    .checks li { display:flex; gap:10px; align-items:baseline; font-size:0.84rem; padding:6px 0; border-bottom:1px solid var(--border); min-width:0; }
+    .checks li > div { flex:1; min-width:0; }
+    .checks small { display:block; color:var(--text-secondary); font-size:0.72rem; overflow-wrap:anywhere; }
+    .checks .st { font-size:0.75rem; white-space:nowrap; color:var(--text-secondary); }
+    .checks .st.err { color:var(--negative); }
+    .checks button { border:0; background:none; color:var(--fb-blue); cursor:pointer; font-size:0.75rem; font-weight:600; padding:0; }
+
+    /* findings */
+    .badge { display:inline-block; font-size:0.68rem; font-weight:700; padding:2px 7px; border-radius:10px; margin:1px 3px 1px 0; white-space:nowrap; }
+    .badge.unusual { background:#1c1e21; color:#fff; }
+    .badge.dod { background:var(--neutral-bg); color:#1c1e21; }
+    .badge.wd { background:#fff4dc; color:#8a5a00; }
+    .badge.new { background:#e9e4fb; color:#5a3fc0; }
+    .tbl-wrap { overflow-x:auto; }
+    table.sw { width:100%; border-collapse:collapse; font-size:0.82rem; }
+    table.sw th, table.sw td { padding:7px 9px; text-align:right; border-bottom:1px solid var(--border); white-space:nowrap; vertical-align:top; }
+    table.sw th:first-child, table.sw td:first-child, table.sw th:nth-child(2), table.sw td:nth-child(2) { text-align:left; }
+    table.sw td:nth-child(2) { white-space:normal; overflow-wrap:anywhere; min-width:220px; max-width:440px; line-height:1.35; }
+    table.sw th { font-size:0.66rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-secondary); font-weight:700; }
+    table.sw td small { color:var(--text-secondary); display:block; white-space:normal; }
+    table.sw a { color:var(--fb-blue); text-decoration:none; font-size:0.75rem; font-weight:600; }
+    details.more { margin-top:10px; }
+    details.more summary { cursor:pointer; font-size:0.82rem; font-weight:600; color:var(--text-secondary); }
+    .empty { color:var(--text-secondary); font-size:0.84rem; padding:6px 0; }
+    .ctx { display:flex; gap:18px; flex-wrap:wrap; font-size:0.8rem; color:var(--text-secondary); margin:-4px 0 10px; }
+    .ctx b { color:#1c1e21; }
+    .warn { background:#fff4dc; border-radius:8px; padding:8px 12px; font-size:0.8rem; margin:8px 0; color:#5c3d00; }
+    .summary { font-size:0.9rem; line-height:1.55; max-width:980px; }
+    .summary h4 { margin:12px 0 4px; font-size:0.95rem; }
+    .summary ul { margin:4px 0 8px; padding-left:20px; }
+    .notes-list { list-style:none; margin:0; padding:0; font-size:0.84rem; }
+    .notes-list li { padding:3px 0; }
+    .tag { font-size:0.68rem; font-weight:700; padding:1px 7px; border-radius:9px; background:var(--neutral-bg); color:var(--text-secondary); margin-right:6px; }
+    .method { font-size:0.78rem; color:var(--text-secondary); line-height:1.55; max-width:980px; }
+    @media (max-width:600px) { .wrap { padding:16px; } header { padding:14px 16px; } }
+  </style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Daily Sweep</h1>
+    <p>Runs every report for one day against the day before, and keeps the moves that are bigger than normal day-to-day noise</p>
+  </div>
+</header>
+<div class="wrap">
+  <div class="controls">
+    <label>Day <input type="date" id="day-input"></label>
+    <button class="btn" id="btn-run">Run sweep</button>
+    <button class="btn ghost" id="btn-copy" hidden>Copy for Slack</button>
+    <span class="hint" id="run-hint">Compares the day with the day prior, and with the same weekday last week to separate real moves from weekday pattern.</span>
+  </div>
+  <div class="card">
+    <h3>Reports checked</h3>
+    <p class="card__sub" id="checks-sub">Each check calls the report's own data, so a flagged number is the one the tab shows.</p>
+    <ul class="checks" id="checks"></ul>
+  </div>
+  <div id="notes"></div>
+  <div id="summary"></div>
+  <div id="top"></div>
+  <div id="sections"></div>
+  <div class="card method">
+    <b>How a move gets flagged.</b> Counts and rates are tested against What Changed's measured day-to-day noise (Poisson or binomial plus the extra variance the store's history shows), and every list is checked against its own spread so a noisy level like ads can't flood the results. AOV uses each day's order-level spread. Session duration, CPM, CTR, spend and discount depth have no usable variance, so they use a size bar instead (shown as "threshold"). Flags worth under $250 are dropped.<br>
+    <b>Unusual</b> = beyond noise against the day prior <i>and</i> against the same weekday last week, in the same direction. <b>Weekday pattern</b> = beyond noise against the day prior only — most often just the normal weekday shape. Dollar figures are estimates of one move each and overlap across reports, so don't add them up.
+  </div>
+</div>
+
+<script>
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const ORDER = ['traffic', 'funnel', 'aov', 'products', 'orders', 'meta'];
+// Metrics where up is bad; Spend and $0 orders are colourless (a decision, not a result).
+const UP_IS_BAD = new Set(['Bounce rate', 'CPM', 'Discount depth']);
+const NEUTRAL = new Set(['Spend', '$0 orders']);
+
+let state = { date: null, checks: {}, running: {}, summary: null, events: [], narrator: false, facebookConnected: false };
+
+const fmtVal = (f, v) => {
+  if (v == null || !isFinite(v)) return '–';
+  if (f.unit === 'pct') return (v * 100).toFixed(2) + '%';
+  if (f.unit === 'usd') return '$' + (Math.abs(v) >= 1000 ? Math.round(v).toLocaleString() : v.toFixed(2));
+  if (f.unit === 'sec') return Math.round(v) + 's';
+  return Math.round(v).toLocaleString();
+};
+// Rates move in points; everything else in percent.
+const fmtDelta = (f, a, b) => {
+  if (a == null || b == null || !isFinite(a) || !isFinite(b)) return '';
+  if (f.unit === 'pct') { const d = (a - b) * 100; return (d >= 0 ? '+' : '') + d.toFixed(2) + 'pp'; }
+  if (!b) return 'from 0';
+  const p = (a - b) / Math.abs(b);
+  return p > 9.99 ? '>+999%' : (p >= 0 ? '+' : '') + (p * 100).toFixed(0) + '%';
+};
+const tone = (f, a, b) => {
+  if (NEUTRAL.has(f.metric) || a == null || b == null || a === b) return 'neu';
+  return (a > b) !== UP_IS_BAD.has(f.metric) ? 'up' : 'down';
+};
+const fmtUsd = (v) => v == null ? '' : (v >= 0 ? '+' : '−') + '$' + Math.abs(Math.round(v)).toLocaleString();
+const weight = (f) => f.impact?.usd != null ? Math.abs(f.impact.usd) : Math.abs(f.z || 0) * 0.001;
+
+function verdictBadge(f) {
+  const t = f.tag ? `<span class="badge new">${f.tag === 'new' ? 'New' : 'Gone'}</span>` : '';
+  if (f.verdict === 'unusual') return `<span class="badge unusual">Unusual</span>${t}`;
+  if (f.verdict === 'weekday') return `<span class="badge wd">Weekday pattern</span>${t}`;
+  return `<span class="badge dod">vs day prior only</span>${t}`;
+}
+
+function rowHtml(f, check, showReport) {
+  const r = state.checks[check];
+  const href = r?.result?.href;
+  const name = String(f.item ?? '');
+  const short = name.length > 90 ? name.slice(0, 88) + '…' : name;
+  return `<tr>
+    <td>${verdictBadge(f)}</td>
+    <td>${showReport ? `<small>${esc(r.label)}</small>` : ''}<span title="${esc(name)}">${esc(f.level)} · ${esc(short)}</span>${f.detail ? `<small>${esc(f.detail)}</small>` : ''}</td>
+    <td>${esc(f.metric)}${f.test ? `<small>${esc(f.test)}</small>` : ''}</td>
+    <td>${fmtVal(f, f.prev)} → <b>${fmtVal(f, f.now)}</b><small class="${tone(f, f.now, f.prev)}">${fmtDelta(f, f.now, f.prev)}</small></td>
+    <td>${f.wk == null ? '–' : fmtVal(f, f.wk)}<small>${f.wk == null ? '' : 'now ' + fmtDelta(f, f.now, f.wk)}</small></td>
+    <td>${f.impact?.usd != null ? `<span class="${NEUTRAL.has(f.metric) ? 'neu' : f.impact.usd >= 0 ? 'up' : 'down'}">${fmtUsd(f.impact.usd)}</span>` : '–'}</td>
+    <td>${href ? `<a href="${esc(href)}">Open →</a>` : ''}</td>
+  </tr>`;
+}
+const tableHtml = (rows, showReport) => `<div class="tbl-wrap"><table class="sw">
+  <thead><tr><th></th><th>What</th><th>Metric</th><th>Day prior → day</th><th>Last week</th><th>Impact</th><th></th></tr></thead>
+  <tbody>${rows.map(([f, c]) => rowHtml(f, c, showReport)).join('')}</tbody></table></div>`;
+
+function statusText(c) {
+  const st = state.running[c];
+  if (st === 'running') return '<span class="st">Running…</span>';
+  const r = state.checks[c]?.result;
+  if (!r) return '<span class="st">Not run</span>';
+  if (r.error) return `<span class="st err" title="${esc(r.error)}">Failed</span>`;
+  if (r.skipped) return `<span class="st">Skipped</span>`;
+  const n = (r.findings || []).length;
+  return `<span class="st">${n} flag${n === 1 ? '' : 's'} · ${(r.ms / 1000).toFixed(1)}s</span>`;
+}
+
+function render() {
+  const names = ORDER.filter(c => state.checks[c]);
+  document.getElementById('checks').innerHTML = names.map(c => {
+    const k = state.checks[c], r = k.result;
+    const sub = r?.error ? `<small class="down">${esc(r.error)}</small>` : r?.skipped ? `<small>${esc(r.skipped)}</small>` : `<small>${esc(k.tabs)}</small>`;
+    return `<li><div><b>${esc(k.label)}</b>${sub}</div>${statusText(c)} <button data-rerun="${c}" ${state.running[c] ? 'disabled' : ''}>Run</button></li>`;
+  }).join('');
+  const ran = names.map(c => state.checks[c].result).filter(r => r && r.ranAt);
+  document.getElementById('checks-sub').textContent = ran.length
+    ? `Last run ${new Date(ran.map(r => r.ranAt).sort().pop()).toLocaleString()}. Each check calls the report's own data, so a flagged number is the one the tab shows.`
+    : 'Nothing has been run for this day yet. Each check calls the report\'s own data, so a flagged number is the one the tab shows.';
+
+  // Notes logged for the day
+  document.getElementById('notes').innerHTML = state.events.length ? `<div class="card"><h3>Notes logged for this day</h3>
+    <ul class="notes-list">${state.events.map(e => `<li><span class="tag">${esc(e.tag)}</span>${esc(e.text)}</li>`).join('')}</ul></div>` : '';
+
+  // Summary
+  const sm = state.summary;
+  const canNarrate = state.narrator && ran.length;
+  document.getElementById('summary').innerHTML = (sm || canNarrate) ? `<div class="card"><h3>Summary</h3>
+    ${sm ? `<p class="card__sub">Written by Claude from the flags below only (${esc(sm.model)}, ${new Date(sm.generatedAt).toLocaleString()}).${staleSummary() ? ' Some checks have re-run since — rewrite to include them.' : ''}</p><div class="summary">${md(sm.markdown)}</div>` : '<p class="card__sub">Have Claude write a short read of the flags below. It can only cite numbers that are in them.</p>'}
+    ${canNarrate ? `<button class="btn ghost" id="btn-narrate">${sm ? 'Rewrite summary' : 'Write summary'}</button>` : ''}</div>` : '';
+
+  // Biggest moves across every report
+  const all = names.flatMap(c => (state.checks[c].result?.findings || []).map(f => [f, c]));
+  const real = all.filter(([f]) => f.verdict !== 'weekday').sort((a, b) => weight(b[0]) - weight(a[0]));
+  const wd = all.filter(([f]) => f.verdict === 'weekday').sort((a, b) => weight(b[0]) - weight(a[0]));
+  document.getElementById('btn-copy').hidden = !all.length;
+  document.getElementById('top').innerHTML = ran.length ? `<div class="card"><h3>Biggest moves</h3>
+    <p class="card__sub">Beyond normal noise against the day prior and not explained by the weekday, across every report, biggest dollar effect first.</p>
+    ${real.length ? tableHtml(real.slice(0, 15), true) : '<div class="empty">Nothing moved beyond normal noise once the weekday pattern is accounted for.</div>'}
+    ${wd.length ? `<details class="more"><summary>${wd.length} more that match the usual weekday pattern</summary>${tableHtml(wd, true)}</details>` : ''}
+  </div>` : '';
+
+  // One section per report
+  document.getElementById('sections').innerHTML = names.map(c => {
+    const k = state.checks[c], r = k.result;
+    if (!r || r.error || r.skipped) return '';
+    const fs = (r.findings || []).map(f => [f, c]).sort((a, b) => (a[0].verdict === 'weekday') - (b[0].verdict === 'weekday') || weight(b[0]) - weight(a[0]));
+    return `<div class="card"><h3>${esc(k.label)}</h3>
+      <p class="card__sub">${esc(k.tabs)}${r.href ? ` · <a href="${esc(r.href)}">Open</a>` : ''}</p>
+      ${ctxHtml(c, r)}
+      ${(r.notes || []).map(n => `<div class="warn">${esc(n)}</div>`).join('')}
+      ${(r.errors || []).length ? `<div class="warn">Some queries failed, so this check may be incomplete: ${esc(r.errors.map(e => e.error || e).join('; '))}</div>` : ''}
+      ${fs.length ? tableHtml(fs, false) : '<div class="empty">Nothing beyond normal noise.</div>'}
+    </div>`;
+  }).join('');
+}
+
+function ctxHtml(c, r) {
+  const x = r.context; if (!x) return '';
+  const trip = (label, o, f) => o && o.now != null ? `<span>${label} <b>${f(o.now)}</b> vs ${f(o.prev)} day prior · ${f(o.wk)} last week</span>` : '';
+  const n = (v) => v == null ? '–' : Math.round(v).toLocaleString();
+  const p = (v) => v == null ? '–' : (v * 100).toFixed(2) + '%';
+  const d = (v) => v == null ? '–' : '$' + Math.round(v).toLocaleString();
+  if (c === 'traffic') return `<div class="ctx">${trip('Sessions', x.sessions, n)}${trip('CVR', x.cvr, p)}${trip('Web orders', x.webOrders, n)}</div>`;
+  if (c === 'products') return `<div class="ctx">${trip('Orders', x.orders, n)}</div>`;
+  if (c === 'meta') return `<div class="ctx">${trip('Spend', x.spend, d)}${x.accounts?.length ? `<span>Accounts: ${esc(x.accounts.join(', '))}</span>` : ''}</div>`;
+  return '';
+}
+
+function staleSummary() {
+  const sm = state.summary; if (!sm) return false;
+  return ORDER.some(c => { const r = state.checks[c]?.result; return r?.ranAt && r.ranAt > sm.generatedAt; });
+}
+
+// Just enough markdown for the summary: headings, bold, bullets, paragraphs.
+function md(src) {
+  const inline = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>');
+  let html = '', inList = false;
+  for (const line of String(src || '').split('\n')) {
+    const li = line.match(/^\s*[-*]\s+(.*)/);
+    if (li) { if (!inList) { html += '<ul>'; inList = true; } html += `<li>${inline(li[1])}</li>`; continue; }
+    if (inList) { html += '</ul>'; inList = false; }
+    const h = line.match(/^#{1,4}\s+(.*)/);
+    if (h) html += `<h4>${inline(h[1])}</h4>`;
+    else if (line.trim()) html += `<p>${inline(line)}</p>`;
+  }
+  return html + (inList ? '</ul>' : '');
+}
+
+async function load(date) {
+  const r = await fetch('/api/daily-sweep' + (date ? '?date=' + date : ''));
+  const j = await r.json();
+  if (!r.ok) { document.getElementById('top').innerHTML = `<div class="card down">${esc(j.error)}</div>`; return; }
+  state = { ...state, date: j.date, checks: j.checks, summary: j.summary, events: j.events || [], narrator: j.narrator, facebookConnected: j.facebookConnected, running: {} };
+  document.getElementById('day-input').value = j.date;
+  history.replaceState(null, '', '?date=' + j.date);
+  if (j.ephemeral) document.getElementById('run-hint').textContent = 'Results aren\'t stored on this deployment (no Vercel KV), so they last only until the server restarts.';
+  render();
+}
+
+async function runCheck(c, params) {
+  state.running[c] = 'running'; render();
+  try {
+    const r = await fetch(`/api/daily-sweep/check/${c}?` + new URLSearchParams({ date: state.date, ...params }));
+    const j = await r.json().catch(() => ({ error: 'Bad response (' + r.status + ')' }));
+    if (!r.ok && !j.error) j.error = 'HTTP ' + r.status;
+    state.checks[c].result = j;
+  } catch (e) {
+    state.checks[c].result = { error: e.message };
+  }
+  delete state.running[c]; render();
+  return state.checks[c].result;
+}
+
+// The traffic check goes first: its calibration (What Changed's measured
+// noise) and the store AOV are handed to every other check. The rest run two
+// at a time — product mix and net AOV each page through every order, and
+// four at once is how ShopifyQL rate limits start.
+function calParams() {
+  const t = state.checks.traffic?.result;
+  return t?.calibration ? { cvol: t.calibration.cVol, tau2: t.calibration.tau2, aov: t.context?.aov ?? '' } : {};
+}
+async function runAll() {
+  const btn = document.getElementById('btn-run');
+  btn.disabled = true;
+  try {
+    await runCheck('traffic', {});
+    const queue = ['funnel', 'meta', 'aov', 'products', 'orders'];
+    const worker = async () => { while (queue.length) { const c = queue.shift(); await runCheck(c, calParams()); } };
+    await Promise.all([worker(), worker()]);
+  } finally { btn.disabled = false; }
+}
+
+async function narrate() {
+  const b = document.getElementById('btn-narrate');
+  if (b) { b.disabled = true; b.textContent = 'Writing… (up to a minute)'; }
+  try {
+    const r = await fetch('/api/daily-sweep/narrate?date=' + state.date, { method: 'POST' });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.status);
+    state.summary = j;
+  } catch (e) { alert('Summary failed: ' + e.message); }
+  render();
+}
+
+// Plain text for pasting into a Slack draft: the unusual moves only.
+function copyText() {
+  const lines = [`Daily sweep — ${state.date} vs ${shift(state.date, -1)}`];
+  const all = ORDER.flatMap(c => (state.checks[c]?.result?.findings || []).map(f => [f, c]));
+  const real = all.filter(([f]) => f.verdict !== 'weekday').sort((a, b) => weight(b[0]) - weight(a[0])).slice(0, 10);
+  if (!real.length) lines.push('Nothing moved beyond normal noise once the weekday pattern is accounted for.');
+  for (const [f, c] of real) {
+    lines.push(`• ${state.checks[c].label} — ${f.level} ${String(f.item).slice(0, 70)}: ${f.metric} ${fmtVal(f, f.prev)} → ${fmtVal(f, f.now)} (${fmtDelta(f, f.now, f.prev)}; last week ${fmtVal(f, f.wk)})${f.impact?.usd != null ? ' ' + fmtUsd(f.impact.usd) : ''}`);
+  }
+  const wd = all.filter(([f]) => f.verdict === 'weekday').length;
+  if (wd) lines.push(`(${wd} more move${wd === 1 ? '' : 's'} match the usual weekday pattern.)`);
+  lines.push(location.origin + '/daily-sweep.html?date=' + state.date);
+  navigator.clipboard.writeText(lines.join('\n')).then(() => {
+    const b = document.getElementById('btn-copy'); b.textContent = 'Copied'; setTimeout(() => { b.textContent = 'Copy for Slack'; }, 1500);
+  });
+}
+const shift = (d, n) => { const x = new Date(d + 'T00:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+
+document.addEventListener('click', (e) => {
+  const re = e.target.closest('[data-rerun]');
+  if (re) runCheck(re.dataset.rerun, re.dataset.rerun === 'traffic' ? {} : calParams());
+  if (e.target.id === 'btn-narrate') narrate();
+});
+document.getElementById('btn-run').addEventListener('click', runAll);
+document.getElementById('btn-copy').addEventListener('click', copyText);
+document.getElementById('day-input').addEventListener('change', (e) => load(e.target.value));
+load(new URLSearchParams(location.search).get('date'));
+</script>
+<script src="/app-nav.js" defer></script>
+</body>
+</html>
